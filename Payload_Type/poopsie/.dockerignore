@@ -1,0 +1,11 @@
+# Docker ignore patterns for Mythic build
+target/
+.git/
+.gitignore
+*.log
+.DS_Store
+.idea/
+*.iml
+.vscode/
+.settings/
+dependency-reduced-pom.xml

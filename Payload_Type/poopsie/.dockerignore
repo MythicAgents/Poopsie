@@ -8,4 +8,3 @@ target/
 *.iml
 .vscode/
 .settings/
-dependency-reduced-pom.xml

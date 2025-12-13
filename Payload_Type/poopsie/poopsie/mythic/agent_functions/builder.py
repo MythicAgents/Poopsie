@@ -18,7 +18,6 @@ class Poopsie(PayloadType):
     supported_os = [
         SupportedOS.Windows,
         SupportedOS.Linux,
-        SupportedOS.MacOS,
     ]
     mythic_encrypts = True
     wrapper = False

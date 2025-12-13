@@ -13,7 +13,7 @@ from mythic_container.MythicRPC import *
 
 class Poopsie(PayloadType):
     name = "poopsie"
-    file_extension = "bin"
+    file_extension = "exe"
     author = "@haha150"
     supported_os = [
         SupportedOS.Windows,
@@ -49,6 +49,9 @@ class Poopsie(PayloadType):
             description="Sleep obfuscation technique (Windows x64 only)",
             default_value="none",
             choices=["none", "ekko"],
+            hide_conditions=[
+                HideCondition(name="architecture", operand=HideConditionOperand.NotEQ, value="x64")
+            ],
             required=True,
         ),
         BuildParameter(
@@ -57,6 +60,7 @@ class Poopsie(PayloadType):
             default_value=False,
             description="Enable self-deletion of the agent on exit (Windows only)",
             required=False,
+            supported_os=["Windows"],
         ),
         BuildParameter(
             name="adjust_filename",

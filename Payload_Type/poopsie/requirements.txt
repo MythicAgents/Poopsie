@@ -1,1 +1,2 @@
 mythic-container==0.6.7
+git+https://github.com/MEhrn00/donut.git@v2.0.0

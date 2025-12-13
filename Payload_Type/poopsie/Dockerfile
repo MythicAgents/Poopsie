@@ -45,6 +45,15 @@ COPY poopsie poopsie
 WORKDIR /Mythic/poopsie/agent_code
 RUN /root/.nimble/bin/nimble install -y --depsOnly
 
+# Install donut for shellcode generation
+RUN curl -L -o donut_shellcode-2.0.0.tar.gz https://github.com/MEhrn00/donut/releases/download/v2.0.0/donut_shellcode-2.0.0.tar.gz && \
+    tar -xf donut_shellcode-2.0.0.tar.gz && \
+    cd donut_shellcode-2.0.0 && \
+    make && \
+    cp donut / && \
+    cd .. && \
+    rm -rf donut_shellcode-2.0.0 donut_shellcode-2.0.0.tar.gz
+
 # Enable ccache for faster recompilation
 ENV PATH="/usr/lib/ccache:$PATH"
 ENV CCACHE_DIR="/tmp/ccache"

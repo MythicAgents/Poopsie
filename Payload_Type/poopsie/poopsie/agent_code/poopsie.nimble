@@ -11,3 +11,5 @@ bin           = @["poopsie"]
 
 requires "nim >= 2.0.0"
 requires "nimcrypto >= 0.6.0"
+requires "winim"
+requires "pixie >= 5.0.0"

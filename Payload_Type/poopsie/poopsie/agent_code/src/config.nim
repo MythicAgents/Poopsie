@@ -19,6 +19,8 @@ type
     callbackJitter*: int
     killdate*: string
     debug*: bool
+    sleepObfuscation*: string
+    selfDelete*: bool
 
 proc getConfig*(): Config =
   ## Get configuration from compile-time environment variables
@@ -44,3 +46,8 @@ proc getConfig*(): Config =
   
   let debugStr = static: getEnv("DEBUG", "false")
   result.debug = debugStr.toLowerAscii in ["true", "t"]
+  
+  result.sleepObfuscation = static: getEnv("SLEEP_OBFUSCATION", "none")
+  
+  let selfDelStr = static: getEnv("SELF_DELETE", "false")
+  result.selfDelete = selfDelStr.toLowerAscii in ["true", "t"]

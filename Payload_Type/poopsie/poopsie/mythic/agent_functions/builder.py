@@ -470,8 +470,13 @@ class Poopsie(PayloadType):
             if os.path.exists("/usr/lib/ccache"):
                 env["PATH"] = f"/usr/lib/ccache:{env.get('PATH', '')}"
             
-            # Build the command string for display
-            env_str = ' '.join(f'{k}="{v}"' for k, v in build_env.items())
+            # Build the command string for display (escape quotes in values for shell)
+            env_parts = []
+            for k, v in build_env.items():
+                # Escape single quotes by replacing ' with '\''
+                escaped_value = str(v).replace("'", "'\\''")
+                env_parts.append(f"{k}='{escaped_value}'")
+            env_str = ' '.join(env_parts)
             command = f'{env_str} {" ".join(cmd_args)}'
             
             process = await asyncio.create_subprocess_exec(

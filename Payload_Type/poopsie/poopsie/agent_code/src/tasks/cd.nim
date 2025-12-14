@@ -35,13 +35,10 @@ proc changeDirectory*(taskId: string, params: string): JsonNode =
     if cfg.debug:
       echo "[DEBUG] Changed directory to: ", newCwd
     
-    # Create response with cwd callback
-    var response = mythicSuccess(taskId, &"Changed directory to '{newCwd}'")
-    response["callback"] = %* {
+    # Return response with cwd callback
+    return mythicCallback(taskId, &"Changed directory to '{newCwd}'", %*{
       "cwd": newCwd
-    }
-    
-    return response
+    })
     
   except OSError as e:
     return mythicError(taskId, &"Failed to change directory: {e.msg}")

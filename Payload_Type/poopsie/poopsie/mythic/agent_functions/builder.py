@@ -415,6 +415,7 @@ class Poopsie(PayloadType):
                 "--d:strip",                   # Strip debug info
                 "--d:useMalloc",               # Use system malloc (smaller)
                 "--parallelBuild:0",           # Auto-detect CPU cores for faster compilation
+                "--threads:on",                # Enable threading support (required for PTY)
             ]
             
             # Add DLL-specific compilation flags

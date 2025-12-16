@@ -1,5 +1,8 @@
 import std/[os, osproc, strutils]
 
+when defined(windows):
+  import ../tasks/token_manager
+
 type
   SystemInfo* = object
     hostname*: string
@@ -27,10 +30,12 @@ proc getSystemInfo*(): SystemInfo =
   except:
     result.hostname = "unknown"
   
-  # Get username
+  # Get username - use proper API that respects thread impersonation
   try:
     when defined(windows):
-      result.user = getEnv("USERNAME", "unknown")
+      result.user = getCurrentUsername()
+      if result.user.len == 0:
+        result.user = getEnv("USERNAME", "unknown")
     else:
       result.user = getEnv("USER", "unknown")
   except:

@@ -26,7 +26,7 @@ when defined(windows):
       clearTokenHandle()
       
       # Get the current user after reverting
-      let user = getEnv("USERNAME", "unknown")
+      let user = getCurrentUsername()
       
       if cfg.debug:
         echo &"[DEBUG] Reverted to original identity: {user}"

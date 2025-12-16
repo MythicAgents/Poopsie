@@ -52,37 +52,15 @@ when defined(windows):
         CloseHandle(tokenHandle)
         return mythicError(taskId, &"Failed to revert to self. Error code: {errorCode}")
       
-      # For non-network logons, we need to duplicate the primary token to an impersonation token
-      # For network logons (netOnly=true), ImpersonateLoggedOnUser works fine
-      if netOnly:
-        # Network credentials - use ImpersonateLoggedOnUser
-        if ImpersonateLoggedOnUser(tokenHandle) == 0:
-          let errorCode = GetLastError()
-          CloseHandle(tokenHandle)
-          return mythicError(taskId, &"Failed to impersonate user. Error code: {errorCode}")
-        
-        # Store the token handle - we must keep it alive while impersonated
-        setTokenHandle(tokenHandle)
-      else:
-        # Interactive logon - duplicate to impersonation token and use SetThreadToken
-        var impersonationToken: HANDLE = 0
-        if DuplicateTokenEx(tokenHandle, MAXIMUM_ALLOWED, nil, SecurityImpersonation,
-                            tokenImpersonation, addr impersonationToken) == 0:
-          let errorCode = GetLastError()
-          CloseHandle(tokenHandle)
-          return mythicError(taskId, &"Failed to duplicate token. Error code: {errorCode}")
-        
-        # Close the original primary token
+      # Use ImpersonateLoggedOnUser for both logon types
+      # This works better than DuplicateTokenEx and avoids error 1346
+      if ImpersonateLoggedOnUser(tokenHandle) == 0:
+        let errorCode = GetLastError()
         CloseHandle(tokenHandle)
-        
-        # Set the thread token
-        if SetThreadToken(nil, impersonationToken) == 0:
-          let errorCode = GetLastError()
-          CloseHandle(impersonationToken)
-          return mythicError(taskId, &"Failed to set thread token. Error code: {errorCode}")
-        
-        # Store the impersonation token handle
-        setTokenHandle(impersonationToken)
+        return mythicError(taskId, &"Failed to impersonate user. Error code: {errorCode}")
+      
+      # Store the token handle - we must keep it alive while impersonated
+      setTokenHandle(tokenHandle)
       
       # Get the new user context (after impersonation)
       let newUser = getCurrentUsername()

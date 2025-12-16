@@ -1,4 +1,4 @@
-import json, os
+import json, os, strutils
 when defined(posix):
   import posix
 when defined(windows):

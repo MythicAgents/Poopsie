@@ -320,9 +320,15 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
         agent.taskResponses.add(response)
         
         # Track as background task for chunk handling
+        # Extract the full_path from the response which contains the computed UNC path
+        let uploadPath = if response.hasKey("upload"):
+          response["upload"]["full_path"].getStr()
+        else:
+          params["remote_path"].getStr()
+        
         var state = BackgroundTaskState(
           taskType: btUpload,
-          path: params["remote_path"].getStr(),
+          path: uploadPath,
           fileId: params["file"].getStr(),
           totalChunks: 0,  # Will be set when we receive first chunk
           currentChunk: 1

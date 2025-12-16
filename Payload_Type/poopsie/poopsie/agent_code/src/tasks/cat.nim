@@ -1,6 +1,6 @@
 import ../config
 import ../utils/mythic_responses
-import std/[json, strformat, os]
+import std/[json, strformat, os, strutils]
 
 type
   CatArgs = object
@@ -16,14 +16,11 @@ proc catFile*(taskId: string, params: string): JsonNode =
     echo "[DEBUG] Reading file: ", args.path
   
   try:
-    # Get current working directory
-    let cwd = getCurrentDir()
-    
-    # Handle path resolution
-    let fullPath = if args.path.isAbsolute():
+    # Handle UNC paths (\\server\share) and absolute paths
+    let fullPath = if args.path.startsWith("\\\\") or isAbsolute(args.path):
       args.path
     else:
-      cwd / args.path
+      getCurrentDir() / args.path
     
     # Check if file exists
     if not fileExists(fullPath):

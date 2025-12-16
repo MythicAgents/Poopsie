@@ -1,6 +1,6 @@
 import ../config
 import ../utils/mythic_responses
-import std/[json, os, strformat]
+import std/[json, os, strformat, strutils]
 
 type
   MvArgs = object
@@ -21,8 +21,8 @@ proc mvFile*(taskId: string, params: string): JsonNode =
     if not fileExists(args.source) and not dirExists(args.source):
       return mythicError(taskId, &"Source path does not exist: {args.source}")
     
-    # Get absolute source path
-    let srcPath = if isAbsolute(args.source):
+    # Handle UNC paths and absolute paths for source
+    let srcPath = if args.source.startsWith("\\\\") or isAbsolute(args.source):
       args.source
     else:
       getCurrentDir() / args.source
@@ -32,8 +32,8 @@ proc mvFile*(taskId: string, params: string): JsonNode =
     else:
       return mythicError(taskId, &"Source path does not exist: {srcPath}")
     
-    # Handle destination path
-    var destPath = if isAbsolute(args.destination):
+    # Handle UNC paths and absolute paths for destination
+    var destPath = if args.destination.startsWith("\\\\") or isAbsolute(args.destination):
       args.destination
     else:
       getCurrentDir() / args.destination

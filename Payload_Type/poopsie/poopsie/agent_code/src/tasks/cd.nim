@@ -1,6 +1,6 @@
 import ../config
 import ../utils/mythic_responses
-import std/[json, os, strformat]
+import std/[json, os, strformat, strutils]
 
 type
   CdArgs = object
@@ -16,6 +16,10 @@ proc changeDirectory*(taskId: string, params: string): JsonNode =
     echo "[DEBUG] Changing directory to: ", args.path
   
   try:
+    # Check for UNC paths - Windows doesn't support cd to UNC paths
+    if args.path.startsWith("\\\\"):
+      return mythicError(taskId, "Cannot cd to UNC paths. Use 'net use' to map a drive letter first, or use absolute UNC paths in file operations (ls, cat, etc.)")
+    
     # Handle the path
     let targetPath = if isAbsolute(args.path):
       args.path

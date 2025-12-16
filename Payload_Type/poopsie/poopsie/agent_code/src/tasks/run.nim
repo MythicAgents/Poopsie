@@ -2,6 +2,7 @@ import json
 
 when defined(windows):
   import winim/lean
+  import token_manager
 else:
   import osproc
 
@@ -78,19 +79,66 @@ proc run*(taskId: string, params: JsonNode): JsonNode =
       si.hStdError = hStderrWrite
       si.hStdInput = GetStdHandle(STD_INPUT_HANDLE)
       
-      # Create process
-      let createResult = CreateProcessA(
-        nil,
-        addr commandLine[0],
-        nil,
-        nil,
-        TRUE,  # Inherit handles
-        CREATE_NO_WINDOW,
-        nil,
-        nil,
-        addr si,
-        addr pi
-      )
+      # Check if we have an impersonation token
+      let tokenHandle = getTokenHandle()
+      var createResult: WINBOOL
+      
+      if tokenHandle != 0:
+        # We have an impersonation token - try CreateProcessWithTokenW
+        # Convert command line to wide string
+        var commandLineW = newWideCString(commandLine)
+        
+        # Create STARTUPINFOW for the wide-char version
+        var siW: STARTUPINFOW
+        siW.cb = sizeof(STARTUPINFOW).DWORD
+        siW.dwFlags = STARTF_USESTDHANDLES or STARTF_USESHOWWINDOW
+        siW.wShowWindow = SW_HIDE
+        siW.hStdOutput = hStdoutWrite
+        siW.hStdError = hStderrWrite
+        siW.hStdInput = GetStdHandle(STD_INPUT_HANDLE)
+        
+        # Try CreateProcessWithTokenW to run as the impersonated user
+        createResult = CreateProcessWithTokenW(
+          tokenHandle,
+          0,  # LOGON_WITH_PROFILE
+          nil,
+          cast[LPWSTR](commandLineW[0].addr),
+          CREATE_NO_WINDOW,
+          nil,
+          nil,
+          addr siW,
+          addr pi
+        )
+        
+        # If it fails with ACCESS_DENIED (error 5), fall back to CreateProcessA
+        # CreateProcessWithTokenW requires SE_IMPERSONATE_NAME privilege which regular users don't have
+        if createResult == 0 and GetLastError() == 5:
+          createResult = CreateProcessA(
+            nil,
+            addr commandLine[0],
+            nil,
+            nil,
+            TRUE,  # Inherit handles
+            CREATE_NO_WINDOW,
+            nil,
+            nil,
+            addr si,
+            addr pi
+          )
+      else:
+        # No impersonation token - use normal CreateProcessA
+        createResult = CreateProcessA(
+          nil,
+          addr commandLine[0],
+          nil,
+          nil,
+          TRUE,  # Inherit handles
+          CREATE_NO_WINDOW,
+          nil,
+          nil,
+          addr si,
+          addr pi
+        )
       
       # Close write ends of pipes
       CloseHandle(hStdoutWrite)

@@ -1,6 +1,6 @@
 import ../config
 import ../utils/mythic_responses
-import std/[json, os, strformat]
+import std/[json, os, strformat, strutils]
 
 type
   MkdirArgs = object
@@ -19,8 +19,8 @@ proc makeDirectory*(taskId: string, params: string): JsonNode =
     # Create the directory (including parent directories)
     createDir(args.path)
     
-    # Get the absolute path
-    let absPath = if isAbsolute(args.path):
+    # Get the absolute path - handle UNC paths
+    let absPath = if args.path.startsWith("\\\\") or isAbsolute(args.path):
       args.path
     else:
       getCurrentDir() / args.path

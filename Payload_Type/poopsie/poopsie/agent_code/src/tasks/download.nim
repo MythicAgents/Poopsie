@@ -1,4 +1,4 @@
-import json, os, base64, math
+import json, os, base64, math, strutils
 when defined(posix):
   import posix
 
@@ -22,8 +22,12 @@ proc executeDownload*(taskId: string, params: JsonNode): JsonNode =
   
   try:
     let args = to(params, DownloadArgs)
-    let cwd = getCurrentDir()
-    let filePath = cwd / args.path
+    
+    # Handle UNC paths and absolute paths - don't join with cwd
+    let filePath = if args.path.startsWith("\\\\") or isAbsolute(args.path):
+      args.path
+    else:
+      getCurrentDir() / args.path
     
     # Check if file exists
     if not fileExists(filePath):
@@ -67,8 +71,11 @@ proc processDownloadChunk*(taskId: string, fileId: string, path: string, chunkNu
   ## This is called for each chunk after the initial download response
   
   try:
-    let cwd = getCurrentDir()
-    let filePath = cwd / path
+    # Handle UNC paths and absolute paths - don't join with cwd
+    let filePath = if path.startsWith("\\\\") or isAbsolute(path):
+      path
+    else:
+      getCurrentDir() / path
     
     # Open and read the file chunk
     var file = open(filePath, fmRead)

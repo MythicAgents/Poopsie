@@ -26,22 +26,58 @@ when defined(windows):
 
   proc getCurrentUsername*(): string =
     ## Get the current username respecting thread impersonation
-    ## This uses GetUserNameExW which checks the thread token first
-    const NameSamCompatible = 2  # EXTENDED_NAME_FORMAT
-    var nameLen: DWORD = 0
+    ## Tries thread token first, falls back to process token
+    var hToken: HANDLE
+    var dwSize: DWORD
     
-    # First call to get required buffer size
-    discard GetUserNameExW(NameSamCompatible, nil, addr nameLen)
+    # Try to open thread token first (will succeed if impersonating)
+    if OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, 0, addr hToken) == 0:
+      # No thread token, try process token
+      if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, addr hToken) == 0:
+        return ""
     
-    if nameLen == 0:
+    # Get the token user information size
+    discard GetTokenInformation(hToken, 1, nil, 0, addr dwSize)  # TokenUser = 1
+    
+    if dwSize == 0:
+      CloseHandle(hToken)
       return ""
     
-    # Allocate buffer and get the name
-    var nameBuffer = newWideCString("", nameLen)
-    if GetUserNameExW(NameSamCompatible, cast[LPWSTR](nameBuffer[0].addr), addr nameLen) != 0:
-      return $nameBuffer
+    # Allocate buffer for token user
+    var pTokenUser = alloc(dwSize)
+    if pTokenUser.isNil:
+      CloseHandle(hToken)
+      return ""
+    
+    # Get the token user information
+    if GetTokenInformation(hToken, 1, pTokenUser, dwSize, addr dwSize) == 0:
+      dealloc(pTokenUser)
+      CloseHandle(hToken)
+      return ""
+    
+    # Extract the SID from TOKEN_USER structure
+    let sid = cast[ptr PSID](pTokenUser)[]
+    
+    var nameSize: DWORD = 256
+    var domainSize: DWORD = 256
+    var name = newWideCString("", nameSize)
+    var domain = newWideCString("", domainSize)
+    var sidType: SID_NAME_USE
+    
+    # Lookup the account name from SID
+    if LookupAccountSidW(nil, sid, cast[LPWSTR](name[0].addr), addr nameSize, 
+                         cast[LPWSTR](domain[0].addr), addr domainSize, addr sidType) != 0:
+      let username = $name
+      let domainName = $domain
+      if domainName.len > 0:
+        result = domainName & "\\" & username
+      else:
+        result = username
     else:
-      return ""
+      result = ""
+    
+    dealloc(pTokenUser)
+    CloseHandle(hToken)
 else:
   # Unix placeholders (not needed but required for compilation)
   type HANDLE* = int

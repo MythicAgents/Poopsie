@@ -10,9 +10,11 @@ when defined(windows):
     var hToken: HANDLE
     var dwSize: DWORD
     
-    # Open the process token
-    if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, addr hToken) == 0:
-      return "Error: Failed to open process token"
+    # Try to open thread token first (will succeed if impersonating)
+    if OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, 0, addr hToken) == 0:
+      # No thread token, try process token
+      if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, addr hToken) == 0:
+        return "Error: Failed to open process token"
     
     # Get the token user information size
     discard GetTokenInformation(hToken, 1, nil, 0, addr dwSize)  # TokenUser = 1

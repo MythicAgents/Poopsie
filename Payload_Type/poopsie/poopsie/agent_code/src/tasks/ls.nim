@@ -177,7 +177,8 @@ proc executeLs*(params: JsonNode): JsonNode =
   
   # Expand and validate path
   try:
-    if not targetPath.isAbsolute():
+    # Handle UNC paths (\\server\share) and absolute paths
+    if not targetPath.isAbsolute() and not targetPath.startsWith("\\\\"):
       targetPath = getCurrentDir() / targetPath
     
     if not dirExists(targetPath):

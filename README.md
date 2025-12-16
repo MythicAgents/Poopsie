@@ -48,8 +48,15 @@ Poopsie is a cross-platform C2 agent for the Mythic framework, written in Nim. I
 - `whoami` - Display current user context (shows impersonated user when active)
 
 ### Information Gathering
+- `clipboard` - Get current clipboard contents (Windows)
+- `clipboard_monitor` - Monitor clipboard changes for a duration (Windows, background task)
 - `get_av` - Enumerate installed antivirus products (Windows)
+- `portscan` - Scan hosts for open TCP ports (background task, incremental scanning)
 - `screenshot` - Capture screenshot of the desktop
+
+### Advanced Injection
+- `donut` - Execute .NET assemblies via donut-generated shellcode (Windows)
+- `inject_hollow` - Inject shellcode into remote processes via process hollowing (Windows)
 
 ### Network
 - `socks` - Start/stop SOCKS5 proxy for pivoting

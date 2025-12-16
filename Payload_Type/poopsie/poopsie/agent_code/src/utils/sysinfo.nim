@@ -44,8 +44,6 @@ proc getSystemInfo*(): SystemInfo =
   # Get OS
   when defined(windows):
     result.os = "Windows"
-  elif defined(macosx):
-    result.os = "macOS"
   elif defined(linux):
     result.os = "Linux"
   else:

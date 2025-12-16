@@ -156,8 +156,6 @@ proc getPlatform(): string =
     return "Windows"
   elif defined(linux):
     return "Linux"
-  elif defined(macosx):
-    return "macOS"
   else:
     return "Unknown"
 

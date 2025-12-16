@@ -2,7 +2,7 @@
 ## Spawns a program with PTY and handles interactive I/O with Mythic
 ## Uses threads for non-blocking I/O with raw OS handles
 
-import std/[json, os, osproc, strutils, base64, times, strformat]
+import std/[json, os, osproc, strutils, base64, strformat]
 import ../config
 import ../utils/mythic_responses
 

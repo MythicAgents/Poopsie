@@ -1,7 +1,7 @@
 ## SOCKS5 Proxy task for tunneling network traffic through Mythic
 ## Implements SOCKS5 protocol with threading for bidirectional forwarding
 
-import std/[json, net, nativesockets, strutils, base64, strformat, tables, os]
+import std/[json, net, nativesockets, strutils, base64, strformat, tables]
 import ../config
 import ../utils/mythic_responses
 

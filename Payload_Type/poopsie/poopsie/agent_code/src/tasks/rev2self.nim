@@ -7,7 +7,6 @@ import token_manager
 
 when defined(windows):
   import winim/lean
-  import std/os
   
   proc rev2self*(taskId: string, params: JsonNode): JsonNode =
     ## Revert to the original process token

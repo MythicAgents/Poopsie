@@ -1,4 +1,4 @@
-import std/[json, random, os, base64, tables, strformat, times]
+import std/[json, random, os, base64, tables, times]
 import config
 import profiles/http_profile
 import utils/sysinfo
@@ -26,7 +26,6 @@ when defined(windows):
   import tasks/inline_execute
   import tasks/powerpick
   import tasks/shinject
-  import tasks/token_manager
   import tasks/make_token
   import tasks/steal_token
   import tasks/rev2self

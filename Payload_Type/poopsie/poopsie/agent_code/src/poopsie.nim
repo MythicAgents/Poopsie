@@ -10,7 +10,6 @@ elif defined(service):
     StartServiceDispatcher()
 else:
   # Executable build - use standard main entry point
-  import std/[times, random]
   import config, agent
 
   # Conditional imports for Windows-only features

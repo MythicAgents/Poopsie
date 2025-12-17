@@ -36,16 +36,13 @@ RUN curl https://nim-lang.org/choosenim/init.sh -sSf | sh -s -- -y && \
 
 ENV PATH="/root/.nimble/bin:$PATH"
 
-# Copy project files
-WORKDIR /Mythic
-COPY main.py main.py
-COPY poopsie poopsie
-
-# Pre-install all Nim dependencies (makes builds much faster)
+# Copy only the .nimble file first for better Docker layer caching
+# This way, Nim dependencies are only re-installed if .nimble changes
 WORKDIR /Mythic/poopsie/agent_code
+COPY poopsie/agent_code/poopsie.nimble .
 RUN /root/.nimble/bin/nimble install -y --depsOnly
 
-# Install donut for shellcode generation
+# Install donut for shellcode generation (small, fast download)
 RUN curl -L -o donut_shellcode-2.0.0.tar.gz https://github.com/MEhrn00/donut/releases/download/v2.0.0/donut_shellcode-2.0.0.tar.gz && \
     tar -xf donut_shellcode-2.0.0.tar.gz && \
     cd donut_shellcode-2.0.0 && \
@@ -54,13 +51,34 @@ RUN curl -L -o donut_shellcode-2.0.0.tar.gz https://github.com/MEhrn00/donut/rel
     cd .. && \
     rm -rf donut_shellcode-2.0.0 donut_shellcode-2.0.0.tar.gz
 
+# Build static OpenSSL 3.5.4 for Windows (mingw-w64)
+# This layer is cached and only rebuilt if OpenSSL version changes
+# Build time: ~10-15 minutes (one-time, then cached)
+RUN mkdir -p /opt/openssl-build && cd /opt/openssl-build && \
+    wget -q https://www.openssl.org/source/openssl-3.5.4.tar.gz && \
+    tar -xzf openssl-3.5.4.tar.gz && \
+    cd openssl-3.5.4 && \
+    ./Configure mingw64 \
+        --cross-compile-prefix=x86_64-w64-mingw32- \
+        --prefix=/opt/openssl-mingw64-static \
+        no-shared \
+        no-asm \
+        -static \
+        -static-libgcc && \
+    make -j$(nproc) && \
+    make install && \
+    cd / && rm -rf /opt/openssl-build
+
 # Enable ccache for faster recompilation
 ENV PATH="/usr/lib/ccache:$PATH"
 ENV CCACHE_DIR="/tmp/ccache"
 ENV CCACHE_MAXSIZE="500M"
 
-# Final setup
+# Copy the rest of the project files last (these change most frequently)
+# This ensures previous layers are cached and not rebuilt unnecessarily
 WORKDIR /Mythic
+COPY main.py main.py
+COPY poopsie poopsie
 
 ENV PYTHONPATH=$PYTHONPATH:/Mythic/poopsie/agent_code
 

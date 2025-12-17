@@ -155,7 +155,7 @@ class Poopsie(PayloadType):
         ),
     ]
     
-    c2_profiles = ["http"]
+    c2_profiles = ["http", "websocket"]
 
     c2_parameter_deviations = {
         "http": {
@@ -281,6 +281,11 @@ class Poopsie(PayloadType):
             resp.build_message += f"Compiling Nim agent ({output_type}) for {selected_os}...\n"
             build_result = await self.run_nim_build(selected_os, output_type, build_env)
             
+            # Add build messages from run_nim_build
+            if "messages" in build_result:
+                for msg in build_result["messages"]:
+                    resp.build_message += msg + "\n"
+            
             if not build_result["success"]:
                 resp.build_message += f"\nNim build failed: {build_result['error']}\n"
                 resp.status = BuildStatus.Error
@@ -395,6 +400,9 @@ class Poopsie(PayloadType):
     async def run_nim_build(self, selected_os: str, output_type: str, build_env: dict) -> dict:
         """Compile Nim agent with environment variables"""
         try:
+            # Collect build messages to return
+            build_messages = []
+            
             # Set up environment
             env = os.environ.copy()
             env.update(build_env)
@@ -402,6 +410,21 @@ class Poopsie(PayloadType):
             # Get architecture selection
             architecture = self.get_parameter("architecture")
             nim_cpu = "amd64" if architecture == "x64" else "i386"
+            
+            # Check if OpenSSL is needed:
+            # 1. RSA key exchange requires OpenSSL
+            # 2. HTTPS/WSS protocols require OpenSSL for secure transport
+            encrypted_exchange = build_env.get("ENCRYPTED_EXCHANGE_CHECK", "").strip().upper()
+            callback_host = build_env.get("CALLBACK_HOST", "").lower()
+            profile = build_env.get("PROFILE", "").lower()
+            
+            needs_openssl_for_exchange = encrypted_exchange in ["T", "TRUE"]
+            needs_openssl_for_transport = (
+                callback_host.startswith("https://") or 
+                callback_host.startswith("wss://") or
+                (profile == "websocket" and callback_host.startswith("wss://"))
+            )
+            use_openssl = needs_openssl_for_exchange or needs_openssl_for_transport
             
             # Determine target OS for cross-compilation
             nim_args = [
@@ -417,6 +440,38 @@ class Poopsie(PayloadType):
                 "--parallelBuild:0",           # Auto-detect CPU cores for faster compilation
                 "--threads:on",                # Enable threading support (required for PTY)
             ]
+            
+            # Add OpenSSL linking if needed for RSA exchange or HTTPS/WSS transport
+            if use_openssl:
+                if selected_os == "Windows":
+                    # Windows: Static linking (no runtime dependencies)
+                    nim_args.extend([
+                        "-d:staticOpenSSL",
+                        "--dynlibOverride:ssl",
+                        "--dynlibOverride:crypto",
+                        "--passL:/opt/openssl-mingw64-static/lib64/libssl.a",
+                        "--passL:/opt/openssl-mingw64-static/lib64/libcrypto.a",
+                    ])
+                    if needs_openssl_for_exchange and needs_openssl_for_transport:
+                        build_messages.append("✓ Static OpenSSL 3.5.4 enabled (HTTPS/WSS transport + RSA key exchange)")
+                    elif needs_openssl_for_exchange:
+                        build_messages.append("✓ Static OpenSSL 3.5.4 enabled (RSA key exchange, no DLL dependencies)")
+                    else:
+                        build_messages.append("✓ Static OpenSSL 3.5.4 enabled (HTTPS/WSS transport)")
+                elif selected_os == "Linux":
+                    # Linux: Dynamic linking to system OpenSSL (requires libssl-dev)
+                    nim_args.extend([
+                        "-d:ssl",  # Enable SSL support
+                    ])
+                    if needs_openssl_for_exchange and needs_openssl_for_transport:
+                        build_messages.append("✓ Dynamic OpenSSL enabled (HTTPS/WSS transport + RSA key exchange)")
+                    elif needs_openssl_for_exchange:
+                        build_messages.append("✓ Dynamic OpenSSL enabled (RSA key exchange, requires libssl.so on target)")
+                    else:
+                        build_messages.append("✓ Dynamic OpenSSL enabled (HTTPS/WSS transport)")
+                    build_messages.append("  Note: Target system must have OpenSSL 1.1+ or 3.x installed")
+            elif not use_openssl:
+                build_messages.append("✓ AESPSK mode with HTTP (no OpenSSL needed)")
             
             # Add DLL-specific compilation flags
             if output_type == "DLL":
@@ -496,7 +551,8 @@ class Poopsie(PayloadType):
                 return {
                     "success": False,
                     "error": f"Nim compilation failed with code {process.returncode}\n\nSTDOUT:\n{stdout_text}\n\nSTDERR:\n{stderr_text}",
-                    "command": command
+                    "command": command,
+                    "messages": build_messages
                 }
             
             # Check if output file exists (compiled binary is in src/ directory)
@@ -505,13 +561,15 @@ class Poopsie(PayloadType):
                 return {
                     "success": False,
                     "error": f"Compiled binary not found at {output_path}",
-                    "command": command
+                    "command": command,
+                    "messages": build_messages
                 }
             
             return {
                 "success": True,
                 "path": output_path,
-                "command": command
+                "command": command,
+                "messages": build_messages
             }
             
         except asyncio.TimeoutError:

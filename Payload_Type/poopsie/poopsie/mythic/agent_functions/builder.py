@@ -217,7 +217,15 @@ class Poopsie(PayloadType):
             # Add build parameters
             c2_params["output_type"] = self.get_parameter("output_type")
             c2_params["debug"] = str(self.get_parameter("debug"))
-            c2_params["sleep_obfuscation"] = self.get_parameter("sleep_obfuscation")
+            
+            # Force sleep_obfuscation to "none" for x86 (EKKO only works on x64)
+            architecture = self.get_parameter("architecture")
+            sleep_obfuscation = self.get_parameter("sleep_obfuscation")
+            if architecture == "x86" and sleep_obfuscation == "ekko":
+                c2_params["sleep_obfuscation"] = "none"
+            else:
+                c2_params["sleep_obfuscation"] = sleep_obfuscation
+            
             c2_params["self_delete"] = str(self.get_parameter("self_delete"))
             
             # Add service name for service builds
@@ -385,7 +393,7 @@ class Poopsie(PayloadType):
             ))
 
             resp.status = BuildStatus.Success
-            resp.build_message += f"\n✓ Successfully built Nim payload for {selected_os}\n"
+            resp.build_message += f"\nSuccessfully built Nim payload for {selected_os}\n"
 
             # Adjust filename based on OS
             if self.get_parameter("adjust_filename"):
@@ -413,7 +421,7 @@ class Poopsie(PayloadType):
             
             # Check if OpenSSL is needed:
             # 1. RSA key exchange always requires OpenSSL
-            # 2. HTTPS/WSS on Windows uses native WinHttp (puppy) - no OpenSSL needed
+            # 2. HTTPS/WSS on Windows uses custom WinHTTP - no OpenSSL needed
             # 3. HTTPS/WSS on Linux requires OpenSSL for httpclient
             encrypted_exchange = build_env.get("ENCRYPTED_EXCHANGE_CHECK", "").strip().upper()
             callback_host = build_env.get("CALLBACK_HOST", "").lower()
@@ -421,10 +429,10 @@ class Poopsie(PayloadType):
             
             needs_openssl_for_exchange = encrypted_exchange in ["T", "TRUE"]
             
-            # Windows uses puppy with native WinHttp API for HTTPS (no OpenSSL needed)
+            # Windows uses custom WinHTTP implementation for HTTPS (no OpenSSL needed)
             # Linux still needs OpenSSL for httpclient HTTPS support
             if selected_os == "Windows":
-                needs_openssl_for_transport = False  # Puppy uses WinHttp
+                needs_openssl_for_transport = False  # Custom WinHTTP uses native Windows API
             else:
                 needs_openssl_for_transport = (
                     callback_host.startswith("https://") or 
@@ -452,40 +460,52 @@ class Poopsie(PayloadType):
             # Add OpenSSL linking if needed for RSA exchange or HTTPS/WSS transport
             if use_openssl:
                 if selected_os == "Windows":
-                    # Windows: Static OpenSSL only for RSA (puppy handles HTTPS via WinHttp)
+                    # Windows: Static OpenSSL only for RSA (custom WinHTTP handles HTTPS)
+                    # Select correct OpenSSL path based on architecture
+                    if architecture == "x64":
+                        openssl_path = "/opt/openssl-mingw64-static"
+                        openssl_lib = f"{openssl_path}/lib64"
+                    else:  # x86
+                        openssl_path = "/opt/openssl-mingw32-static"
+                        openssl_lib = f"{openssl_path}/lib"
+                    
                     nim_args.extend([
                         "-d:staticOpenSSL",
+                        f"--passC:-I{openssl_path}/include",
                         "--dynlibOverride:ssl",
                         "--dynlibOverride:crypto",
-                        "--passL:/opt/openssl-mingw64-static/lib64/libssl.a",
-                        "--passL:/opt/openssl-mingw64-static/lib64/libcrypto.a",
+                        f"--passL:{openssl_lib}/libssl.a",
+                        f"--passL:{openssl_lib}/libcrypto.a",
+                        "--passL:-lws2_32",
+                        "--passL:-lcrypt32",
+                        "--passL:-lbcrypt",
+                        "--passL:-ladvapi32",
                     ])
-                    build_messages.append("✓ Static OpenSSL 3.5.4 enabled (RSA key exchange, no DLL dependencies)")
-                    if callback_host.startswith("https://"):
-                        build_messages.append("✓ Puppy HTTP client (native WinHttp for HTTPS transport)")
+                    
+                    build_messages.append(f"Static OpenSSL 3.5.4 enabled ({architecture}, RSA key exchange, no DLL dependencies)")
                 elif selected_os == "Linux":
                     # Linux: Dynamic linking to system OpenSSL (for both RSA and HTTPS)
                     nim_args.extend([
                         "-d:ssl",  # Enable SSL support
                     ])
                     if needs_openssl_for_exchange and needs_openssl_for_transport:
-                        build_messages.append("✓ Dynamic OpenSSL enabled (HTTPS/WSS transport + RSA key exchange)")
+                        build_messages.append("Dynamic OpenSSL enabled (HTTPS/WSS transport + RSA key exchange)")
                     elif needs_openssl_for_exchange:
-                        build_messages.append("✓ Dynamic OpenSSL enabled (RSA key exchange, requires libssl.so on target)")
+                        build_messages.append("Dynamic OpenSSL enabled (RSA key exchange, requires libssl.so on target)")
                     else:
-                        build_messages.append("✓ Dynamic OpenSSL enabled (HTTPS/WSS transport)")
+                        build_messages.append("Dynamic OpenSSL enabled (HTTPS/WSS transport)")
                     build_messages.append("  Note: Target system must have OpenSSL 1.1+ or 3.x installed")
             else:
                 # No OpenSSL needed
                 if selected_os == "Windows":
-                    if callback_host.startswith("https://"):
-                        build_messages.append("✓ AESPSK mode with HTTPS")
-                        build_messages.append("✓ Puppy HTTP client (native WinHttp, no OpenSSL/DLLs needed)")
-                    else:
-                        build_messages.append("✓ AESPSK mode with HTTP")
-                        build_messages.append("✓ Puppy HTTP client (no OpenSSL needed)")
+                    build_messages.append("AESPSK mode (no RSA)")
                 else:
-                    build_messages.append("✓ AESPSK mode with HTTP (standard httpclient, no OpenSSL needed)")
+                    build_messages.append("AESPSK mode (no RSA, standard httpclient)")
+            
+            # Add Windows-specific transport messages
+            if selected_os == "Windows":
+                if callback_host.startswith("https://") or callback_host.startswith("wss://"):
+                    build_messages.append("Custom WinHTTP client (native Windows API for HTTPS/WSS transport, no DLLs)")
             
             # Add DLL-specific compilation flags
             if output_type == "DLL":
@@ -523,10 +543,6 @@ class Poopsie(PayloadType):
                 else:
                     output_name = "poopsie.exe"  # Service and Executable both output .exe
             elif selected_os == "Linux":
-                nim_args.extend(["--os:linux", f"--cpu:{nim_cpu}"])
-                output_name = "libpoopsie.so" if output_type == "DLL" else "poopsie"
-            elif selected_os == "MacOS":
-                # Can't cross-compile to macOS, build for Linux instead
                 nim_args.extend(["--os:linux", f"--cpu:{nim_cpu}"])
                 output_name = "libpoopsie.so" if output_type == "DLL" else "poopsie"
             else:
@@ -596,6 +612,13 @@ class Poopsie(PayloadType):
         filename_pieces = filename.split(".")
         original_filename = ".".join(filename_pieces[:-1])
         output_type = self.get_parameter("output_type")
+        architecture = self.get_parameter("architecture")
+        
+        # Add architecture suffix (e.g., poopsie-x64.exe or poopsie-x86.dll)
+        # Check if suffix already exists to avoid duplicates on rebuild
+        arch_suffix = f"_{architecture}"
+        if not original_filename.endswith(arch_suffix):
+            original_filename += arch_suffix
         
         if selected_os == "Windows":
             if output_type == "DLL":

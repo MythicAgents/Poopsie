@@ -7,17 +7,8 @@ import std/[base64, strutils]
 
 # OpenSSL declarations for both static (Windows) and dynamic (Linux) linking
 when defined(staticOpenSSL):
-  # Windows: Static linking to OpenSSL 3.5.4
-  const OPENSSL_PATH = "/opt/openssl-mingw64-static"
-  when defined(windows):
-    {.passC: "-I" & OPENSSL_PATH & "/include".}
-    {.passL: OPENSSL_PATH & "/lib64/libssl.a".}
-    {.passL: OPENSSL_PATH & "/lib64/libcrypto.a".}
-    {.passL: "-lws2_32".}
-    {.passL: "-lgdi32".}
-    {.passL: "-ladvapi32".}
-    {.passL: "-lcrypt32".}
-    {.passL: "-luser32".}
+  # Windows: Static linking handled by builder.py (architecture-specific paths)
+  # No need to specify link directives here - builder.py adds them based on x64/x86
   
   # Declare OpenSSL types and functions directly (no dynlib)
   type
@@ -35,31 +26,31 @@ when defined(staticOpenSSL):
     EVP_PKEY_RSA = 6
   
   # OpenSSL 3.0 API functions
-  proc BN_new(): ptr BIGNUM {.importc, header: "<openssl/bn.h>".}
-  proc BN_free(a: ptr BIGNUM) {.importc, header: "<openssl/bn.h>".}
-  proc BN_set_word(a: ptr BIGNUM, w: uint64): cint {.importc, header: "<openssl/bn.h>".}
+  proc BN_new(): ptr BIGNUM {.cdecl, importc, header: "<openssl/bn.h>".}
+  proc BN_free(a: ptr BIGNUM) {.cdecl, importc, header: "<openssl/bn.h>".}
+  proc BN_set_word(a: ptr BIGNUM, w: uint64): cint {.cdecl, importc, header: "<openssl/bn.h>".}
   
-  proc EVP_PKEY_new(): ptr EVP_PKEY {.importc, header: "<openssl/evp.h>".}
-  proc EVP_PKEY_free(pkey: ptr EVP_PKEY) {.importc, header: "<openssl/evp.h>".}
-  proc EVP_PKEY_CTX_new_id(id: cint, e: pointer): ptr EVP_PKEY_CTX {.importc, header: "<openssl/evp.h>".}
-  proc EVP_PKEY_CTX_free(ctx: ptr EVP_PKEY_CTX) {.importc, header: "<openssl/evp.h>".}
-  proc EVP_PKEY_keygen_init(ctx: ptr EVP_PKEY_CTX): cint {.importc, header: "<openssl/evp.h>".}
-  proc EVP_PKEY_CTX_set_rsa_keygen_bits(ctx: ptr EVP_PKEY_CTX, mbits: cint): cint {.importc, header: "<openssl/evp.h>".}
-  proc EVP_PKEY_keygen(ctx: ptr EVP_PKEY_CTX, ppkey: ptr ptr EVP_PKEY): cint {.importc, header: "<openssl/evp.h>".}
-  proc EVP_PKEY_get1_RSA(pkey: ptr EVP_PKEY): ptr RSA {.importc, header: "<openssl/evp.h>".}
+  proc EVP_PKEY_new(): ptr EVP_PKEY {.cdecl, importc, header: "<openssl/evp.h>".}
+  proc EVP_PKEY_free(pkey: ptr EVP_PKEY) {.cdecl, importc, header: "<openssl/evp.h>".}
+  proc EVP_PKEY_CTX_new_id(id: cint, e: pointer): ptr EVP_PKEY_CTX {.cdecl, importc, header: "<openssl/evp.h>".}
+  proc EVP_PKEY_CTX_free(ctx: ptr EVP_PKEY_CTX) {.cdecl, importc, header: "<openssl/evp.h>".}
+  proc EVP_PKEY_keygen_init(ctx: ptr EVP_PKEY_CTX): cint {.cdecl, importc, header: "<openssl/evp.h>".}
+  proc EVP_PKEY_CTX_set_rsa_keygen_bits(ctx: ptr EVP_PKEY_CTX, mbits: cint): cint {.cdecl, importc, header: "<openssl/evp.h>".}
+  proc EVP_PKEY_keygen(ctx: ptr EVP_PKEY_CTX, ppkey: ptr ptr EVP_PKEY): cint {.cdecl, importc, header: "<openssl/evp.h>".}
+  proc EVP_PKEY_get1_RSA(pkey: ptr EVP_PKEY): ptr RSA {.cdecl, importc, header: "<openssl/evp.h>".}
   
-  proc RSA_free(r: ptr RSA) {.importc, header: "<openssl/rsa.h>".}
-  proc RSA_size(rsa: ptr RSA): cint {.importc, header: "<openssl/rsa.h>".}
+  proc RSA_free(r: ptr RSA) {.cdecl, importc, header: "<openssl/rsa.h>".}
+  proc RSA_size(rsa: ptr RSA): cint {.cdecl, importc, header: "<openssl/rsa.h>".}
   proc RSA_private_decrypt(flen: cint, `from`: ptr byte, to: ptr byte, 
-                           rsa: ptr RSA, padding: cint): cint {.importc, header: "<openssl/rsa.h>".}
+                           rsa: ptr RSA, padding: cint): cint {.cdecl, importc, header: "<openssl/rsa.h>".}
   
-  proc BIO_new(typ: ptr BIO_METHOD): ptr BIO {.importc, header: "<openssl/bio.h>".}
-  proc BIO_free(a: ptr BIO): cint {.importc, header: "<openssl/bio.h>".}
-  proc BIO_s_mem(): ptr BIO_METHOD {.importc, header: "<openssl/bio.h>".}
-  proc BIO_ctrl(bp: ptr BIO, cmd: cint, larg: clong, parg: pointer): clong {.importc, header: "<openssl/bio.h>".}
-  proc BIO_read(b: ptr BIO, data: pointer, dlen: cint): cint {.importc, header: "<openssl/bio.h>".}
+  proc BIO_new(typ: ptr BIO_METHOD): ptr BIO {.cdecl, importc, header: "<openssl/bio.h>".}
+  proc BIO_free(a: ptr BIO): cint {.cdecl, importc, header: "<openssl/bio.h>".}
+  proc BIO_s_mem(): ptr BIO_METHOD {.cdecl, importc, header: "<openssl/bio.h>".}
+  proc BIO_ctrl(bp: ptr BIO, cmd: cint, larg: clong, parg: pointer): clong {.cdecl, importc, header: "<openssl/bio.h>".}
+  proc BIO_read(b: ptr BIO, data: pointer, dlen: cint): cint {.cdecl, importc, header: "<openssl/bio.h>".}
   
-  proc PEM_write_bio_RSAPublicKey(bp: ptr BIO, x: ptr RSA): cint {.importc, header: "<openssl/pem.h>".}
+  proc PEM_write_bio_RSAPublicKey(bp: ptr BIO, x: ptr RSA): cint {.cdecl, importc, header: "<openssl/pem.h>".}
   
   template BIO_get_mem_data(b: ptr BIO, pp: untyped): clong =
     BIO_ctrl(b, 3, 0, pp)
@@ -138,6 +129,10 @@ proc generateRsaKeyPair*(bits: int = 4096): RsaKeyPair =
   
   try:
     when defined(staticOpenSSL) or defined(ssl):
+      # Initialize result first to avoid uninitialized memory
+      result.available = false
+      result.publicKeyPem = ""
+      
       # OpenSSL 3.0 EVP API (same for both static and dynamic)
       let ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, nil)
       if ctx.isNil:

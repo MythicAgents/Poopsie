@@ -264,6 +264,9 @@ else:
   proc newHttpHeaders*(headers: openArray[(string, string)]): HttpHeaders =
     result = httpclient.newHttpHeaders(headers)
   
+  proc `[]=`*(headers: HttpHeaders, key, val: string) =
+    headers[key] = val
+  
   proc newClientWrapper*(debug: bool = false): HttpClientWrapper =
     result = httpclient.newHttpClient()
   

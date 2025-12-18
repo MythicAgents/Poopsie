@@ -1,19 +1,20 @@
-import std/[httpclient, base64, strutils, json, random]
+import std/[base64, strutils, json, random]
 import ../config
 import ../utils/crypto
 import ../utils/rsa
+import ../utils/http_client
 
 type
   HttpProfile* = ref object
     config: Config
     aesKey: seq[byte]
-    client: HttpClient
+    client: HttpClientWrapper
 
 proc newHttpProfile*(): HttpProfile =
   ## Create a new HTTP profile
   result = HttpProfile()
   result.config = getConfig()
-  result.client = newHttpClient()
+  result.client = newClientWrapper(result.config.debug)
   
   # Set User-Agent
   result.client.headers = newHttpHeaders({"User-Agent": result.config.userAgent})
@@ -35,7 +36,7 @@ proc newHttpProfile*(): HttpProfile =
       proxyUrl = "http://" & result.config.proxyUser & ":" & result.config.proxyPass & "@" & 
                  result.config.proxyHost & ":" & result.config.proxyPort
     try:
-      result.client = newHttpClient(proxy = newProxy(proxyUrl))
+      result.client = newClientWrapperWithProxy(proxyUrl, result.config.debug)
       # Re-apply headers after creating new client with proxy
       result.client.headers = newHttpHeaders({"User-Agent": result.config.userAgent})
       if result.config.headers.len > 0:

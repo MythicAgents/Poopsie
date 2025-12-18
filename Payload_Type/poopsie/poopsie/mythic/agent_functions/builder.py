@@ -412,18 +412,26 @@ class Poopsie(PayloadType):
             nim_cpu = "amd64" if architecture == "x64" else "i386"
             
             # Check if OpenSSL is needed:
-            # 1. RSA key exchange requires OpenSSL
-            # 2. HTTPS/WSS protocols require OpenSSL for secure transport
+            # 1. RSA key exchange always requires OpenSSL
+            # 2. HTTPS/WSS on Windows uses native WinHttp (puppy) - no OpenSSL needed
+            # 3. HTTPS/WSS on Linux requires OpenSSL for httpclient
             encrypted_exchange = build_env.get("ENCRYPTED_EXCHANGE_CHECK", "").strip().upper()
             callback_host = build_env.get("CALLBACK_HOST", "").lower()
             profile = build_env.get("PROFILE", "").lower()
             
             needs_openssl_for_exchange = encrypted_exchange in ["T", "TRUE"]
-            needs_openssl_for_transport = (
-                callback_host.startswith("https://") or 
-                callback_host.startswith("wss://") or
-                (profile == "websocket" and callback_host.startswith("wss://"))
-            )
+            
+            # Windows uses puppy with native WinHttp API for HTTPS (no OpenSSL needed)
+            # Linux still needs OpenSSL for httpclient HTTPS support
+            if selected_os == "Windows":
+                needs_openssl_for_transport = False  # Puppy uses WinHttp
+            else:
+                needs_openssl_for_transport = (
+                    callback_host.startswith("https://") or 
+                    callback_host.startswith("wss://") or
+                    (profile == "websocket" and callback_host.startswith("wss://"))
+                )
+            
             use_openssl = needs_openssl_for_exchange or needs_openssl_for_transport
             
             # Determine target OS for cross-compilation
@@ -444,7 +452,7 @@ class Poopsie(PayloadType):
             # Add OpenSSL linking if needed for RSA exchange or HTTPS/WSS transport
             if use_openssl:
                 if selected_os == "Windows":
-                    # Windows: Static linking (no runtime dependencies)
+                    # Windows: Static OpenSSL only for RSA (puppy handles HTTPS via WinHttp)
                     nim_args.extend([
                         "-d:staticOpenSSL",
                         "--dynlibOverride:ssl",
@@ -452,14 +460,11 @@ class Poopsie(PayloadType):
                         "--passL:/opt/openssl-mingw64-static/lib64/libssl.a",
                         "--passL:/opt/openssl-mingw64-static/lib64/libcrypto.a",
                     ])
-                    if needs_openssl_for_exchange and needs_openssl_for_transport:
-                        build_messages.append("✓ Static OpenSSL 3.5.4 enabled (HTTPS/WSS transport + RSA key exchange)")
-                    elif needs_openssl_for_exchange:
-                        build_messages.append("✓ Static OpenSSL 3.5.4 enabled (RSA key exchange, no DLL dependencies)")
-                    else:
-                        build_messages.append("✓ Static OpenSSL 3.5.4 enabled (HTTPS/WSS transport)")
+                    build_messages.append("✓ Static OpenSSL 3.5.4 enabled (RSA key exchange, no DLL dependencies)")
+                    if callback_host.startswith("https://"):
+                        build_messages.append("✓ Puppy HTTP client (native WinHttp for HTTPS transport)")
                 elif selected_os == "Linux":
-                    # Linux: Dynamic linking to system OpenSSL (requires libssl-dev)
+                    # Linux: Dynamic linking to system OpenSSL (for both RSA and HTTPS)
                     nim_args.extend([
                         "-d:ssl",  # Enable SSL support
                     ])
@@ -470,8 +475,17 @@ class Poopsie(PayloadType):
                     else:
                         build_messages.append("✓ Dynamic OpenSSL enabled (HTTPS/WSS transport)")
                     build_messages.append("  Note: Target system must have OpenSSL 1.1+ or 3.x installed")
-            elif not use_openssl:
-                build_messages.append("✓ AESPSK mode with HTTP (no OpenSSL needed)")
+            else:
+                # No OpenSSL needed
+                if selected_os == "Windows":
+                    if callback_host.startswith("https://"):
+                        build_messages.append("✓ AESPSK mode with HTTPS")
+                        build_messages.append("✓ Puppy HTTP client (native WinHttp, no OpenSSL/DLLs needed)")
+                    else:
+                        build_messages.append("✓ AESPSK mode with HTTP")
+                        build_messages.append("✓ Puppy HTTP client (no OpenSSL needed)")
+                else:
+                    build_messages.append("✓ AESPSK mode with HTTP (standard httpclient, no OpenSSL needed)")
             
             # Add DLL-specific compilation flags
             if output_type == "DLL":

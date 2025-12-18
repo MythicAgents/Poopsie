@@ -64,31 +64,6 @@ Poopsie is a cross-platform C2 agent for the Mythic framework, written in Nim. I
 ### Miscellaneous
 - `exit` - Terminate the agent
 
-## Token Impersonation
-
-Poopsie features comprehensive token impersonation support:
-
-- **make_token**: Creates a logon session with credentials and impersonates the user at the thread level
-  - Supports both network-only (`LOGON32_LOGON_NEW_CREDENTIALS`) and interactive (`LOGON32_LOGON_INTERACTIVE`) logon types
-  - Automatically reports impersonation context to Mythic
-  
-- **steal_token**: Duplicates an impersonation token from a running process by PID
-  - Uses `DuplicateTokenEx` with proper security impersonation level
-  - Works with thread-level token impersonation
-  
-- **Thread-Level Impersonation**: All file operations automatically respect the impersonated thread token
-  - Network file operations (UNC paths) use impersonated credentials
-  - Process creation via `run` uses `CreateProcessAsUserW` to spawn processes as the impersonated user
-  - `whoami` uses `GetUserNameExW` to correctly report the impersonated user
-
-## UNC Path Support
-
-Poopsie supports UNC paths for remote file operations when using impersonated credentials:
-
-- **Commands with host parameter**: `ls`, `upload`, `rm` accept a `host` parameter that automatically builds UNC paths
-- **Commands with direct UNC support**: `cat`, `download`, `cp`, `mv`, `mkdir` accept full UNC paths directly (e.g., `\\server\share\file.txt`)
-- **Limitation**: `cd` cannot change to UNC paths (Windows limitation) - use `net use` to map a drive letter first
-
 ## Installation
 
 1. Clone this repository into your Mythic server's `Mythic/InstalledServices/` directory

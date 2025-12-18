@@ -22,14 +22,20 @@ proc newHttpProfile*(): HttpProfile =
   # Set User-Agent
   result.client.headers = newHttpHeaders({"User-Agent": result.config.userAgent})
   
+  if result.config.debug:
+    echo "[DEBUG] HTTP Profile: Set User-Agent: ", result.config.userAgent
+  
   # Parse and add custom headers if provided (JSON format)
   if result.config.headers.len > 0:
     try:
       let headersJson = parseJson(result.config.headers)
       for key, val in headersJson.pairs:
         result.client.headers[key] = val.getStr()
+        if result.config.debug:
+          echo "[DEBUG] HTTP Profile: Added custom header: ", key, ": ", val.getStr()
     except:
-      discard  # Ignore header parsing errors
+      if result.config.debug:
+        echo "[DEBUG] HTTP Profile: Failed to parse custom headers"
   
   # Configure proxy if provided
   if result.config.proxyHost.len > 0 and result.config.proxyPort.len > 0:
@@ -38,20 +44,31 @@ proc newHttpProfile*(): HttpProfile =
     if result.config.proxyUser.len > 0 and result.config.proxyPass.len > 0:
       proxyUrl = "http://" & result.config.proxyUser & ":" & result.config.proxyPass & "@" & 
                  result.config.proxyHost & ":" & result.config.proxyPort
+    
+    if result.config.debug:
+      echo "[DEBUG] HTTP Profile: Configuring proxy: ", proxyUrl
+    
     try:
       result.client = newClientWrapperWithProxy(proxyUrl, result.config.debug)
       # Re-apply headers after creating new client with proxy
       result.client.headers = newHttpHeaders({"User-Agent": result.config.userAgent})
+      
+      if result.config.debug:
+        echo "[DEBUG] HTTP Profile: Re-applied User-Agent after proxy setup"
+      
       if result.config.headers.len > 0:
         try:
-
           let headersJson = parseJson(result.config.headers)
           for key, val in headersJson.pairs:
             result.client.headers[key] = val.getStr()
+            if result.config.debug:
+              echo "[DEBUG] HTTP Profile: Re-applied custom header: ", key, ": ", val.getStr()
         except:
-          discard
+          if result.config.debug:
+            echo "[DEBUG] HTTP Profile: Failed to re-apply custom headers after proxy setup"
     except:
-      discard  # Ignore proxy configuration errors
+      if result.config.debug:
+        echo "[DEBUG] HTTP Profile: Failed to configure proxy"
   
   # Don't load AES key yet - will be set after key exchange or checkin
 

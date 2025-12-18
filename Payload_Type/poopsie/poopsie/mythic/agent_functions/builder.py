@@ -213,6 +213,15 @@ class Poopsie(PayloadType):
             c2_params = c2.get_parameters_dict()
             c2_params["UUID"] = self.uuid
             c2_params["profile"] = profile
+            
+            # Validate tasking type for websocket profile - only supports Poll mode
+            if profile.lower() == "websocket":
+                tasking_type = c2_params.get("tasking_type", "").lower()
+                if tasking_type == "push":
+                    resp.build_message += "Error: WebSocket profile only supports 'Poll' tasking mode. 'Push' mode is not implemented.\n"
+                    resp.build_message += "Please select 'Poll' as the tasking type in the WebSocket C2 profile configuration.\n"
+                    resp.status = BuildStatus.Error
+                    return resp
 
             # Add build parameters
             c2_params["output_type"] = self.get_parameter("output_type")

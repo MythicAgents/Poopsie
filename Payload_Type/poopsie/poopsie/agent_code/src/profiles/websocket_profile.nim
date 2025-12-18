@@ -1,6 +1,6 @@
 ## WebSocket Profile - WebSocket C2 communication using 'ws' library with blocking waitFor()
 
-import std/[base64, strutils, json, asyncdispatch, random, os]
+import std/[base64, strutils, json, asyncdispatch, random, os, httpclient]
 import ws
 import ../config
 import ../utils/crypto
@@ -53,6 +53,12 @@ proc ensureConnection(profile: var WebSocketProfile): bool =
   try:
     if profile.config.debug:
       echo "[DEBUG] Connecting to WebSocket: ", profile.url
+    
+    # Note: ws library doesn't support custom headers in simple newWebSocket()
+    # Would require using Request object for custom headers
+    
+    if profile.config.debug:
+      echo "[DEBUG] WebSocket User-Agent: ", profile.config.userAgent, " (not configurable with ws library)"
     
     # Use waitFor() to block on async connection
     profile.ws = waitFor(newWebSocket(profile.url))

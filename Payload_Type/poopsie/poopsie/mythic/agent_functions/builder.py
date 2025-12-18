@@ -155,7 +155,7 @@ class Poopsie(PayloadType):
         ),
     ]
     
-    c2_profiles = ["http", "websocket"]
+    c2_profiles = ["http", "websocket", "httpx"]
 
     c2_parameter_deviations = {
         "http": {

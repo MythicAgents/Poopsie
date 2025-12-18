@@ -201,6 +201,12 @@ when defined(windows):
         else:
           echo "[HTTP_CLIENT] Content-Length: not present or invalid"
       
+      # Check if status code is success (2xx)
+      if statusCode < 200 or statusCode >= 300:
+        if client.debug:
+          echo "[HTTP_CLIENT] Non-success status code: ", statusCode
+        raise newException(IOError, "HTTP request failed with status code: " & $statusCode)
+      
       # Read response body
       result = ""
       var totalRead = 0
@@ -241,11 +247,18 @@ when defined(windows):
       if client.debug:
         echo "[HTTP_CLIENT] Total response body length: ", totalRead, " bytes"
     
+    except IOError as e:
+      # HTTP errors (non-2xx status codes) - re-raise to caller after cleanup
+      if client.debug:
+        echo "[HTTP_CLIENT] HTTP error: ", e.msg
+      raise
     except CatchableError as e:
+      # Other errors - log and return empty
       if client.debug:
         echo "[HTTP_CLIENT] Exception: ", e.msg
       result = ""
     finally:
+      # Always cleanup handles
       if hRequest != nil:
         WinHttpCloseHandle(hRequest)
       if hConnect != nil:

@@ -263,6 +263,7 @@ when defined(windows):
 else:
   # Linux: Use standard httpclient with SSL
   import std/httpclient
+  import std/net
   
   type
     HttpClientWrapper* = HttpClient
@@ -271,15 +272,27 @@ else:
   proc newHttpHeaders*(headers: openArray[(string, string)]): HttpHeaders =
     result = httpclient.newHttpHeaders(headers)
   
-  proc `[]=`*(headers: HttpHeaders, key, val: string) =
-    headers[key] = val
+  proc `[]=`*(h: HttpHeaders, key, val: string) =
+    ## Set a header value (replaces existing if present)
+    # HttpHeaders doesn't expose direct table access, so we delete then add
+    if h.hasKey(key):
+      h.del(key)
+    h.add(key, val)
   
   proc newClientWrapper*(debug: bool = false): HttpClientWrapper =
-    result = httpclient.newHttpClient()
+    if debug:
+      echo "[HTTP_CLIENT] Linux: Creating new HttpClient..."
+    result = httpclient.newHttpClient(sslContext = newContext(verifyMode = CVerifyNone))
+    if debug:
+      echo "[HTTP_CLIENT] Linux: HttpClient created successfully (SSL verification disabled)"
   
   proc newClientWrapperWithProxy*(proxyUrl: string, debug: bool = false): HttpClientWrapper =
+    if debug:
+      echo "[HTTP_CLIENT] Linux: Creating HttpClient with proxy: ", proxyUrl
     let proxy = httpclient.newProxy(proxyUrl)
-    result = httpclient.newHttpClient(proxy = proxy)
+    result = httpclient.newHttpClient(proxy = proxy, sslContext = newContext(verifyMode = CVerifyNone))
+    if debug:
+      echo "[HTTP_CLIENT] Linux: HttpClient with proxy created successfully (SSL verification disabled)"
   
   proc postContent*(client: HttpClientWrapper, url: string, body: string): string =
     result = httpclient.postContent(client, url, body)

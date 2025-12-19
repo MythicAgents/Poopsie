@@ -17,25 +17,42 @@ proc newHttpProfile*(): HttpProfile =
   ## Create a new HTTP profile
   result = HttpProfile()
   result.config = getConfig()
+  
+  if result.config.debug:
+    echo "[DEBUG] HTTP Profile: Creating HTTP client wrapper..."
+  
   result.client = newClientWrapper(result.config.debug)
+  
+  if result.config.debug:
+    echo "[DEBUG] HTTP Profile: HTTP client wrapper created"
   
   # Set User-Agent
   result.client.headers = newHttpHeaders({"User-Agent": result.config.userAgent})
   
   if result.config.debug:
-    echo "[DEBUG] HTTP Profile: Set User-Agent: ", result.config.userAgent
+    echo "[DEBUG] HTTP Profile: Set default User-Agent: ", result.config.userAgent
+    echo "[DEBUG] HTTP Profile: Custom headers config length: ", result.config.headers.len
+    if result.config.headers.len > 0:
+      echo "[DEBUG] HTTP Profile: Custom headers JSON: ", result.config.headers
   
   # Parse and add custom headers if provided (JSON format)
   if result.config.headers.len > 0:
+    if result.config.debug:
+      echo "[DEBUG] HTTP Profile: Parsing custom headers..."
     try:
       let headersJson = parseJson(result.config.headers)
+      if result.config.debug:
+        echo "[DEBUG] HTTP Profile: Custom headers parsed successfully"
       for key, val in headersJson.pairs:
         result.client.headers[key] = val.getStr()
         if result.config.debug:
           echo "[DEBUG] HTTP Profile: Added custom header: ", key, ": ", val.getStr()
-    except:
+    except Exception as e:
       if result.config.debug:
-        echo "[DEBUG] HTTP Profile: Failed to parse custom headers"
+        echo "[DEBUG] HTTP Profile: Failed to parse custom headers: ", e.msg
+  
+  if result.config.debug:
+    echo "[DEBUG] HTTP Profile: Header configuration complete"
   
   # Configure proxy if provided
   if result.config.proxyHost.len > 0 and result.config.proxyPort.len > 0:

@@ -1,5 +1,5 @@
 import ../config
-import std/[json, strformat]
+import std/[json, strformat, os, strutils]
 
 type
   ProcessEntry = object

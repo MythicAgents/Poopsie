@@ -1,6 +1,6 @@
 import ../config
 import ../utils/mythic_responses
-import std/[json, strformat, strutils]
+import std/[json, strformat, strutils, osproc, os]
 
 when defined(windows):
   import winim/lean
@@ -121,6 +121,56 @@ when defined(windows):
 when defined(posix):
   import std/osproc
 
+proc parseHexIP(hex: string): string =
+  ## Parse hex IP address (little-endian) from /proc/net to dotted decimal
+  ## Example: 0100007F -> 127.0.0.1
+  if hex.len != 8:
+    return "0.0.0.0"
+  try:
+    let a = parseHexInt(hex[6..7])
+    let b = parseHexInt(hex[4..5])
+    let c = parseHexInt(hex[2..3])
+    let d = parseHexInt(hex[0..1])
+    return &"{a}.{b}.{c}.{d}"
+  except:
+    return "0.0.0.0"
+
+proc parseHexIPv6(hex: string): string =
+  ## Parse hex IPv6 address from /proc/net to standard format
+  ## Example: 00000000000000000000000001000000 -> ::1
+  if hex.len != 32:
+    return "::"
+  try:
+    var parts: seq[string] = @[]
+    # Read in groups of 4 hex chars, but in little-endian order (reverse each group of 8)
+    for i in countup(0, 28, 8):
+      let group = hex[i+6..i+7] & hex[i+4..i+5] & hex[i+2..i+3] & hex[i..i+1]
+      let val = parseHexInt(group)
+      parts.add(&"{val:x}")
+    return parts.join(":")
+  except:
+    return "::"
+
+proc parseTcpState(stateHex: string): string =
+  ## Parse TCP state from hex to string
+  try:
+    let state = parseHexInt(stateHex)
+    case state
+    of 0x01: return "ESTABLISHED"
+    of 0x02: return "SYN_SENT"
+    of 0x03: return "SYN_RECV"
+    of 0x04: return "FIN_WAIT1"
+    of 0x05: return "FIN_WAIT2"
+    of 0x06: return "TIME_WAIT"
+    of 0x07: return "CLOSE"
+    of 0x08: return "CLOSE_WAIT"
+    of 0x09: return "LAST_ACK"
+    of 0x0A: return "LISTEN"
+    of 0x0B: return "CLOSING"
+    else: return "UNKNOWN"
+  except:
+    return "UNKNOWN"
+
 proc netstat*(taskId: string, params: JsonNode): JsonNode =
   ## Get all active network connections and sockets
   let cfg = getConfig()
@@ -233,52 +283,138 @@ proc netstat*(taskId: string, params: JsonNode): JsonNode =
             connections.add(conn)
     
     when defined(posix):
-      # Use ss or netstat command on Linux
+      # Read directly from /proc/net/tcp and /proc/net/udp like oopsie does
       try:
-        let (output, exitCode) = execCmdEx("ss -tulpn 2>/dev/null || netstat -tulpn 2>/dev/null")
-        if exitCode == 0:
-          for line in output.splitLines():
-            let trimmed = line.strip()
-            if trimmed.len == 0 or trimmed.startsWith("Netid") or trimmed.startsWith("Proto"):
-              continue
-            
-            let parts = trimmed.split()
-            if parts.len >= 5:
-              var conn = %*{
-                "proto": parts[0].toUpperAscii(),
-                "local_addr": "",
-                "local_port": 0,
-                "remote_addr": nil,
-                "remote_port": nil,
-                "associated_pids": newJArray(),
-                "state": nil
-              }
+        # Parse /proc/net/tcp
+        if fileExists("/proc/net/tcp"):
+          let tcpData = readFile("/proc/net/tcp")
+          for line in tcpData.splitLines()[1..^1]:  # Skip header
+            let parts = line.strip().split()
+            if parts.len >= 10:
+              # Format: sl local_address rem_address st tx_queue rx_queue tr tm->when retrnsmt uid timeout inode
+              # Example: 0: 0100007F:0CEA 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 28629
               
-              # Parse local address
-              if ':' in parts[3]:
-                let localParts = parts[3].rsplit(':', 1)
+              # Parse local address (hex IP:hex port)
+              if ':' in parts[1]:
+                let localParts = parts[1].split(':')
                 if localParts.len == 2:
-                  conn["local_addr"] = %localParts[0]
                   try:
-                    conn["local_port"] = %parseInt(localParts[1])
+                    let localIp = parseHexIP(localParts[0])
+                    let localPort = parseHexInt(localParts[1])
+                    
+                    var conn = %*{
+                      "proto": "TCP",
+                      "local_addr": localIp,
+                      "local_port": localPort,
+                      "remote_addr": nil,
+                      "remote_port": nil,
+                      "associated_pids": newJArray(),
+                      "state": parseTcpState(parts[3])
+                    }
+                    
+                    # Parse remote address
+                    if ':' in parts[2]:
+                      let remoteParts = parts[2].split(':')
+                      if remoteParts.len == 2 and remoteParts[0] != "00000000":
+                        try:
+                          conn["remote_addr"] = %parseHexIP(remoteParts[0])
+                          conn["remote_port"] = %parseHexInt(remoteParts[1])
+                        except:
+                          discard
+                    
+                    connections.add(conn)
                   except:
                     discard
-              
-              # Parse remote address if available
-              if parts.len > 4 and ':' in parts[4] and parts[4] != "0.0.0.0:*" and parts[4] != ":::*":
-                let remoteParts = parts[4].rsplit(':', 1)
-                if remoteParts.len == 2:
-                  conn["remote_addr"] = %remoteParts[0]
+        
+        # Parse /proc/net/tcp6
+        if fileExists("/proc/net/tcp6"):
+          let tcp6Data = readFile("/proc/net/tcp6")
+          for line in tcp6Data.splitLines()[1..^1]:  # Skip header
+            let parts = line.strip().split()
+            if parts.len >= 10:
+              if ':' in parts[1]:
+                let localParts = parts[1].split(':')
+                if localParts.len == 2:
                   try:
-                    conn["remote_port"] = %parseInt(remoteParts[1])
+                    let localIp = parseHexIPv6(localParts[0])
+                    let localPort = parseHexInt(localParts[1])
+                    
+                    var conn = %*{
+                      "proto": "TCP",
+                      "local_addr": localIp,
+                      "local_port": localPort,
+                      "remote_addr": nil,
+                      "remote_port": nil,
+                      "associated_pids": newJArray(),
+                      "state": parseTcpState(parts[3])
+                    }
+                    
+                    if ':' in parts[2]:
+                      let remoteParts = parts[2].split(':')
+                      if remoteParts.len == 2 and remoteParts[0] != "00000000000000000000000000000000":
+                        try:
+                          conn["remote_addr"] = %parseHexIPv6(remoteParts[0])
+                          conn["remote_port"] = %parseHexInt(remoteParts[1])
+                        except:
+                          discard
+                    
+                    connections.add(conn)
                   except:
                     discard
-              
-              # Parse state for TCP
-              if parts[0].toUpperAscii().startsWith("TCP") and parts.len > 1:
-                conn["state"] = %parts[1]
-              
-              connections.add(conn)
+        
+        # Parse /proc/net/udp
+        if fileExists("/proc/net/udp"):
+          let udpData = readFile("/proc/net/udp")
+          for line in udpData.splitLines()[1..^1]:  # Skip header
+            let parts = line.strip().split()
+            if parts.len >= 10:
+              if ':' in parts[1]:
+                let localParts = parts[1].split(':')
+                if localParts.len == 2:
+                  try:
+                    let localIp = parseHexIP(localParts[0])
+                    let localPort = parseHexInt(localParts[1])
+                    
+                    var conn = %*{
+                      "proto": "UDP",
+                      "local_addr": localIp,
+                      "local_port": localPort,
+                      "remote_addr": nil,
+                      "remote_port": nil,
+                      "associated_pids": newJArray(),
+                      "state": nil
+                    }
+                    
+                    connections.add(conn)
+                  except:
+                    discard
+        
+        # Parse /proc/net/udp6
+        if fileExists("/proc/net/udp6"):
+          let udp6Data = readFile("/proc/net/udp6")
+          for line in udp6Data.splitLines()[1..^1]:  # Skip header
+            let parts = line.strip().split()
+            if parts.len >= 10:
+              if ':' in parts[1]:
+                let localParts = parts[1].split(':')
+                if localParts.len == 2:
+                  try:
+                    let localIp = parseHexIPv6(localParts[0])
+                    let localPort = parseHexInt(localParts[1])
+                    
+                    var conn = %*{
+                      "proto": "UDP",
+                      "local_addr": localIp,
+                      "local_port": localPort,
+                      "remote_addr": nil,
+                      "remote_port": nil,
+                      "associated_pids": newJArray(),
+                      "state": nil
+                    }
+                    
+                    connections.add(conn)
+                  except:
+                    discard
       except:
         discard
     

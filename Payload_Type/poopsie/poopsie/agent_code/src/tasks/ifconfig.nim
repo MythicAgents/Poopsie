@@ -1,6 +1,6 @@
 import ../config
 import ../utils/mythic_responses
-import std/[json, strformat, strutils]
+import std/[json, strformat, strutils, osproc]
 
 when defined(windows):
   import winim/lean
@@ -134,7 +134,7 @@ when defined(windows):
       return ""
 
 when defined(posix):
-  import std/[strutils, tables]
+  import std/[os, strutils, tables]
   
   proc readFile(path: string): string =
     try:
@@ -284,7 +284,6 @@ proc ifconfig*(taskId: string, params: JsonNode): JsonNode =
       # Try to get addresses using getifaddrs-like approach via /proc/net/if_inet6 and ip command
       # Read IPv4 addresses
       try:
-        import std/osproc
         let (output, exitCode) = execCmdEx("ip -4 addr show")
         if exitCode == 0:
           var currentIface = ""
@@ -294,7 +293,7 @@ proc ifconfig*(taskId: string, params: JsonNode): JsonNode =
               # New interface line
               let parts = line.split()
               if parts.len > 1:
-                currentIface = parts[1].strip(':')
+                currentIface = parts[1].strip(chars = {':'})
             elif trimmed.startsWith("inet "):
               let parts = trimmed.split()
               if parts.len > 1 and interfaceMap.hasKey(currentIface):
@@ -305,7 +304,6 @@ proc ifconfig*(taskId: string, params: JsonNode): JsonNode =
       
       # Read IPv6 addresses
       try:
-        import std/osproc
         let (output, exitCode) = execCmdEx("ip -6 addr show")
         if exitCode == 0:
           var currentIface = ""
@@ -314,7 +312,7 @@ proc ifconfig*(taskId: string, params: JsonNode): JsonNode =
             if line.len > 0 and line[0].isDigit():
               let parts = line.split()
               if parts.len > 1:
-                currentIface = parts[1].strip(':')
+                currentIface = parts[1].strip(chars = {':'})
             elif trimmed.startsWith("inet6 "):
               let parts = trimmed.split()
               if parts.len > 1 and interfaceMap.hasKey(currentIface):

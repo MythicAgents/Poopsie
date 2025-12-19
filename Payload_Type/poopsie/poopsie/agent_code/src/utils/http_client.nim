@@ -222,9 +222,6 @@ when defined(windows):
             echo "[HTTP_CLIENT] WinHttpQueryDataAvailable failed: ", GetLastError()
           break
         
-        if client.debug:
-          echo "[HTTP_CLIENT] Bytes available: ", bytesAvailable
-        
         if bytesAvailable == 0:
           break
         
@@ -236,9 +233,6 @@ when defined(windows):
           if client.debug:
             echo "[HTTP_CLIENT] WinHttpReadData failed: ", GetLastError()
           break
-        
-        if client.debug:
-          echo "[HTTP_CLIENT] Read ", bytesRead, " bytes"
         
         if bytesRead > 0:
           result.add(buffer[0..<bytesRead])

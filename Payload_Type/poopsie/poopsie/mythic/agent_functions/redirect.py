@@ -60,7 +60,7 @@ class RedirectCommand(CommandBase):
     help_cmd = (
         "redirect -Port 445 -RemoteIP 1.2.3.4 -RemotePort 80"
     )
-    description = "Start listening on a port on the target host and forwarding traffic through Mythic to the remoteIP:remotePort. Stop this with the jobs and jobkill commands"
+    description = "Start listening on a port on the target host and forwarding traffic to the remoteIP:remotePort. Stop this with the jobs and jobkill commands"
     version = 1
     author = "@haha150"
     argument_class = RedirectArguments
@@ -71,23 +71,9 @@ class RedirectCommand(CommandBase):
             TaskID=taskData.Task.ID,
             Success=True,
         )
-        resp = await SendMythicRPCProxyStartCommand(MythicRPCProxyStartMessage(
-            TaskID=taskData.Task.ID,
-            PortType="rpfwd",
-            LocalPort=taskData.args.get_arg("port"),
-            RemoteIP=taskData.args.get_arg("remote_ip"),
-            RemotePort=taskData.args.get_arg("remote_port"),
-        ))
-
-        if not resp.Success:
-            response.TaskStatus = MythicStatus.Error
-            response.Stderr = resp.Error
-            await SendMythicRPCResponseCreate(MythicRPCResponseCreateMessage(
-                TaskID=taskData.Task.ID,
-                Response=resp.Error.encode()
-            ))
-        else:
-            response.DisplayParams = f"on port {taskData.args.get_arg('port')} sending to {taskData.args.get_arg('remote_ip')}:{taskData.args.get_arg('remote_port')}"
+        # Redirect does NOT proxy through Mythic - it's direct TCP forwarding on the agent
+        # No need to register with Mythic's proxy system
+        response.DisplayParams = f"on port {taskData.args.get_arg('port')} sending to {taskData.args.get_arg('remote_ip')}:{taskData.args.get_arg('remote_port')}"
         return response
 
 

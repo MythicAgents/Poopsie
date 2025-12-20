@@ -282,7 +282,10 @@ else:
   proc newClientWrapper*(debug: bool = false): HttpClientWrapper =
     if debug:
       echo "[HTTP_CLIENT] Linux: Creating new HttpClient..."
-    result = httpclient.newHttpClient(sslContext = newContext(verifyMode = CVerifyNone))
+    when defined(ssl):
+      result = httpclient.newHttpClient(sslContext = newContext(verifyMode = CVerifyNone))
+    else:
+      result = httpclient.newHttpClient()
     if debug:
       echo "[HTTP_CLIENT] Linux: HttpClient created successfully (SSL verification disabled)"
   
@@ -290,7 +293,10 @@ else:
     if debug:
       echo "[HTTP_CLIENT] Linux: Creating HttpClient with proxy: ", proxyUrl
     let proxy = httpclient.newProxy(proxyUrl)
-    result = httpclient.newHttpClient(proxy = proxy, sslContext = newContext(verifyMode = CVerifyNone))
+    when defined(ssl):
+      result = httpclient.newHttpClient(proxy = proxy, sslContext = newContext(verifyMode = CVerifyNone))
+    else:
+      result = httpclient.newHttpClient(proxy = proxy)
     if debug:
       echo "[HTTP_CLIENT] Linux: HttpClient with proxy created successfully (SSL verification disabled)"
   

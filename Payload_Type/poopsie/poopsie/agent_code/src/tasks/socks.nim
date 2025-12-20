@@ -1,7 +1,7 @@
 ## SOCKS5 Proxy task for tunneling network traffic through Mythic
 ## Implements SOCKS5 protocol with threading for bidirectional forwarding
 
-import std/[json, net, nativesockets, strutils, base64, strformat, tables]
+import std/[json, net, nativesockets, strutils, base64, strformat, tables, os]
 import ../config
 import ../utils/mythic_responses
 
@@ -100,8 +100,7 @@ proc readFromDestination(conn: ptr SocksConnectionObj) {.thread.} =
         conn[].outChannel[].send(buffer[0..<bytesRead])
       elif bytesRead < 0:
         # Non-blocking socket would block - no data available
-        # Use cpuRelax instead of sleep for minimal latency
-        cpuRelax()
+        sleep(1)  # Sleep 1ms to avoid busy-waiting
       
     except:
       # Socket error - connection closed or reset
@@ -128,25 +127,25 @@ proc writeToDestination(conn: ptr SocksConnectionObj) {.thread.} =
             sent += bytesSent
           else:
             # send returned 0 on non-blocking socket, yield and retry
-            cpuRelax()
+            sleep(1)  # Sleep 1ms to avoid busy-waiting
         except OSError as e:
           # Treat EWOULDBLOCK/WSAEWOULDBLOCK as congestion, yield and retry
           when defined(windows):
             const WsaWouldBlock = 10035'i32
             if e.errorCode.int32 == WsaWouldBlock:
-              cpuRelax()
+              sleep(1)  # Sleep 1ms to avoid busy-waiting
               continue
           else:
             const EwouldBlock = 11'i32
             if e.errorCode.int32 == EwouldBlock:
-              cpuRelax()
+              sleep(1)  # Sleep 1ms to avoid busy-waiting
               continue
           # Any other error closes the connection
           conn[].active = false
           break
     else:
-      # Use cpuRelax for minimal latency when waiting for data
-      cpuRelax()
+      # Sleep briefly when no data to avoid busy-waiting
+      sleep(1)  # Sleep 1ms
 
 proc buildSocks5Reply(replyCode: uint8, localAddr: string, localPort: uint16): seq[byte] =
   ## Build SOCKS5 reply packet

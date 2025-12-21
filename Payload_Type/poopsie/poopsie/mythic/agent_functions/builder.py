@@ -10,7 +10,6 @@ from pathlib import Path
 from mythic_container.PayloadBuilder import *
 from mythic_container.MythicRPC import *
 
-# Import ShellcodeRDI for shellcode generation
 sys.path.append(str(pathlib.Path(".") / "poopsie" / "agent_code"))
 from ShellcodeRDI import ConvertToShellcode, HashFunctionName
 
@@ -31,7 +30,6 @@ class Poopsie(PayloadType):
     supports_multiple_c2_instances_in_build = False
     supports_multiple_c2_in_build = False
     
-    # Shellcode options
     shellcode_format_options = ["Binary", "Base64", "C", "CSharp", "Hex", "Ruby", "Python"]
     shellcode_bypass_options = ["None", "Abort on fail", "Continue on fail"]
     
@@ -178,15 +176,12 @@ class Poopsie(PayloadType):
     async def build(self) -> BuildResponse:
         resp = BuildResponse(status=BuildStatus.Error)
         try:
-            # Get build parameters
-            selected_os = self.selected_os  # Get selected OS from Mythic
+            selected_os = self.selected_os
             
             resp.build_message += f"Building Nim payload for {selected_os}...\n"
 
-            # Set file extension based on OS and output type
             output_type = self.get_parameter("output_type")
             
-            # Validate output type for OS
             if selected_os == "Linux" and output_type in ["Service", "Shellcode"]:
                 resp.build_message += f"Linux builds do not support output type: {output_type}\n"
                 resp.status = BuildStatus.Error
@@ -197,24 +192,21 @@ class Poopsie(PayloadType):
                     self.file_extension = "dll"
                 elif output_type == "Shellcode":
                     self.file_extension = "bin"
-                else:  # Executable or Service
+                else:
                     self.file_extension = "exe"
             else:
                 if output_type == "DLL":
-                    self.file_extension = "so"  # Shared library for Linux
+                    self.file_extension = "so"
                 else:
                     self.file_extension = "bin"
 
-            # Prepare environment variables for build (like oopsie does)
             c2 = self.c2info[0]
             profile = c2.get_c2profile()["name"]
 
-            # Get all C2 parameters and add UUID like oopsie does
             c2_params = c2.get_parameters_dict()
             c2_params["UUID"] = self.uuid
             c2_params["profile"] = profile
             
-            # Validate tasking type for websocket profile - only supports Poll mode
             if profile.lower() == "websocket":
                 tasking_type = c2_params.get("tasking_type", "").lower()
                 if tasking_type == "push":
@@ -223,11 +215,9 @@ class Poopsie(PayloadType):
                     resp.status = BuildStatus.Error
                     return resp
 
-            # Add build parameters
             c2_params["output_type"] = self.get_parameter("output_type")
             c2_params["debug"] = str(self.get_parameter("debug"))
             
-            # Force sleep_obfuscation to "none" for x86 (EKKO only works on x64)
             architecture = self.get_parameter("architecture")
             sleep_obfuscation = self.get_parameter("sleep_obfuscation")
             if architecture == "x86" and sleep_obfuscation == "ekko":
@@ -237,18 +227,15 @@ class Poopsie(PayloadType):
             
             c2_params["self_delete"] = str(self.get_parameter("self_delete"))
             
-            # Add service name for service builds
             if output_type == "Service":
                 service_name = self.get_parameter("service_name")
                 if not service_name:
                     service_name = "PoopsieService"
                 c2_params["SERVICE_NAME"] = service_name
 
-            # Build environment from c2_params - convert all to env format
             build_env = {}
             for key, val in c2_params.items():
                 if isinstance(val, str):
-                    # Handle raw_c2_config specially - fetch file content like oopsie
                     if key == "raw_c2_config":
                         response = await SendMythicRPCFileGetContent(MythicRPCFileGetContentMessage(val))
                         if response.Success:
@@ -264,16 +251,12 @@ class Poopsie(PayloadType):
                             resp.build_message = "Failed to get raw C2 config file"
                             resp.status = BuildStatus.Error
                             return resp
-                    # Sanitize all string values (strip whitespace)
                     build_env[key.upper()] = val.strip()
                 elif isinstance(val, (int, bool)):
                     build_env[key.upper()] = str(val)
                 elif isinstance(val, dict):
-                    # Store all dicts as JSON (headers, raw_c2_config, etc.)
-                    # Java will parse the headers JSON and extract all headers including User-Agent
                     build_env[key.upper()] = json.dumps(val)
                 elif isinstance(val, list):
-                    # Handle lists (like callback_domains for httpx)
                     build_env[key.upper()] = json.dumps(val)
                 else:
                     build_env[key.upper()] = str(val)
@@ -285,20 +268,16 @@ class Poopsie(PayloadType):
                 StepSuccess=True
             ))
 
-            # Add build environment to message for visibility
             resp.build_message += "\nBuild Configuration:\n"
             for key, value in build_env.items():
-                # Mask UUID for security
                 display_value = value
                 resp.build_message += f"  {key}: {display_value}\n"
             resp.build_message += "\n"
 
-            # Build Nim agent
             output_type = self.get_parameter("output_type")
             resp.build_message += f"Compiling Nim agent ({output_type}) for {selected_os}...\n"
             build_result = await self.run_nim_build(selected_os, output_type, build_env)
             
-            # Add build messages from run_nim_build
             if "messages" in build_result:
                 for msg in build_result["messages"]:
                     resp.build_message += msg + "\n"
@@ -323,12 +302,9 @@ class Poopsie(PayloadType):
             resp.build_message += f"Build command: {build_result['command']}\n"
             output_path = build_result["path"]
 
-            # Handle shellcode generation if needed
             if output_type == "Shellcode" and selected_os == "Windows":
                 resp.build_message += "Converting to shellcode...\n"
                 
-                # For shellcode, we need to compile as DLL first
-                # Recompile with DLL flags
                 dll_build_result = await self.run_nim_build(selected_os, "DLL", build_env)
                 if not dll_build_result["success"]:
                     resp.build_message += f"\nDLL build for shellcode failed: {dll_build_result['error']}\n"
@@ -343,10 +319,8 @@ class Poopsie(PayloadType):
                 
                 dll_path = dll_build_result["path"]
                 
-                # Generate shellcode using selected tool
                 tool = self.get_parameter("tool")
                 if tool == "sRDI":
-                    # Use sRDI
                     with open(dll_path, "rb") as f:
                         dll_bytes = f.read()
                     flags = int(self.get_parameter("sRDI_flags"), 16) if self.get_parameter("sRDI_flags") else 0
@@ -356,7 +330,6 @@ class Poopsie(PayloadType):
                         f.write(shellcode)
                     resp.build_message += f"Successfully converted to shellcode using sRDI (flags={hex(flags)})\n"
                 else:
-                    # Use donut
                     output_path = self.agent_code_path / "src" / "poopsie.bin"
                     shellcode_format = self.shellcode_format_options.index(self.get_parameter('shellcode_format')) + 1
                     shellcode_bypass = self.shellcode_bypass_options.index(self.get_parameter('shellcode_bypass')) + 1
@@ -389,7 +362,6 @@ class Poopsie(PayloadType):
                     StepSuccess=True
                 ))
 
-            # Read the final payload
             resp.build_message += "Reading final payload...\n"
             with open(output_path, "rb") as f:
                 resp.payload = f.read()
@@ -404,7 +376,6 @@ class Poopsie(PayloadType):
             resp.status = BuildStatus.Success
             resp.build_message += f"\nSuccessfully built Nim payload for {selected_os}\n"
 
-            # Adjust filename based on OS
             if self.get_parameter("adjust_filename"):
                 resp.updated_filename = self.adjust_file_name(self.filename, selected_os)
 
@@ -417,31 +388,22 @@ class Poopsie(PayloadType):
     async def run_nim_build(self, selected_os: str, output_type: str, build_env: dict) -> dict:
         """Compile Nim agent with environment variables"""
         try:
-            # Collect build messages to return
             build_messages = []
             
-            # Set up environment
             env = os.environ.copy()
             env.update(build_env)
             
-            # Get architecture selection
             architecture = self.get_parameter("architecture")
             nim_cpu = "amd64" if architecture == "x64" else "i386"
             
-            # Check if OpenSSL is needed:
-            # 1. RSA key exchange always requires OpenSSL
-            # 2. HTTPS/WSS on Windows uses custom WinHTTP - no OpenSSL needed
-            # 3. HTTPS/WSS on Linux requires OpenSSL for httpclient
             encrypted_exchange = build_env.get("ENCRYPTED_EXCHANGE_CHECK", "").strip().upper()
             callback_host = build_env.get("CALLBACK_HOST", "").lower()
             profile = build_env.get("PROFILE", "").lower()
             
             needs_openssl_for_exchange = encrypted_exchange in ["T", "TRUE"]
             
-            # Windows uses custom WinHTTP implementation for HTTPS (no OpenSSL needed)
-            # Linux still needs OpenSSL for httpclient HTTPS support
             if selected_os == "Windows":
-                needs_openssl_for_transport = False  # Custom WinHTTP uses native Windows API
+                needs_openssl_for_transport = False
             else:
                 needs_openssl_for_transport = (
                     callback_host.startswith("https://") or 
@@ -451,30 +413,26 @@ class Poopsie(PayloadType):
             
             use_openssl = needs_openssl_for_exchange or needs_openssl_for_transport
             
-            # Determine target OS for cross-compilation
             nim_args = [
                 "-d:release",
                 "--opt:size",
-                "--mm:orc",                    # Use ORC memory management (default in Nim 2.0+)
-                "--panics:on",                 # Use panics instead of exceptions (smaller binary)
-                "--passC:-flto",               # Link-time optimization (smaller binary)
-                "--passL:-flto",               # Link-time optimization
-                "--passL:-s",                  # Strip symbols (smaller binary)
-                "--d:strip",                   # Strip debug info
-                "--d:useMalloc",               # Use system malloc (smaller)
-                "--parallelBuild:0",           # Auto-detect CPU cores for faster compilation
-                "--threads:on",                # Enable threading support (required for PTY)
+                "--mm:orc",
+                "--panics:on",
+                "--passC:-flto",
+                "--passL:-flto",
+                "--passL:-s",
+                "--d:strip",
+                "--d:useMalloc",
+                "--parallelBuild:0",
+                "--threads:on",
             ]
             
-            # Add OpenSSL linking if needed for RSA exchange or HTTPS/WSS transport
             if use_openssl:
                 if selected_os == "Windows":
-                    # Windows: Static OpenSSL only for RSA (custom WinHTTP handles HTTPS)
-                    # Select correct OpenSSL path based on architecture
                     if architecture == "x64":
                         openssl_path = "/opt/openssl-mingw64-static"
                         openssl_lib = f"{openssl_path}/lib64"
-                    else:  # x86
+                    else:
                         openssl_path = "/opt/openssl-mingw32-static"
                         openssl_lib = f"{openssl_path}/lib"
                     
@@ -493,9 +451,8 @@ class Poopsie(PayloadType):
                     
                     build_messages.append(f"Static OpenSSL 3.5.4 enabled ({architecture}, RSA key exchange, no DLL dependencies)")
                 elif selected_os == "Linux":
-                    # Linux: Dynamic linking to system OpenSSL (for both RSA and HTTPS)
                     nim_args.extend([
-                        "-d:ssl",  # Enable SSL support
+                        "-d:ssl",
                     ])
                     if needs_openssl_for_exchange and needs_openssl_for_transport:
                         build_messages.append("Dynamic OpenSSL enabled (HTTPS/WSS transport + RSA key exchange)")
@@ -505,30 +462,26 @@ class Poopsie(PayloadType):
                         build_messages.append("Dynamic OpenSSL enabled (HTTPS/WSS transport)")
                     build_messages.append("  Note: Target system must have OpenSSL 1.1+ or 3.x installed")
             else:
-                # No OpenSSL needed
                 if selected_os == "Windows":
                     build_messages.append("AESPSK mode (no RSA)")
                 else:
                     build_messages.append("AESPSK mode (no RSA, standard httpclient)")
             
-            # Add Windows-specific transport messages
             if selected_os == "Windows":
                 if callback_host.startswith("https://") or callback_host.startswith("wss://"):
                     build_messages.append("Custom WinHTTP client (native Windows API for HTTPS/WSS transport, no DLLs)")
             
-            # Add DLL-specific compilation flags
             if output_type == "DLL":
                 nim_args.extend([
-                    "--app:lib",               # Build as shared library
-                    "--nomain",                # Don't generate main entry point
-                    "-d:dll",                  # Define dll compilation flag
+                    "--app:lib",
+                    "--nomain",
+                    "-d:dll",
                 ])
             elif output_type == "Service":
                 nim_args.extend([
-                    "-d:service",              # Define service compilation flag
+                    "-d:service",
                 ])
             if selected_os == "Windows":
-                # Cross-compile for Windows using MinGW
                 if architecture == "x64":
                     nim_args.extend([
                         "--os:windows",
@@ -536,39 +489,34 @@ class Poopsie(PayloadType):
                         "--cc:gcc",
                         "--gcc.exe:x86_64-w64-mingw32-gcc",
                         "--gcc.linkerexe:x86_64-w64-mingw32-gcc",
-                        "--passL:-static"          # Static link to avoid MinGW DLL dependencies
+                        "--passL:-static"
                     ])
-                else:  # x86
+                else:
                     nim_args.extend([
                         "--os:windows",
                         "--cpu:i386",
                         "--cc:gcc",
                         "--gcc.exe:i686-w64-mingw32-gcc",
                         "--gcc.linkerexe:i686-w64-mingw32-gcc",
-                        "--passL:-static"          # Static link to avoid MinGW DLL dependencies
+                        "--passL:-static"
                     ])
                 if output_type == "DLL":
                     output_name = "poopsie.dll"
                 else:
-                    output_name = "poopsie.exe"  # Service and Executable both output .exe
+                    output_name = "poopsie.exe"
             elif selected_os == "Linux":
                 nim_args.extend(["--os:linux", f"--cpu:{nim_cpu}"])
                 output_name = "libpoopsie.so" if output_type == "DLL" else "poopsie"
             else:
                 output_name = "libpoopsie.so" if output_type == "DLL" else "poopsie"
             
-            # Build command: nim c directly (faster than nimble for rebuilds)
-            # Note: Dependencies should already be installed via nimble install in Dockerfile
             cmd_args = ["nim", "c"] + nim_args + ["src/poopsie.nim"]
             
-            # Enable ccache for faster recompilation (if available)
             if os.path.exists("/usr/lib/ccache"):
                 env["PATH"] = f"/usr/lib/ccache:{env.get('PATH', '')}"
             
-            # Build the command string for display (escape quotes in values for shell)
             env_parts = []
             for k, v in build_env.items():
-                # Escape single quotes by replacing ' with '\''
                 escaped_value = str(v).replace("'", "'\\''")
                 env_parts.append(f"{k}='{escaped_value}'")
             env_str = ' '.join(env_parts)
@@ -594,7 +542,6 @@ class Poopsie(PayloadType):
                     "messages": build_messages
                 }
             
-            # Check if output file exists (compiled binary is in src/ directory)
             output_path = self.agent_code_path / "src" / output_name
             if not output_path.exists():
                 return {
@@ -623,8 +570,6 @@ class Poopsie(PayloadType):
         output_type = self.get_parameter("output_type")
         architecture = self.get_parameter("architecture")
         
-        # Add architecture suffix (e.g., poopsie-x64.exe or poopsie-x86.dll)
-        # Check if suffix already exists to avoid duplicates on rebuild
         arch_suffix = f"_{architecture}"
         if not original_filename.endswith(arch_suffix):
             original_filename += arch_suffix
@@ -634,7 +579,7 @@ class Poopsie(PayloadType):
                 return original_filename + ".dll"
             elif output_type == "Shellcode":
                 return original_filename + ".bin"
-            else:  # Executable or Service
+            else:
                 return original_filename + ".exe"
         else:
             if output_type == "DLL":

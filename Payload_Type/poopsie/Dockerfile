@@ -1,6 +1,5 @@
 FROM debian:bookworm-slim
 
-# Install required packages including Nim dependencies
 RUN apt-get update && apt-get install -y \
     python3.11 \
     python3-pip \
@@ -21,7 +20,6 @@ RUN apt-get update && apt-get install -y \
     ccache \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
 WORKDIR /tmp
 COPY requirements.txt .
 RUN python3.11 -m venv /opt/venv && \
@@ -29,22 +27,17 @@ RUN python3.11 -m venv /opt/venv && \
     /opt/venv/bin/pip install -r requirements.txt && \
     rm requirements.txt
 
-# Set the virtual environment path
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Install Nim compiler and nimble
 RUN curl https://nim-lang.org/choosenim/init.sh -sSf | sh -s -- -y && \
     echo 'export PATH=/root/.nimble/bin:$PATH' >> /root/.bashrc
 
 ENV PATH="/root/.nimble/bin:$PATH"
 
-# Copy only the .nimble file first for better Docker layer caching
-# This way, Nim dependencies are only re-installed if .nimble changes
 WORKDIR /Mythic/poopsie/agent_code
 COPY poopsie/agent_code/poopsie.nimble .
 RUN /root/.nimble/bin/nimble install -y --depsOnly
 
-# Install donut for shellcode generation (small, fast download)
 RUN curl -L -o donut_shellcode-2.0.0.tar.gz https://github.com/MEhrn00/donut/releases/download/v2.0.0/donut_shellcode-2.0.0.tar.gz && \
     tar -xf donut_shellcode-2.0.0.tar.gz && \
     cd donut_shellcode-2.0.0 && \
@@ -53,14 +46,9 @@ RUN curl -L -o donut_shellcode-2.0.0.tar.gz https://github.com/MEhrn00/donut/rel
     cd .. && \
     rm -rf donut_shellcode-2.0.0 donut_shellcode-2.0.0.tar.gz
 
-# Build minimal static OpenSSL 3.5.4 for Windows (mingw-w64) - RSA ONLY
-# This layer is cached and only rebuilt if OpenSSL version changes
-# Minimal build: Only RSA crypto, no SSL/TLS protocols (~1MB smaller)
-# Build time: ~15-20 minutes for both x64 and x86 (one-time, then cached)
 RUN mkdir -p /opt/openssl-build && cd /opt/openssl-build && \
     wget -q https://www.openssl.org/source/openssl-3.5.4.tar.gz && \
     tar -xzf openssl-3.5.4.tar.gz && \
-    # Build for x64 (64-bit)
     cd openssl-3.5.4 && \
     ./Configure mingw64 \
         --cross-compile-prefix=x86_64-w64-mingw32- \
@@ -70,7 +58,6 @@ RUN mkdir -p /opt/openssl-build && cd /opt/openssl-build && \
     make -j$(nproc) && \
     make install && \
     make clean && \
-    # Build for x86 (32-bit)
     ./Configure mingw \
         --cross-compile-prefix=i686-w64-mingw32- \
         --prefix=/opt/openssl-mingw32-static \
@@ -80,13 +67,10 @@ RUN mkdir -p /opt/openssl-build && cd /opt/openssl-build && \
     make install && \
     cd / && rm -rf /opt/openssl-build
 
-# Enable ccache for faster recompilation
 ENV PATH="/usr/lib/ccache:$PATH"
 ENV CCACHE_DIR="/tmp/ccache"
 ENV CCACHE_MAXSIZE="500M"
 
-# Copy the rest of the project files last (these change most frequently)
-# This ensures previous layers are cached and not rebuilt unnecessarily
 WORKDIR /Mythic
 COPY main.py main.py
 COPY poopsie poopsie

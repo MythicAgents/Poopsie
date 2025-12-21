@@ -140,7 +140,7 @@ class RunAsCommand(CommandBase):
     help_cmd = "runas"
     description = "Execute a program as another user using CreateProcessWithLogonW. Similar to Windows 'runas' command."
     version = 1
-    author = "@ItsWhoAmI"
+    author = "@haha150"
     supported_ui_features = ["runas"]
     argument_class = RunAsArguments
     attackmapping = ["T1134", "T1134.002"]

@@ -151,6 +151,15 @@ class Poopsie(PayloadType):
             default_value=True,
             required=False,
         ),
+        BuildParameter(
+            name="compress_payload",
+            parameter_type=BuildParameterType.ChooseOne,
+            description="Payload compression option.",
+            default_value="none",
+            choices=["none", "upx"],
+            required=True,
+            supported_os=["Windows", "Linux"],
+        ),
     ]
     
     c2_profiles = ["http", "websocket", "httpx"]
@@ -169,6 +178,7 @@ class Poopsie(PayloadType):
     build_steps = [
         BuildStep(step_name="Configuration", step_description="Preparing build configuration"),
         BuildStep(step_name="Compiling", step_description="Building payload with Nim"),
+        BuildStep(step_name="Compressing", step_description="Compressing payload"),
         BuildStep(step_name="Shellcode", step_description="Converting to Shellcode"),
         BuildStep(step_name="Finalizing", step_description="Packaging final payload"),
     ]
@@ -300,11 +310,37 @@ class Poopsie(PayloadType):
                 StepSuccess=True
             ))
             resp.build_message += f"Build command: {build_result['command']}\n"
+
             output_path = build_result["path"]
+
+            compress_payload = self.get_parameter("compress_payload")
+            if not (output_type == "Shellcode" and selected_os == "Windows"):
+                strip_cmd = f"strip {output_path}"
+                proc = await asyncio.create_subprocess_shell(
+                    strip_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await proc.communicate()
+                if proc.returncode != 0:
+                    resp.build_message += f"[strip] {strip_cmd} failed: {stderr.decode()}\n"
+                    resp.status = BuildStatus.Error
+                    return resp
+                if compress_payload == "upx":
+                    upx_cmd = f"/upx --best --lzma {output_path}"
+                    proc = await asyncio.create_subprocess_shell(
+                        upx_cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    stdout, stderr = await proc.communicate()
+                    if proc.returncode != 0:
+                        resp.build_message += f"[upx] {upx_cmd} failed: {stderr.decode()}\n"
+                        resp.status = BuildStatus.Error
+                        return resp
 
             if output_type == "Shellcode" and selected_os == "Windows":
                 resp.build_message += "Converting to shellcode...\n"
-                
                 dll_build_result = await self.run_nim_build(selected_os, "DLL", build_env)
                 if not dll_build_result["success"]:
                     resp.build_message += f"\nDLL build for shellcode failed: {dll_build_result['error']}\n"
@@ -316,9 +352,31 @@ class Poopsie(PayloadType):
                         StepSuccess=False
                     ))
                     return resp
-                
                 dll_path = dll_build_result["path"]
-                
+                strip_cmd = f"strip {dll_path}"
+                proc = await asyncio.create_subprocess_shell(
+                    strip_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await proc.communicate()
+                if proc.returncode != 0:
+                    resp.build_message += f"[strip DLL] {strip_cmd} failed: {stderr.decode()}\n"
+                    resp.status = BuildStatus.Error
+                    return resp
+                if compress_payload == "upx":
+                    upx_cmd = f"/upx --best --lzma {dll_path}"
+                    proc = await asyncio.create_subprocess_shell(
+                        upx_cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    stdout, stderr = await proc.communicate()
+                    if proc.returncode != 0:
+                        resp.build_message += f"[upx DLL] {upx_cmd} failed: {stderr.decode()}\n"
+                        resp.status = BuildStatus.Error
+                        return resp
+
                 tool = self.get_parameter("tool")
                 if tool == "sRDI":
                     with open(dll_path, "rb") as f:
@@ -333,16 +391,13 @@ class Poopsie(PayloadType):
                     output_path = self.agent_code_path / "src" / "poopsie.bin"
                     shellcode_format = self.shellcode_format_options.index(self.get_parameter('shellcode_format')) + 1
                     shellcode_bypass = self.shellcode_bypass_options.index(self.get_parameter('shellcode_bypass')) + 1
-                    
                     command = f"/donut -x3 -k2 -m entrypoint -o {output_path} -i {dll_path} -f{shellcode_format} -b{shellcode_bypass}"
-                    
                     proc = await asyncio.create_subprocess_shell(
                         command,
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
                     )
                     stdout, stderr = await proc.communicate()
-                    
                     if proc.returncode != 0:
                         resp.build_message += f"Donut shellcode generation failed\nSTDOUT: {stdout.decode()}\nSTDERR: {stderr.decode()}\n"
                         resp.status = BuildStatus.Error
@@ -354,7 +409,6 @@ class Poopsie(PayloadType):
                         ))
                         return resp
                     resp.build_message += f"Successfully converted to shellcode using donut\n"
-                
                 await SendMythicRPCPayloadUpdatebuildStep(MythicRPCPayloadUpdateBuildStepMessage(
                     PayloadUUID=self.uuid,
                     StepName="Shellcode",

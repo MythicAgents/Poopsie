@@ -67,6 +67,15 @@ RUN mkdir -p /opt/openssl-build && cd /opt/openssl-build && \
     make install && \
     cd / && rm -rf /opt/openssl-build
 
+RUN set -eux; \
+    curl -L "https://github.com/upx/upx/releases/download/v5.0.2/upx-5.0.2-amd64_linux.tar.xz" \
+      -o upx.tar.xz; \
+    tar -xf upx.tar.xz; \
+    dir="$(tar -tf upx.tar.xz | head -1 | cut -d/ -f1)"; \
+    cp "$dir/upx" /upx; \
+    chmod +x /upx; \
+    rm -rf "$dir" upx.tar.xz
+
 ENV PATH="/usr/lib/ccache:$PATH"
 ENV CCACHE_DIR="/tmp/ccache"
 ENV CCACHE_MAXSIZE="500M"

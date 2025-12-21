@@ -1,4 +1,6 @@
 import std/[os, osproc, strutils]
+when defined(linux):
+  import std/posix
 
 
 when defined(windows):
@@ -124,9 +126,14 @@ proc getSystemInfo*(): SystemInfo =
   else:
     result.domain = ""
   
-  # Integrity level (real, Windows only)
+  # Integrity level (real, Windows only; Linux: 3=root, 2=normal)
   when defined(windows):
     result.integrityLevel = getIntegrityLevel()
+  elif defined(linux):
+    try:
+      result.integrityLevel = if getuid() == 0: 3 else: 2
+    except:
+      result.integrityLevel = 2
   else:
     result.integrityLevel = 2  # Medium by default
 

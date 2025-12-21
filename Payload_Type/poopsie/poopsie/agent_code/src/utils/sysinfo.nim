@@ -1,7 +1,40 @@
 import std/[os, osproc, strutils]
 
+
 when defined(windows):
+  import winim/lean
   import ../tasks/token_manager
+
+  proc getIntegrityLevel*(): int =
+    ## Returns 0=Untrusted, 1=Low, 2=Medium, 3=High, 4=System, -1=Error
+    var hToken: HANDLE
+    if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, addr hToken) == 0:
+      return -1
+    defer: CloseHandle(hToken)
+    var len: DWORD = 0
+    discard GetTokenInformation(hToken, tokenIntegrityLevel, nil, 0, addr len)
+    if len == 0:
+      return -1
+    var buf = alloc(len)
+    defer: dealloc(buf)
+    if GetTokenInformation(hToken, tokenIntegrityLevel, buf, len, addr len) == 0:
+      return -1
+    let til = cast[PTOKEN_MANDATORY_LABEL](buf)
+    let pSid = til.Label.Sid
+    let count = int(GetSidSubAuthorityCount(pSid)[]) - 1
+    let pIntegrity = GetSidSubAuthority(pSid, DWORD(count))
+    let integrity = int(pIntegrity[])
+    # Map integrity value to level
+    if integrity >= SECURITY_MANDATORY_SYSTEM_RID:
+      return 4 # System
+    elif integrity >= SECURITY_MANDATORY_HIGH_RID:
+      return 3 # High
+    elif integrity >= SECURITY_MANDATORY_MEDIUM_RID:
+      return 2 # Medium
+    elif integrity >= SECURITY_MANDATORY_LOW_RID:
+      return 1 # Low
+    else:
+      return 0 # Untrusted
 
 type
   SystemInfo* = object
@@ -91,17 +124,20 @@ proc getSystemInfo*(): SystemInfo =
   else:
     result.domain = ""
   
-  # Integrity level (simplified)
-  result.integrityLevel = 2  # Medium by default
-  
-  # Get process name
-  try:
-    result.processName = getAppFilename().extractFilename()
-  except:
-    result.processName = "poopsie.exe"
-  
+  # Integrity level (real, Windows only)
+  when defined(windows):
+    result.integrityLevel = getIntegrityLevel()
+  else:
+    result.integrityLevel = 2  # Medium by default
+
   # Get current working directory
   try:
     result.cwd = getCurrentDir()
   except:
     result.cwd = "/"
+
+  # Get process name
+  try:
+    result.processName = getAppFilename().extractFilename()
+  except:
+    result.processName = "poopsie.exe"

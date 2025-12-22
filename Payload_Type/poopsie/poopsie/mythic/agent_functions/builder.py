@@ -152,13 +152,29 @@ class Poopsie(PayloadType):
             required=False,
         ),
         BuildParameter(
-            name="compress_payload",
+            name="payload_compression",
             parameter_type=BuildParameterType.ChooseOne,
             description="Payload compression option.",
             default_value="none",
             choices=["none", "upx"],
             required=True,
+            hide_conditions=[
+                HideCondition(name="output_type", operand=HideConditionOperand.EQ, value="Shellcode")
+            ],
             supported_os=["Windows", "Linux"],
+        ),
+        BuildParameter(
+            name="shellcode_compression",
+            parameter_type=BuildParameterType.ChooseOne,
+            description="Shellcode compression option.",
+            default_value="none",
+            choices=["none", "gzip", "zstd"],
+            required=True,
+            group_name="Shellcode Options",
+            hide_conditions=[
+                HideCondition(name="output_type", operand=HideConditionOperand.NotEQ, value="Shellcode")
+            ],
+            supported_os=["Windows"],
         ),
     ]
     
@@ -313,7 +329,7 @@ class Poopsie(PayloadType):
 
             output_path = build_result["path"]
 
-            compress_payload = self.get_parameter("compress_payload")
+            payload_compression = self.get_parameter("payload_compression")
             if not (output_type == "Shellcode" and selected_os == "Windows"):
                 strip_cmd = f"strip {output_path}"
                 proc = await asyncio.create_subprocess_shell(
@@ -326,7 +342,7 @@ class Poopsie(PayloadType):
                     resp.build_message += f"[strip] {strip_cmd} failed: {stderr.decode()}\n"
                     resp.status = BuildStatus.Error
                     return resp
-                if compress_payload == "upx":
+                if payload_compression == "upx":
                     upx_cmd = f"/upx --best --lzma {output_path}"
                     proc = await asyncio.create_subprocess_shell(
                         upx_cmd,
@@ -337,7 +353,22 @@ class Poopsie(PayloadType):
                     if proc.returncode != 0:
                         resp.build_message += f"[upx] {upx_cmd} failed: {stderr.decode()}\n"
                         resp.status = BuildStatus.Error
+                        await SendMythicRPCPayloadUpdatebuildStep(MythicRPCPayloadUpdateBuildStepMessage(
+                            PayloadUUID=self.uuid,
+                            StepName="Compressing",
+                            StepStdout=f"UPX compression failed: {stderr.decode()}",
+                            StepSuccess=False
+                        ))
                         return resp
+
+                    await SendMythicRPCPayloadUpdatebuildStep(MythicRPCPayloadUpdateBuildStepMessage(
+                        PayloadUUID=self.uuid,
+                        StepName="Compressing",
+                        StepStdout=f"Successfully compressed payload with UPX",
+                        StepSuccess=True
+                    ))
+
+                    resp.build_message += f"Successfully compressed payload with UPX\n"
 
             if output_type == "Shellcode" and selected_os == "Windows":
                 resp.build_message += "Converting to shellcode...\n"
@@ -352,6 +383,7 @@ class Poopsie(PayloadType):
                         StepSuccess=False
                     ))
                     return resp
+                
                 dll_path = dll_build_result["path"]
                 strip_cmd = f"strip {dll_path}"
                 proc = await asyncio.create_subprocess_shell(
@@ -364,18 +396,6 @@ class Poopsie(PayloadType):
                     resp.build_message += f"[strip DLL] {strip_cmd} failed: {stderr.decode()}\n"
                     resp.status = BuildStatus.Error
                     return resp
-                if compress_payload == "upx":
-                    upx_cmd = f"/upx --best --lzma {dll_path}"
-                    proc = await asyncio.create_subprocess_shell(
-                        upx_cmd,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                    )
-                    stdout, stderr = await proc.communicate()
-                    if proc.returncode != 0:
-                        resp.build_message += f"[upx DLL] {upx_cmd} failed: {stderr.decode()}\n"
-                        resp.status = BuildStatus.Error
-                        return resp
 
                 tool = self.get_parameter("tool")
                 if tool == "sRDI":
@@ -409,12 +429,19 @@ class Poopsie(PayloadType):
                         ))
                         return resp
                     resp.build_message += f"Successfully converted to shellcode using donut\n"
+                
                 await SendMythicRPCPayloadUpdatebuildStep(MythicRPCPayloadUpdateBuildStepMessage(
                     PayloadUUID=self.uuid,
                     StepName="Shellcode",
-                    StepStdout="Successfully converted to shellcode",
+                    StepStdout="Successfully converted to shellcode\nCommand:\n{}".format(command),
                     StepSuccess=True
                 ))
+
+                shellcode_compression = self.get_parameter("shellcode_compression")
+                compressed_path = await self.compress_shellcode(output_path, shellcode_compression, resp)
+                if not compressed_path:
+                    return resp
+                output_path = compressed_path
 
             resp.build_message += "Reading final payload...\n"
             with open(output_path, "rb") as f:
@@ -616,6 +643,41 @@ class Poopsie(PayloadType):
             return {"success": False, "error": "Build timeout (exceeded 5 minutes)", "command": command}
         except Exception as e:
             return {"success": False, "error": str(e), "command": "nimble c -y -d:release --opt:size src/poopsie.nim"}
+
+    async def compress_shellcode(self, input_path, compression_type, resp):
+        """Compress shellcode using gzip or zstd"""
+        if compression_type == "none":
+            return input_path
+        
+        if compression_type == "gzip":
+            cmd = f"gzip -9 -c -kf {input_path}"
+            compressed_path = str(input_path) + ".gz"
+            write_stdout = True
+        elif compression_type == "zstd":
+            compressed_path = str(input_path) + ".zst"
+            cmd = f"zstd -19 --ultra -T0 -c {input_path} -o {compressed_path}"
+            write_stdout = False
+        else:
+            return input_path
+        
+        proc = await asyncio.create_subprocess_shell(
+            cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        
+        if proc.returncode != 0:
+            resp.build_message += f"[{compression_type}] Compression failed: {stderr.decode()}\n"
+            resp.status = BuildStatus.Error
+            return None
+
+        if write_stdout:
+            with open(compressed_path, "wb") as f:
+                f.write(stdout)
+        
+        resp.build_message += f"Compressed shellcode with {compression_type}: {compressed_path}\n"
+        return compressed_path
     
     def adjust_file_name(self, filename, selected_os):
         """Adjust filename based on OS and output type"""

@@ -76,6 +76,15 @@ RUN set -eux; \
     chmod +x /upx; \
     rm -rf "$dir" upx.tar.xz
 
+RUN set -eux; \
+    curl -L "https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz" \
+      -o zstd.tar.gz; \
+    tar -xf zstd.tar.gz; \
+    cd zstd-1.5.7; \
+    make install; \
+    cd .. && \
+    rm -rf zstd-1.5.7 zstd.tar.gz
+
 ENV PATH="/usr/lib/ccache:$PATH"
 ENV CCACHE_DIR="/tmp/ccache"
 ENV CCACHE_MAXSIZE="500M"

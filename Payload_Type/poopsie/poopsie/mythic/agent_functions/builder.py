@@ -135,12 +135,13 @@ class Poopsie(PayloadType):
                 HideCondition(name="architecture", operand=HideConditionOperand.NotEQ, value="x64")
             ],
             required=True,
+            supported_os=["Windows"],
         ),
         BuildParameter(
             name="self_delete",
             parameter_type=BuildParameterType.Boolean,
             default_value=False,
-            description="Enable self-deletion of the agent on exit (Windows only)",
+            description="Enable self-deletion of the agent on exit (Windows only). Does not work with daemonized processes.",
             required=False,
             supported_os=["Windows"],
         ),
@@ -164,17 +165,72 @@ class Poopsie(PayloadType):
             supported_os=["Windows", "Linux"],
         ),
         BuildParameter(
-            name="shellcode_compression",
+            name="daemonize",
+            parameter_type=BuildParameterType.Boolean,
+            description=(
+                "Hide the console window on Windows or run the process in the background on Linux."
+            ),
+            default_value=False,
+            required=True,
+            supported_os=["Windows", "Linux"],
+        ),
+        BuildParameter(
+            name="shellcode_encryption",
             parameter_type=BuildParameterType.ChooseOne,
-            description="Shellcode compression option.",
+            description="Shellcode encryption option.",
             default_value="none",
-            choices=["none", "gzip", "zstd"],
+            choices=["none", "xor_single", "xor_multi", "xor_counter", "xor_feedback", "xor_rolling", "rc4", "chacha20"],
             required=True,
             group_name="Shellcode Options",
             hide_conditions=[
                 HideCondition(name="output_type", operand=HideConditionOperand.NotEQ, value="Shellcode")
             ],
             supported_os=["Windows"],
+        ),
+        BuildParameter(
+            name="shellcode_encryption_key",
+            parameter_type=BuildParameterType.String,
+            description=(
+                "xor_single key example: 0xfa, xor_multi key example: MySecretKey123, xor_counter key example: MyCounterKey2024, xor_feedback key example: MyFeedbackKey!@#, xor_rolling key example: RollingKeySecret, rc4 key example: MySecretKey123, chacha20 key example: MySecret32ByteChaChaKey01234 (must be 32 bytes)"
+            ),
+            default_value="",
+            required=False,
+            group_name="Shellcode Options",
+            hide_conditions=[
+                HideCondition(name="output_type", operand=HideConditionOperand.NotEQ, value="Shellcode"),
+                HideCondition(name="shellcode_encryption", operand=HideConditionOperand.EQ, value="none"),
+            ],
+            supported_os=["Windows"]
+        ),
+        BuildParameter(
+            name="shellcode_encryption_iv",
+            parameter_type=BuildParameterType.String,
+            description=(
+                "xor_feedback iv example: 0xAA"
+            ),
+            default_value="",
+            required=False,
+            group_name="Shellcode Options",
+            hide_conditions=[
+                HideCondition(name="output_type", operand=HideConditionOperand.NotEQ, value="Shellcode"),
+                HideCondition(name="shellcode_encryption", operand=HideConditionOperand.NotEQ, value="xor_feedback"),
+            ],
+            supported_os=["Windows"]
+        ),
+        BuildParameter(
+            name="shellcode_encryption_nonce",
+            parameter_type=BuildParameterType.String,
+            description=(
+                "chacha20 nonce example: My12ByteNon (must be 12 bytes)"
+            ),
+            default_value="",
+            required=False,
+            group_name="Shellcode Options",
+            hide_conditions=[
+                HideCondition(name="output_type", operand=HideConditionOperand.NotEQ, value="Shellcode"),
+                HideCondition(name="shellcode_encryption", operand=HideConditionOperand.NotEQ, value="chacha20"),
+            ],
+            supported_os=["Windows"]
         ),
     ]
     
@@ -398,6 +454,7 @@ class Poopsie(PayloadType):
                     return resp
 
                 tool = self.get_parameter("tool")
+                command = ""
                 if tool == "sRDI":
                     with open(dll_path, "rb") as f:
                         dll_bytes = f.read()
@@ -406,6 +463,7 @@ class Poopsie(PayloadType):
                     output_path = self.agent_code_path / "src" / "poopsie.bin"
                     with open(output_path, "wb") as f:
                         f.write(shellcode)
+                    command = "ConvertToShellcode(dll_bytes, HashFunctionName(\"entrypoint\"), flags=flags)"
                     resp.build_message += f"Successfully converted to shellcode using sRDI (flags={hex(flags)})\n"
                 else:
                     output_path = self.agent_code_path / "src" / "poopsie.bin"
@@ -437,11 +495,15 @@ class Poopsie(PayloadType):
                     StepSuccess=True
                 ))
 
-                shellcode_compression = self.get_parameter("shellcode_compression")
-                compressed_path = await self.compress_shellcode(output_path, shellcode_compression, resp)
-                if not compressed_path:
-                    return resp
-                output_path = compressed_path
+                # encrypt shellcode if requested
+                if self.get_parameter("shellcode_encryption") != "none" and self.get_parameter("shellcode_format") == "Binary":
+                    resp.build_message += f"Encrypting shellcode...using {self.get_parameter('shellcode_encryption')}...\n"
+                    try:
+                        output_path = self.encrypt(output_path)
+                    except Exception as e:
+                        resp.build_message += f"Shellcode encryption failed: {str(e)}\n"
+                        resp.status = BuildStatus.Error
+                        return resp
 
             resp.build_message += "Reading final payload...\n"
             with open(output_path, "rb") as f:
@@ -507,7 +569,17 @@ class Poopsie(PayloadType):
                 "--parallelBuild:0",
                 "--threads:on",
             ]
+
+            if output_type == "Executable" and self.get_parameter("daemonize"):
+                nim_args.append("-d:daemonize")
             
+            if selected_os == "Windows":
+                if self.get_parameter("self_delete"):
+                    nim_args.append("-d:selfDelete")
+                if architecture == "x64":
+                    if self.get_parameter("sleep_obfuscation") == "ekko":
+                        nim_args.append("-d:sleepObfuscationEkko")
+
             if use_openssl:
                 if selected_os == "Windows":
                     if architecture == "x64":
@@ -643,41 +715,6 @@ class Poopsie(PayloadType):
             return {"success": False, "error": "Build timeout (exceeded 5 minutes)", "command": command}
         except Exception as e:
             return {"success": False, "error": str(e), "command": "nimble c -y -d:release --opt:size src/poopsie.nim"}
-
-    async def compress_shellcode(self, input_path, compression_type, resp):
-        """Compress shellcode using gzip or zstd"""
-        if compression_type == "none":
-            return input_path
-        
-        if compression_type == "gzip":
-            cmd = f"gzip -9 -c -kf {input_path}"
-            compressed_path = str(input_path) + ".gz"
-            write_stdout = True
-        elif compression_type == "zstd":
-            compressed_path = str(input_path) + ".zst"
-            cmd = f"zstd -19 --ultra -T0 -c {input_path} -o {compressed_path}"
-            write_stdout = False
-        else:
-            return input_path
-        
-        proc = await asyncio.create_subprocess_shell(
-            cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await proc.communicate()
-        
-        if proc.returncode != 0:
-            resp.build_message += f"[{compression_type}] Compression failed: {stderr.decode()}\n"
-            resp.status = BuildStatus.Error
-            return None
-
-        if write_stdout:
-            with open(compressed_path, "wb") as f:
-                f.write(stdout)
-        
-        resp.build_message += f"Compressed shellcode with {compression_type}: {compressed_path}\n"
-        return compressed_path
     
     def adjust_file_name(self, filename, selected_os):
         """Adjust filename based on OS and output type"""
@@ -703,4 +740,150 @@ class Poopsie(PayloadType):
             else:
                 return original_filename + ".bin"
 
+    def parse_key(self, key_str):
+        """Parse key from string (hex, decimal, or plain text)"""
+        key_str = key_str.strip()
+        
+        if key_str.startswith("0x") or key_str.startswith("0X"):
+            return bytes([int(key_str, 16)])
+        elif all(c in "0123456789abcdefABCDEF" for c in key_str):
+            return bytes([int(key_str, 16)])
+        elif key_str.isdigit():
+            return bytes([int(key_str, 10)])
+        elif len(key_str) == 1:
+            return key_str.encode()
+        else:
+            return key_str.encode()
 
+    def encrypt(self, payload_path):
+        encrypted_path = str(payload_path) + ".enc"
+        encryption_type = self.get_parameter("shellcode_encryption")
+        key_str = self.get_parameter("shellcode_encryption_key").strip()
+        shellcode = b""
+        
+        if encryption_type == "xor_single" or encryption_type == "xor_multi":
+            key = self.parse_key(key_str)
+            
+            with open(payload_path, "rb") as f:
+                shellcode = f.read()
+            shellcode = bytearray(shellcode)
+            
+            for i in range(len(shellcode)):
+                shellcode[i] ^= key[i % len(key)]
+        
+        elif encryption_type == "xor_counter":
+            key = self.parse_key(key_str)
+            
+            with open(payload_path, "rb") as f:
+                shellcode = f.read()
+            shellcode = bytearray(shellcode)
+            
+            keylen = len(key)
+            for i in range(len(shellcode)):
+                shellcode[i] ^= key[i % keylen] ^ (i & 0xFF)
+        
+        elif encryption_type == "xor_feedback":
+            key = self.parse_key(key_str)
+            
+            # Get IV - check for None first
+            iv_param = self.get_parameter("shellcode_encryption_iv")
+            if iv_param is None:
+                raise Exception("IV parameter is required for xor_feedback encryption")
+            
+            iv_str = iv_param.strip() if isinstance(iv_param, str) else str(iv_param)
+            if not iv_str or iv_str == "":
+                raise Exception("IV cannot be empty for xor_feedback encryption")
+            
+            if iv_str.startswith("0x") or iv_str.startswith("0X"):
+                iv = int(iv_str, 16)
+            else:
+                iv = int(iv_str, 10)
+            
+            with open(payload_path, "rb") as f:
+                shellcode = f.read()
+            
+            encrypted = bytearray()
+            prev = iv & 0xFF
+            keylen = len(key)
+            
+            for i, b in enumerate(shellcode):
+                ciphertext = b ^ key[i % keylen] ^ prev
+                encrypted.append(ciphertext)
+                prev = ciphertext
+            
+            shellcode = encrypted
+        
+        elif encryption_type == "xor_rolling":
+            key = self.parse_key(key_str)
+            
+            with open(payload_path, "rb") as f:
+                shellcode = f.read()
+            
+            keylen = len(key)
+            rolling_key = 0
+            
+            for k in key:
+                rolling_key ^= k
+            
+            encrypted = bytearray()
+            for i, b in enumerate(shellcode):
+                encrypted.append(b ^ key[i % keylen] ^ (rolling_key & 0xFF))
+                rolling_key = (rolling_key * 7 + 13) & 0xFF
+            
+            shellcode = encrypted
+        
+        elif encryption_type == "rc4":
+            from Crypto.Cipher import ARC4
+            
+            key = self.parse_key(key_str)
+            
+            with open(payload_path, "rb") as f:
+                shellcode = f.read()
+            
+            cipher = ARC4.new(key)
+            shellcode = cipher.encrypt(shellcode)
+        
+        elif encryption_type == "chacha20":
+            from Crypto.Cipher import ChaCha20
+            
+            key = self.parse_key(key_str)
+            
+            # Ensure key is exactly 32 bytes
+            if len(key) < 32:
+                key = key.ljust(32, b'\x00')
+            elif len(key) > 32:
+                key = key[:32]
+            
+            # Get nonce - check for None first
+            nonce_param = self.get_parameter("shellcode_encryption_nonce")
+            if nonce_param is None:
+                raise Exception("Nonce parameter is required for chacha20 encryption")
+            
+            nonce_str = nonce_param.strip() if isinstance(nonce_param, str) else str(nonce_param)
+            if not nonce_str or nonce_str == "":
+                raise Exception("Nonce cannot be empty for chacha20 encryption")
+            
+            nonce = nonce_str.encode() if isinstance(nonce_str, str) else nonce_str
+            
+            # Ensure nonce is exactly 12 bytes
+            if len(nonce) < 12:
+                nonce = nonce.ljust(12, b'\x00')
+            elif len(nonce) > 12:
+                nonce = nonce[:12]
+            
+            with open(payload_path, "rb") as f:
+                shellcode = f.read()
+            
+            cipher = ChaCha20.new(key=key, nonce=nonce)
+            shellcode = cipher.encrypt(shellcode)
+        
+        else:
+            raise Exception(f"Unsupported encryption type: {encryption_type}")
+        
+        # Write encrypted payload
+        if shellcode:
+            with open(encrypted_path, "wb") as f:
+                f.write(shellcode)
+            return encrypted_path
+        
+        raise Exception("Failed to encrypt payload - no shellcode generated")

@@ -19,7 +19,6 @@ proc config*(taskId: string, params: JsonNode): JsonNode =
     output &= &"Callback Interval: {cfg.callbackInterval}s\n"
     output &= &"Callback Jitter: {cfg.callbackJitter}%\n"
     output &= &"Kill Date: {cfg.killdate}\n"
-    output &= &"Sleep Obfuscation: {cfg.sleepObfuscation}\n"
     
     when defined(windows):
       output &= "\n=== Process Injection Configuration ===\n"

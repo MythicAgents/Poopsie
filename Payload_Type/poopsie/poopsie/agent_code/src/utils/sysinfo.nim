@@ -1,6 +1,6 @@
 import std/[os, osproc, strutils]
 when defined(linux):
-  import std/posix
+  import posix
 
 
 when defined(windows):

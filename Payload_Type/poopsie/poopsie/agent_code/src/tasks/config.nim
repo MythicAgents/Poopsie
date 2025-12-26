@@ -2,6 +2,7 @@ import ../config
 import ../utils/mythic_responses
 import ../global_data
 import ../tasks/token_manager
+import ../utils/debug
 import std/[json, strformat]
 
 proc config*(taskId: string, params: JsonNode): JsonNode =
@@ -9,8 +10,7 @@ proc config*(taskId: string, params: JsonNode): JsonNode =
   let cfg = getConfig()
   
   try:
-    if cfg.debug:
-      echo "[DEBUG] config: Getting configuration"
+    debug "[DEBUG] config: Getting configuration"
     
     var output = ""
     output &= "=== Agent Configuration ===\n"

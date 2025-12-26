@@ -1,5 +1,5 @@
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 import std/[json, os, strformat, strutils]
 
 type
@@ -8,13 +8,10 @@ type
     destination: string
 
 proc cpFile*(taskId: string, params: string): JsonNode =
-  let cfg = getConfig()
-  
   # Parse arguments
   let args = parseJson(params).to(CpArgs)
   
-  if cfg.debug:
-    echo &"[DEBUG] Copying '{args.source}' to '{args.destination}'"
+  debug &"[DEBUG] Copying '{args.source}' to '{args.destination}'"
   
   try:
     # Check if source exists
@@ -51,8 +48,7 @@ proc cpFile*(taskId: string, params: string): JsonNode =
     
     let normalizedDest = normalizedPath(destPath)
     
-    if cfg.debug:
-      echo &"[DEBUG] Copied '{absSrcPath}' to '{normalizedDest}'"
+    debug &"[DEBUG] Copied '{absSrcPath}' to '{normalizedDest}'"
     
     return mythicSuccess(taskId, &"Copied '{absSrcPath}' to '{normalizedDest}'")
     

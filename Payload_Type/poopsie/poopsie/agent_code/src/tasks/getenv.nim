@@ -1,14 +1,12 @@
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 import std/[json, os, strformat]
 
 proc getenv*(taskId: string, params: JsonNode): JsonNode =
   ## Get all environment variables
-  let cfg = getConfig()
   
   try:
-    if cfg.debug:
-      echo "[DEBUG] GetEnv: Getting all environment variables"
+    debug "[DEBUG] GetEnv: Getting all environment variables"
     
     var envList = newJArray()
     
@@ -20,8 +18,7 @@ proc getenv*(taskId: string, params: JsonNode): JsonNode =
       }
       envList.add(envPair)
     
-    if cfg.debug:
-      echo "[DEBUG] GetEnv: Found ", envList.len, " environment variables"
+    debug "[DEBUG] GetEnv: Found ", envList.len, " environment variables"
     
     # Convert to string for output
     let output = $envList

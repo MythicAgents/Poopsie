@@ -1,8 +1,6 @@
-## Registry Query - Query registry keys and values
-
 import std/[json, strformat, strutils]
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 
 when defined(windows):
   import winim/lean
@@ -59,16 +57,13 @@ when defined(windows):
 
 proc regQuery*(taskId: string, params: JsonNode): JsonNode =
   ## Query registry keys and values
-  let cfg = getConfig()
-  
   when defined(windows):
     try:
       # Parse parameters
       let hive = params["hive"].getStr()
       let key = params["key"].getStr()
       
-      if cfg.debug:
-        echo &"[DEBUG] reg_query: hive={hive}, key={key}"
+      debug &"[DEBUG] reg_query: hive={hive}, key={key}"
       
       let hiveHandle = getHiveHandle(hive)
       if hiveHandle == cast[HKEY](0):

@@ -1,5 +1,5 @@
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 import std/[json, strformat, strutils]
 import token_manager
 
@@ -36,27 +36,22 @@ when defined(windows):
 
 proc getprivs*(taskId: string, params: JsonNode): JsonNode =
   ## Get the privileges of the current process
-  let cfg = getConfig()
-  
   when defined(windows):
     try:
-      if cfg.debug:
-        echo "[DEBUG] GetPrivs: Getting current user privileges"
+      debug "[DEBUG] GetPrivs: Getting current user privileges"
       
       # Get current username and hostname for output
       let username = getCurrentUsername()
       var output = &"Privileges for '{username}'\n\n"
       
-      if cfg.debug:
-        echo &"[DEBUG] GetPrivs: Current user: {username}"
+      debug &"[DEBUG] GetPrivs: Current user: {username}"
       
       # Get handle to current process token
       var tokenHandle: HANDLE = 0
       if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, addr tokenHandle) == 0:
         return mythicError(taskId, &"Failed to open token handle: {GetLastError()}")
       
-      if cfg.debug:
-        echo "[DEBUG] GetPrivs: Opened process token"
+      debug "[DEBUG] GetPrivs: Opened process token"
       
       # Get the required size for token information
       var privLen: DWORD = 0
@@ -66,8 +61,7 @@ proc getprivs*(taskId: string, params: JsonNode): JsonNode =
         CloseHandle(tokenHandle)
         return mythicError(taskId, &"Failed to get token information length: {GetLastError()}")
       
-      if cfg.debug:
-        echo &"[DEBUG] GetPrivs: Token information size: {privLen}"
+      debug &"[DEBUG] GetPrivs: Token information size: {privLen}"
       
       # Allocate buffer and get the actual token information
       var privs = newSeq[byte](privLen)
@@ -75,15 +69,13 @@ proc getprivs*(taskId: string, params: JsonNode): JsonNode =
         CloseHandle(tokenHandle)
         return mythicError(taskId, &"Failed to query privileges: {GetLastError()}")
       
-      if cfg.debug:
-        echo "[DEBUG] GetPrivs: Retrieved token information"
+      debug "[DEBUG] GetPrivs: Retrieved token information"
       
       # Cast the buffer to TOKEN_PRIVILEGES structure
       let tokenPrivs = cast[ptr TOKEN_PRIVILEGES_GETPRIVS](addr privs[0])
       let count = tokenPrivs.PrivilegeCount
       
-      if cfg.debug:
-        echo &"[DEBUG] GetPrivs: Found {count} privileges"
+      debug &"[DEBUG] GetPrivs: Found {count} privileges"
       
       # Get pointer to the array of LUID_AND_ATTRIBUTES
       let luidsPtr = cast[ptr UncheckedArray[LUID_AND_ATTRIBUTES_GETPRIVS]](addr tokenPrivs.Privileges[0])
@@ -106,8 +98,7 @@ proc getprivs*(taskId: string, params: JsonNode): JsonNode =
           
           output.add(&"{privName}{status}\n")
           
-          if cfg.debug:
-            echo &"[DEBUG] GetPrivs: {privName}{status}"
+          debug &"[DEBUG] GetPrivs: {privName}{status}"
       
       CloseHandle(tokenHandle)
       

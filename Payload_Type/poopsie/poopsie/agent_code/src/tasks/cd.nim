@@ -1,5 +1,5 @@
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 import std/[json, os, strformat, strutils]
 
 type
@@ -7,13 +7,10 @@ type
     path: string
 
 proc changeDirectory*(taskId: string, params: string): JsonNode =
-  let cfg = getConfig()
-  
   # Parse arguments
   let args = parseJson(params).to(CdArgs)
   
-  if cfg.debug:
-    echo "[DEBUG] Changing directory to: ", args.path
+  debug "[DEBUG] Changing directory to: ", args.path
   
   try:
     # Check for UNC paths - Windows doesn't support cd to UNC paths
@@ -36,8 +33,7 @@ proc changeDirectory*(taskId: string, params: string): JsonNode =
     # Get the new current directory
     let newCwd = getCurrentDir()
     
-    if cfg.debug:
-      echo "[DEBUG] Changed directory to: ", newCwd
+    debug "[DEBUG] Changed directory to: ", newCwd
     
     # Return response with cwd callback
     return mythicCallback(taskId, &"Changed directory to '{newCwd}'", %*{

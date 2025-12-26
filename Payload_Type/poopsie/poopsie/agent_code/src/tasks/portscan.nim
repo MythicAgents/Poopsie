@@ -1,5 +1,5 @@
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 import std/[json, strutils, sequtils, net, strformat, os, tables]
 
 when defined(windows):
@@ -89,8 +89,6 @@ proc isPortOpen(host: string, port: int, timeout: int = 500): bool =
 
 proc portscan*(taskId: string, params: JsonNode): JsonNode =
   ## Start port scan as a background task (non-blocking)
-  let cfg = getConfig()
-  
   try:
     let args = to(params, PortScanArgs)
     
@@ -113,9 +111,8 @@ proc portscan*(taskId: string, params: JsonNode): JsonNode =
     if allPorts.len == 0:
       return mythicError(taskId, "No valid ports specified")
     
-    if cfg.debug:
-      echo &"[DEBUG] Port scan: {allHosts.len} hosts, {allPorts.len} ports (non-blocking)"
-      echo &"[DEBUG] Interval: {args.interval}ms"
+    debug &"[DEBUG] Port scan: {allHosts.len} hosts, {allPorts.len} ports (non-blocking)"
+    debug &"[DEBUG] Interval: {args.interval}ms"
     
     # Initialize scan state
     portscanState = PortScanState(
@@ -149,7 +146,6 @@ proc checkPortscan*(taskId: string): JsonNode =
   if not portscanActive:
     return nil
   
-  let cfg = getConfig()
   const PORTS_PER_TICK = 1  # Scan 1 port per check to avoid blocking (500ms max)
   
   try:
@@ -173,8 +169,7 @@ proc checkPortscan*(taskId: string): JsonNode =
         portscanState.openPorts.add((host: host, port: port))
         let output = &"\n[+] {host}:{port} OPEN\n"
         
-        if cfg.debug:
-          echo &"[DEBUG] {host}:{port} OPEN"
+        debug &"[DEBUG] {host}:{port} OPEN"
         
         # Return immediately with open port result (still processing)
         portscanState.currentPortIndex.inc()
@@ -210,8 +205,7 @@ proc checkPortscan*(taskId: string): JsonNode =
       
       let finalOutput = &"\nPort scan complete: {portscanState.openPorts.len} open port(s) found out of {portscanState.totalScanned} ports scanned across {portscanState.allHosts.len} host(s)"
       
-      if cfg.debug:
-        echo "[DEBUG] Port scan completed"
+      debug "[DEBUG] Port scan completed"
       
       return mythicSuccess(taskId, finalOutput)
     

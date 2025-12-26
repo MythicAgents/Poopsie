@@ -1,8 +1,6 @@
-## Net DCList - Get domain controllers
-
 import std/[json, strformat, os]
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 
 when defined(windows):
   import winim/lean
@@ -49,8 +47,6 @@ when defined(windows):
 
 proc netDclist*(taskId: string, params: JsonNode): JsonNode =
   ## Get domain controllers
-  let cfg = getConfig()
-  
   when defined(windows):
     try:
       # Parse parameters (domain is optional)
@@ -62,8 +58,7 @@ proc netDclist*(taskId: string, params: JsonNode): JsonNode =
       if domain == "":
         domain = getEnv("USERDNSDOMAIN", "")
       
-      if cfg.debug:
-        echo &"[DEBUG] net_dclist: domain={domain}"
+      debug &"[DEBUG] net_dclist: domain={domain}"
       
       var dcInfoPtr: ptr DOMAIN_CONTROLLER_INFOW = nil
       var domainW: WideCString = nil

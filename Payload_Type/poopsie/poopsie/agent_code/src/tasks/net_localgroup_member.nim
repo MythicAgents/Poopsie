@@ -1,8 +1,8 @@
 ## Net LocalGroup Member - Enumerate local group members
 
 import std/[json, strformat, os]
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 
 when defined(windows):
   import winim/lean
@@ -60,8 +60,6 @@ when defined(windows):
 
 proc netLocalgroupMember*(taskId: string, params: JsonNode): JsonNode =
   ## Enumerate local group members
-  let cfg = getConfig()
-  
   when defined(windows):
     try:
       # Parse parameters
@@ -75,8 +73,7 @@ proc netLocalgroupMember*(taskId: string, params: JsonNode): JsonNode =
       if computerName == "":
         computerName = getEnv("COMPUTERNAME", "Local")
       
-      if cfg.debug:
-        echo &"[DEBUG] net_localgroup_member: computer={computerName}, group={groupName}"
+      debug &"[DEBUG] net_localgroup_member: computer={computerName}, group={groupName}"
       
       var bufPtr: pointer = nil
       var computerNameW: LPCWSTR = nil

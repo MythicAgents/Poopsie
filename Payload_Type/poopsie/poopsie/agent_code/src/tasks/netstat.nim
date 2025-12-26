@@ -1,5 +1,5 @@
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 import std/[json, strformat, strutils, osproc, os]
 
 when defined(windows):
@@ -173,11 +173,8 @@ proc parseTcpState(stateHex: string): string =
 
 proc netstat*(taskId: string, params: JsonNode): JsonNode =
   ## Get all active network connections and sockets
-  let cfg = getConfig()
-  
   try:
-    if cfg.debug:
-      echo "[DEBUG] Netstat: Getting network connections"
+    debug "[DEBUG] Netstat: Getting network connections"
     
     var connections = newJArray()
     
@@ -418,8 +415,7 @@ proc netstat*(taskId: string, params: JsonNode): JsonNode =
       except:
         discard
     
-    if cfg.debug:
-      echo &"[DEBUG] Netstat: Found {connections.len} connections"
+    debug &"[DEBUG] Netstat: Found {connections.len} connections"
     
     let output = $connections
     return mythicSuccess(taskId, output)

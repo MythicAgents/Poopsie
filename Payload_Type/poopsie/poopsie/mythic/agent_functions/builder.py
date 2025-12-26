@@ -298,7 +298,6 @@ class Poopsie(PayloadType):
                     return resp
 
             c2_params["output_type"] = self.get_parameter("output_type")
-            c2_params["debug"] = str(self.get_parameter("debug"))
             
             architecture = self.get_parameter("architecture")
             sleep_obfuscation = self.get_parameter("sleep_obfuscation")
@@ -557,7 +556,6 @@ class Poopsie(PayloadType):
             use_openssl = needs_openssl_for_exchange or needs_openssl_for_transport
             
             nim_args = [
-                "-d:release",
                 "--opt:size",
                 "--mm:orc",
                 "--panics:on",
@@ -569,6 +567,11 @@ class Poopsie(PayloadType):
                 "--parallelBuild:0",
                 "--threads:on",
             ]
+
+            if not self.get_parameter("debug"):
+                nim_args.append("-d:release")
+            else:
+                build_messages.append("Debug mode enabled (includes debug symbols)")
 
             if output_type == "Executable" and self.get_parameter("daemonize"):
                 nim_args.append("-d:daemonize")
@@ -712,9 +715,9 @@ class Poopsie(PayloadType):
             }
             
         except asyncio.TimeoutError:
-            return {"success": False, "error": "Build timeout (exceeded 5 minutes)", "command": command}
+            return {"success": False, "error": "Build timeout (exceeded 5 minutes)", "command": ""}
         except Exception as e:
-            return {"success": False, "error": str(e), "command": "nimble c -y -d:release --opt:size src/poopsie.nim"}
+            return {"success": False, "error": str(e), "command": ""}
     
     def adjust_file_name(self, filename, selected_os):
         """Adjust filename based on OS and output type"""

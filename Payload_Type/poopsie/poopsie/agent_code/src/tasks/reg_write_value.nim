@@ -1,8 +1,6 @@
-## Registry Write Value - Write registry values
-
 import std/[json, strformat, strutils]
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 
 when defined(windows):
   import winim/lean
@@ -42,8 +40,6 @@ when defined(windows):
 
 proc regWriteValue*(taskId: string, params: JsonNode): JsonNode =
   ## Write registry values
-  let cfg = getConfig()
-  
   when defined(windows):
     try:
       # Parse parameters
@@ -52,8 +48,7 @@ proc regWriteValue*(taskId: string, params: JsonNode): JsonNode =
       let valueName = params["value_name"].getStr()
       let valueValue = params["value_value"].getStr()
       
-      if cfg.debug:
-        echo &"[DEBUG] reg_write_value: hive={hive}, key={key}, name={valueName}, value={valueValue}"
+      debug &"[DEBUG] reg_write_value: hive={hive}, key={key}, name={valueName}, value={valueValue}"
       
       let hiveHandle = getHiveHandle(hive)
       if hiveHandle == cast[HKEY](0):
@@ -72,8 +67,7 @@ proc regWriteValue*(taskId: string, params: JsonNode): JsonNode =
       try:
         let dwordVal = valueValue.parseUInt().uint32
         # Write as REG_DWORD
-        if cfg.debug:
-          echo &"[DEBUG] Writing as DWORD: {dwordVal}"
+        debug &"[DEBUG] Writing as DWORD: {dwordVal}"
         
         setStatus = RegSetValueExW(
           keyHandle,
@@ -85,8 +79,7 @@ proc regWriteValue*(taskId: string, params: JsonNode): JsonNode =
         )
       except:
         # Write as REG_SZ (string)
-        if cfg.debug:
-          echo &"[DEBUG] Writing as REG_SZ: {valueValue}"
+        debug &"[DEBUG] Writing as REG_SZ: {valueValue}"
         
         let valueDataW = newWideCString(valueValue)
         let dataSize = DWORD((valueValue.len + 1) * 2)  # +1 for null terminator, *2 for UTF-16

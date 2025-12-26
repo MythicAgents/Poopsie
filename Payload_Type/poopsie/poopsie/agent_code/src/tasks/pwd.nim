@@ -1,16 +1,13 @@
-import ../config
 import std/[json, os, strformat]
 import ../utils/mythic_responses
+import ../utils/debug
 
 proc pwd*(taskId: string, params: JsonNode): JsonNode =
   ## Print working directory
-  let cfg = getConfig()
-  
   try:
     let currentDir = getCurrentDir()
     
-    if cfg.debug:
-      echo "[DEBUG] Current directory: ", currentDir
+    debug "[DEBUG] Current directory: ", currentDir
     
     return mythicSuccess(taskId, currentDir)
     

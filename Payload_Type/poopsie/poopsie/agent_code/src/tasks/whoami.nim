@@ -1,5 +1,5 @@
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 import std/[json, strformat]
 
 when defined(windows):
@@ -81,14 +81,11 @@ when not defined(windows):
     result = &"Username: {username}\nHostname: {hostname}\nUID: {uid}\nGID: {gid}\nPrivileges: {privs}"
 
 proc whoami*(taskId: string, params: string): JsonNode =
-  let cfg = getConfig()
-  
   when defined(windows):
     let output = whoamiWindows()
   else:
     let output = whoamiUnix()
   
-  if cfg.debug:
-    echo "[DEBUG] whoami output: ", output
+  debug "[DEBUG] whoami output: ", output
   
   return mythicSuccess(taskId, output)

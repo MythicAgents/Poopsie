@@ -1,5 +1,5 @@
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 import std/[json, strformat, strutils]
 
 when defined(windows):
@@ -9,8 +9,6 @@ else:
 
 proc pkill*(taskId: string, params: JsonNode): JsonNode =
   ## Kill a process by PID
-  let cfg = getConfig()
-  
   try:
     # Parse PID from parameters
     # Mythic sends this as a JSON string which parses to a JString
@@ -21,8 +19,7 @@ proc pkill*(taskId: string, params: JsonNode): JsonNode =
     except:
       return mythicError(taskId, &"Invalid PID: {pidStr}")
     
-    if cfg.debug:
-      echo &"[DEBUG] pkill: Attempting to kill process with PID {pid}"
+    debug &"[DEBUG] pkill: Attempting to kill process with PID {pid}"
     
     when defined(windows):
       # Windows implementation using TerminateProcess

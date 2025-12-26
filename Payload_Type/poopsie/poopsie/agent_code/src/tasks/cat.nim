@@ -1,5 +1,5 @@
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 import std/[json, strformat, os, strutils]
 
 type
@@ -7,13 +7,11 @@ type
     path: string
 
 proc catFile*(taskId: string, params: string): JsonNode =
-  let cfg = getConfig()
   
   # Parse arguments
   let args = parseJson(params).to(CatArgs)
   
-  if cfg.debug:
-    echo "[DEBUG] Reading file: ", args.path
+  debug "[DEBUG] Reading file: ", args.path
   
   try:
     # Handle UNC paths (\\server\share) and absolute paths
@@ -29,8 +27,7 @@ proc catFile*(taskId: string, params: string): JsonNode =
     # Read file contents
     let content = readFile(fullPath)
     
-    if cfg.debug:
-      echo &"[DEBUG] Read {content.len} bytes from {fullPath}"
+    debug &"[DEBUG] Read {content.len} bytes from {fullPath}"
     
     # Create response with artifact
     var response = mythicSuccess(taskId, content)

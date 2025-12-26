@@ -1,5 +1,5 @@
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 import std/[json, strformat, strutils, osproc]
 
 when defined(windows):
@@ -147,11 +147,8 @@ when defined(posix):
 
 proc ifconfig*(taskId: string, params: JsonNode): JsonNode =
   ## Get network interface configuration
-  let cfg = getConfig()
-  
   try:
-    if cfg.debug:
-      echo "[DEBUG] Ifconfig: Getting network interface information"
+    debug "[DEBUG] Ifconfig: Getting network interface information"
     
     var interfaces = newJArray()
     
@@ -359,8 +356,7 @@ proc ifconfig*(taskId: string, params: JsonNode): JsonNode =
           iface["gateways"].add(%defaultGateway)
         interfaces.add(iface)
     
-    if cfg.debug:
-      echo &"[DEBUG] Ifconfig: Found {interfaces.len} network interfaces"
+    debug &"[DEBUG] Ifconfig: Found {interfaces.len} network interfaces"
     
     let output = $interfaces
     return mythicSuccess(taskId, output)

@@ -1,9 +1,6 @@
-## SOCKS5 Proxy task for tunneling network traffic through Mythic
-## Implements SOCKS5 protocol with threading for bidirectional forwarding
-
 import std/[json, net, nativesockets, strutils, base64, strformat, tables, os]
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 
 # SOCKS5 Protocol Constants
 const
@@ -241,15 +238,12 @@ proc parseSocks5Request(data: seq[byte]): (bool, AddrSpec, uint8) =
 proc handleNewConnection(serverId: uint32, data: seq[byte]): seq[JsonNode] =
   ## Handle new SOCKS connection or CONNECT request
   result = @[]
-  let cfg = getConfig()
   
-  if cfg.debug:
-    echo &"[DEBUG] SOCKS: New connection {serverId}, {data.len} bytes"
+  debug &"[DEBUG] SOCKS: New connection {serverId}, {data.len} bytes"
   
   # Check if this is auth negotiation or CONNECT
   if data.len < 3 or data[0] != SOCKS5_VERSION:
-    if cfg.debug:
-      echo "[DEBUG] SOCKS: Invalid SOCKS5 version"
+    debug "[DEBUG] SOCKS: Invalid SOCKS5 version"
     return
   
   # Check if it's a CONNECT request (has CMD_CONNECT at position 1)
@@ -257,8 +251,7 @@ proc handleNewConnection(serverId: uint32, data: seq[byte]): seq[JsonNode] =
   
   if not looksLikeConnect:
     # Auth negotiation: [5, nmethods, methods...]
-    if cfg.debug:
-      echo "[DEBUG] SOCKS: Auth negotiation, sending NO_AUTH response"
+    debug "[DEBUG] SOCKS: Auth negotiation, sending NO_AUTH response"
     
     # Send auth response: [5, 0] (version 5, no auth required)
     let authReply = @[SOCKS5_VERSION, NO_AUTH]
@@ -278,8 +271,7 @@ proc handleNewConnection(serverId: uint32, data: seq[byte]): seq[JsonNode] =
   let (success, destAddr, errorCode) = parseSocks5Request(data)
   
   if not success:
-    if cfg.debug:
-      echo &"[DEBUG] SOCKS: Failed to parse CONNECT, error code {errorCode}"
+    debug &"[DEBUG] SOCKS: Failed to parse CONNECT, error code {errorCode}"
     let errorReply = buildSocks5Reply(errorCode, "0.0.0.0", 0)
     let errorReplyB64 = encode(errorReply)
     result.add(createSocksMessage(serverId, true, errorReplyB64))
@@ -289,8 +281,7 @@ proc handleNewConnection(serverId: uint32, data: seq[byte]): seq[JsonNode] =
   let address = if destAddr.isIp: destAddr.ip else: destAddr.fqdn
   let portStr = $destAddr.port
   
-  if cfg.debug:
-    echo &"[DEBUG] SOCKS: Connecting to {address}:{portStr}"
+  debug &"[DEBUG] SOCKS: Connecting to {address}:{portStr}"
   
   try:
     var socket = newSocket()
@@ -307,8 +298,7 @@ proc handleNewConnection(serverId: uint32, data: seq[byte]): seq[JsonNode] =
     let successReply = buildSocks5Reply(SUCCESS_REPLY, localAddr, localPort.uint16)
     let successReplyB64 = encode(successReply)
     
-    if cfg.debug:
-      echo &"[DEBUG] SOCKS: Connected successfully, local {localAddr}:{localPort}"
+    debug &"[DEBUG] SOCKS: Connected successfully, local {localAddr}:{localPort}"
     
     # Create channels for thread communication
     var inChan = cast[ptr Channel[seq[byte]]](allocShared0(sizeof(Channel[seq[byte]])))
@@ -350,22 +340,18 @@ proc handleNewConnection(serverId: uint32, data: seq[byte]): seq[JsonNode] =
     
   except:
     let e = getCurrentException()
-    if cfg.debug:
-      echo &"[DEBUG] SOCKS: Failed to connect: {e.msg}"
+    debug &"[DEBUG] SOCKS: Failed to connect: {e.msg}"
     let errorReply = buildSocks5Reply(CONNECTION_REFUSED, "0.0.0.0", 0)
     let errorReplyB64 = encode(errorReply)
     result.add(createSocksMessage(serverId, true, errorReplyB64))
 
 proc socks*(taskId: string, params: JsonNode): JsonNode =
   ## Start or stop SOCKS proxy
-  let cfg = getConfig()
-  
   try:
     let port = params["port"].getInt()
     let action = params["action"].getStr()
     
-    if cfg.debug:
-      echo &"[DEBUG] SOCKS: Action={action}, Port={port}"
+    debug &"[DEBUG] SOCKS: Action={action}, Port={port}"
     
     case action
     of "start":
@@ -401,14 +387,12 @@ proc handleSocksMessages*(messages: seq[JsonNode]): seq[JsonNode] =
   ## Handle SOCKS messages from Mythic (forwarding data to connections)
   ## Returns array of SOCKS messages to send back to Mythic
   result = @[]
-  let cfg = getConfig()
   
   for msg in messages:
     let serverId = msg["server_id"].getInt().uint32
     let exit = msg["exit"].getBool()
     
-    if cfg.debug:
-      echo &"[DEBUG] SOCKS: Message for connection {serverId}, exit={exit}"
+    debug &"[DEBUG] SOCKS: Message for connection {serverId}, exit={exit}"
     
     if exit:
       # Mark connection for closure (don't delete immediately - let threads finish)
@@ -418,8 +402,7 @@ proc handleSocksMessages*(messages: seq[JsonNode]): seq[JsonNode] =
         conn.active = false
         if not conn.sharedPtr.isNil:
           conn.sharedPtr.active = false
-        if cfg.debug:
-          echo &"[DEBUG] SOCKS: Marked connection {serverId} for cleanup (reader will drain remaining data)"
+        debug &"[DEBUG] SOCKS: Marked connection {serverId} for cleanup (reader will drain remaining data)"
       continue
     
     if activeSocksConnections.hasKey(serverId):
@@ -445,8 +428,7 @@ proc handleSocksMessages*(messages: seq[JsonNode]): seq[JsonNode] =
           var data = newSeq[byte](dataStr.len)
           for i in 0..<dataStr.len:
             data[i] = dataStr[i].byte
-          if cfg.debug:
-            echo &"[DEBUG] SOCKS: Forwarding {data.len} bytes to connection {serverId}"
+          debug &"[DEBUG] SOCKS: Forwarding {data.len} bytes to connection {serverId}"
           conn.inChannel[].send(data)
     
     else:
@@ -464,7 +446,6 @@ proc checkActiveSocksConnections*(): seq[JsonNode] =
   ## Check all active SOCKS connections for data from remote sockets
   ## Returns array of SOCKS messages to send to Mythic
   result = @[]
-  let cfg = getConfig()
   var toDelete: seq[uint32] = @[]
   
   for serverId, conn in activeSocksConnections:
@@ -475,8 +456,7 @@ proc checkActiveSocksConnections*(): seq[JsonNode] =
       while hasData:
         if data.len == 0:
           # EOF signal from reader thread
-          if cfg.debug:
-            echo &"[DEBUG] SOCKS: Connection {serverId} EOF received from reader thread"
+          debug &"[DEBUG] SOCKS: Connection {serverId} EOF received from reader thread"
           result.add(createSocksMessage(serverId, true))
           conn.active = false
           if not conn.sharedPtr.isNil:
@@ -486,8 +466,7 @@ proc checkActiveSocksConnections*(): seq[JsonNode] =
         
         # Send data to Mythic
         let dataB64 = encode(data)
-        if cfg.debug:
-          echo &"[DEBUG] SOCKS: Sending {data.len} bytes from connection {serverId} to Mythic"
+        debug &"[DEBUG] SOCKS: Sending {data.len} bytes from connection {serverId} to Mythic"
         result.add(createSocksMessage(serverId, false, dataB64))
         
         # Check for more data
@@ -521,5 +500,4 @@ proc checkActiveSocksConnections*(): seq[JsonNode] =
         if not conn.sharedPtr.isNil:
           deallocShared(conn.sharedPtr)
     activeSocksConnections.del(serverId)
-    if cfg.debug:
-      echo &"[DEBUG] SOCKS: Deleted inactive connection {serverId}"
+    debug &"[DEBUG] SOCKS: Deleted inactive connection {serverId}"

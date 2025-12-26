@@ -1,5 +1,5 @@
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 import std/[json, os, strformat, strutils]
 
 type
@@ -8,13 +8,10 @@ type
     destination: string
 
 proc mvFile*(taskId: string, params: string): JsonNode =
-  let cfg = getConfig()
-  
   # Parse arguments
   let args = parseJson(params).to(MvArgs)
   
-  if cfg.debug:
-    echo &"[DEBUG] Moving '{args.source}' to '{args.destination}'"
+  debug &"[DEBUG] Moving '{args.source}' to '{args.destination}'"
   
   try:
     # Check if source exists
@@ -48,8 +45,7 @@ proc mvFile*(taskId: string, params: string): JsonNode =
     
     let normalizedDest = normalizedPath(destPath)
     
-    if cfg.debug:
-      echo &"[DEBUG] Moved '{absSrcPath}' to '{normalizedDest}'"
+    debug &"[DEBUG] Moved '{absSrcPath}' to '{normalizedDest}'"
     
     return mythicSuccess(taskId, &"Moved '{absSrcPath}' to '{normalizedDest}'")
     

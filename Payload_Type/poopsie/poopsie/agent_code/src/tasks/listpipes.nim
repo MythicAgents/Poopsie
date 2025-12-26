@@ -1,5 +1,5 @@
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 import std/[json, strformat, strutils]
 
 when defined(windows):
@@ -16,12 +16,9 @@ when defined(windows):
 
 proc listpipes*(taskId: string, params: JsonNode): JsonNode =
   ## List all named pipes on the local system
-  let cfg = getConfig()
-  
   when defined(windows):
     try:
-      if cfg.debug:
-        echo "[DEBUG] ListPipes: Enumerating named pipes"
+      debug "[DEBUG] ListPipes: Enumerating named pipes"
       
       var pipes: seq[string] = @[]
       
@@ -57,8 +54,7 @@ proc listpipes*(taskId: string, params: JsonNode): JsonNode =
       # Close the search handle
       discard FindClose(handle)
       
-      if cfg.debug:
-        echo &"[DEBUG] ListPipes: Found {pipes.len} named pipes"
+      debug &"[DEBUG] ListPipes: Found {pipes.len} named pipes"
       
       # Prepare the response
       let output = if pipes.len == 0:

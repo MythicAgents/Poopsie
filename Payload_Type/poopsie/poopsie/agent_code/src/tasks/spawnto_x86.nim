@@ -1,20 +1,17 @@
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 import ../global_data
 import std/[json, strformat]
 
 proc spawnto_x86*(taskId: string, params: JsonNode): JsonNode =
   ## Set the default x86 binary for process injection
-  let cfg = getConfig()
-  
   when defined(windows):
     try:
       # Parse parameters
       let application = params["application"].getStr()
       let arguments = if params.hasKey("arguments"): params["arguments"].getStr() else: ""
       
-      if cfg.debug:
-        echo &"[DEBUG] spawnto_x86: Setting to {application} with args: {arguments}"
+      debug &"[DEBUG] spawnto_x86: Setting to {application} with args: {arguments}"
       
       # Set global spawnto values
       setSpawntoX86(application, arguments)

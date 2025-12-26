@@ -1,8 +1,6 @@
-## Net Shares - Enumerate network shares
-
 import std/[json, strformat, os]
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 
 when defined(windows):
   import winim/lean
@@ -56,8 +54,6 @@ when defined(windows):
 
 proc netShares*(taskId: string, params: JsonNode): JsonNode =
   ## Enumerate network shares
-  let cfg = getConfig()
-  
   when defined(windows):
     try:
       # Parse parameters
@@ -69,8 +65,7 @@ proc netShares*(taskId: string, params: JsonNode): JsonNode =
       if computerName == "":
         computerName = getEnv("COMPUTERNAME", "Local")
       
-      if cfg.debug:
-        echo &"[DEBUG] net_shares: computer={computerName}"
+      debug &"[DEBUG] net_shares: computer={computerName}"
       
       var bufPtr: pointer = nil
       var computerNameW: LPCWSTR = nil

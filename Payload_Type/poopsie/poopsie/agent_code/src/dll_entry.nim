@@ -70,7 +70,7 @@ when defined(windows):
 
 else:
   # Non-Windows platforms (Linux) use .so shared libraries
-  when defined(posix):
+  when defined(linux):
     proc entrypoint(): bool {.exportc, dynlib.} =
       ## Main exported entrypoint for the shared library
       try:

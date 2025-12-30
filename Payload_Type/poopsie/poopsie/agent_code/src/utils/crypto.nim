@@ -1,6 +1,7 @@
 import std/base64
 import nimcrypto/[rijndael, bcmode, sysrand, hmac, sha2]
 import strutils
+import strenc
 
 proc generateIV*(): seq[byte] =
   result = newSeq[byte](16)
@@ -97,13 +98,13 @@ proc decryptPayload*(data: string, key: seq[byte], uuidLen: int = 36): string =
 type
   CryptoMethod* = enum
     cryptoNone = "none"
-    cryptoXorSingle = "xor_single"
-    cryptoXorMulti = "xor_multi"
-    cryptoXorCounter = "xor_counter"
-    cryptoXorFeedback = "xor_feedback"
-    cryptoXorRolling = "xor_rolling"
-    cryptoRc4 = "rc4"
-    cryptoChacha20 = "chacha20"
+    cryptoXorSingle = obf("xor_single")
+    cryptoXorMulti = obf("xor_multi")
+    cryptoXorCounter = obf("xor_counter")
+    cryptoXorFeedback = obf("xor_feedback")
+    cryptoXorRolling = obf("xor_rolling")
+    cryptoRc4 = obf("rc4")
+    cryptoChacha20 = obf("chacha20")
 
 proc xorSingle*(data: var seq[byte], key: byte) =
   for i in 0..<data.len:
@@ -215,9 +216,9 @@ proc bytesToUint32LE(bytes: openArray[byte], offset: int): uint32 =
 
 proc chacha20*(data: var seq[byte], key: seq[byte], nonce: seq[byte]) =
   if key.len != 32:
-    raise newException(ValueError, "ChaCha20 key must be exactly 32 bytes, got " & $key.len)
+    raise newException(ValueError, obf("ChaCha20 key must be exactly 32 bytes, got ") & $key.len)
   if nonce.len != 12:
-    raise newException(ValueError, "ChaCha20 nonce must be exactly 12 bytes, got " & $nonce.len)
+    raise newException(ValueError, obf("ChaCha20 nonce must be exactly 12 bytes, got ") & $nonce.len)
   
   var state: array[16, uint32]
   
@@ -251,7 +252,7 @@ proc chacha20*(data: var seq[byte], key: seq[byte], nonce: seq[byte]) =
 proc parseKey*(keyStr: string): seq[byte] =
   result = @[]
   
-  if keyStr.startsWith("0x") or keyStr.startsWith("0X"):
+  if keyStr.startsWith(obf("0x")) or keyStr.startsWith(obf("0X")):
     let hexVal = parseHexInt(keyStr)
     result.add(byte(hexVal))
   else:
@@ -282,7 +283,7 @@ proc decryptPayload*(data: var seq[byte], encryptionMethod: string,
   of cryptoXorFeedback:
     var ivByte: byte = 0xAA
     if iv != "":
-      if iv.startsWith("0x") or iv.startsWith("0X"):
+      if iv.startsWith(obf("0x")) or iv.startsWith(obf("0X")):
         ivByte = byte(parseHexInt(iv))
       else:
         ivByte = byte(parseInt(iv))

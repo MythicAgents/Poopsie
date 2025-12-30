@@ -1,5 +1,6 @@
 import ../utils/mythic_responses
 import ../utils/debug
+import ../utils/strenc
 import ../global_data
 import std/[json, strformat]
 
@@ -8,19 +9,19 @@ proc spawnto_x86*(taskId: string, params: JsonNode): JsonNode =
   when defined(windows):
     try:
       # Parse parameters
-      let application = params["application"].getStr()
-      let arguments = if params.hasKey("arguments"): params["arguments"].getStr() else: ""
+      let application = params[obf("application")].getStr()
+      let arguments = if params.hasKey(obf("arguments")): params[obf("arguments")].getStr() else: ""
       
       debug &"[DEBUG] spawnto_x86: Setting to {application} with args: {arguments}"
       
       # Set global spawnto values
       setSpawntoX86(application, arguments)
       
-      let output = &"Set new spawnto_x86 to {application}"
+      let output = obf("Set new spawnto_x86 to ") & application
       return mythicSuccess(taskId, output)
       
     except Exception as e:
-      return mythicError(taskId, &"spawnto_x86 error: {e.msg}")
+      return mythicError(taskId, obf("spawnto_x86 error: ") & e.msg)
   
-  when defined(posix):
-    return mythicError(taskId, "spawnto_x86 is only available on Windows")
+  when defined(linux):
+    return mythicError(taskId, obf("spawnto_x86 is only available on Windows"))

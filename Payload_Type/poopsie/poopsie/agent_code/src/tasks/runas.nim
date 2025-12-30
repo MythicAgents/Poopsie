@@ -1,5 +1,6 @@
 import ../utils/mythic_responses
 import ../utils/debug
+import ../utils/strenc
 import std/[json, strformat, strutils]
 
 when defined(windows):
@@ -11,12 +12,12 @@ proc runas*(taskId: string, params: JsonNode): JsonNode =
   when defined(windows):
     try:
       # Parse parameters
-      let username = params["username"].getStr()
-      let password = params["password"].getStr()
-      let domain = params["domain"].getStr()
-      let program = params["program"].getStr()
-      let args = params["args"].getStr()
-      let netonly = params.getOrDefault("netonly").getBool(true)
+      let username = params[obf("username")].getStr()
+      let password = params[obf("password")].getStr()
+      let domain = params[obf("domain")].getStr()
+      let program = params[obf("program")].getStr()
+      let args = params[obf("args")].getStr()
+      let netonly = params.getOrDefault(obf("netonly")).getBool(true)
       
       debug &"[DEBUG] RunAs: {domain}\\{username} executing {program}"
       
@@ -73,21 +74,21 @@ proc runas*(taskId: string, params: JsonNode): JsonNode =
       
       if result == 0:
         let err = GetLastError()
-        output.add(&"[-] Failed to create process with alternate credentials\n")
-        output.add(&"[-] Error code: {err}\n")
+        output.add(obf("[-] Failed to create process with alternate credentials\n"))
+        output.add(obf("[-] Error code: {err}\n"))
         
         # Common error messages
         case err
         of ERROR_LOGON_FAILURE:
-          output.add("[-] Logon failure: The username or password is incorrect\n")
+          output.add(obf("[-] Logon failure: The username or password is incorrect\n"))
         of ERROR_ACCOUNT_RESTRICTION:
-          output.add("[-] Account restriction: Unable to log on with these credentials\n")
+          output.add(obf("[-] Account restriction: Unable to log on with these credentials\n"))
         of ERROR_INVALID_ACCOUNT_NAME:
-          output.add("[-] Invalid account name\n")
+          output.add(obf("[-] Invalid account name\n"))
         of ERROR_PASSWORD_EXPIRED:
-          output.add("[-] Password has expired\n")
+          output.add(obf("[-] Password has expired\n"))
         of ERROR_ACCOUNT_DISABLED:
-          output.add("[-] Account is disabled\n")
+          output.add(obf("[-] Account is disabled\n"))
         else:
           discard
         
@@ -98,12 +99,12 @@ proc runas*(taskId: string, params: JsonNode): JsonNode =
       # For interactive mode, use GetProcessId for accuracy with impersonation
       let actualPid = if netonly: pi.dwProcessId else: GetProcessId(pi.hProcess)
       
-      let logonType = if netonly: "network-only" else: "interactive"
-      output.add(&"[+] Successfully spawned process as {domain}\\{username} ({logonType})\n")
-      output.add(&"[+] Process: {program}\n")
+      let logonType = if netonly: obf("network-only") else: obf("interactive")
+      output.add(obf("[+] Successfully spawned process as {domain}\\{username} ({logonType})\n"))
+      output.add(obf("[+] Process: {program}\n"))
       if args.len > 0:
-        output.add(&"[+] Arguments: {args}\n")
-      output.add(&"[+] PID: {actualPid}\n")
+        output.add(obf("[+] Arguments: {args}\n"))
+      output.add(obf("[+] PID: {actualPid}\n"))
       
       # Close handles
       CloseHandle(pi.hProcess)
@@ -114,6 +115,6 @@ proc runas*(taskId: string, params: JsonNode): JsonNode =
       return mythicSuccess(taskId, output)
       
     except Exception as e:
-      return mythicError(taskId, "RunAs error: " & e.msg)
+      return mythicError(taskId, obf("RunAs error: ") & e.msg)
   else:
-    return mythicError(taskId, "runas command is only available on Windows")
+    return mythicError(taskId, obf("runas command is only available on Windows"))

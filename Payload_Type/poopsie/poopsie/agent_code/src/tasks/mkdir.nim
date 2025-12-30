@@ -1,5 +1,6 @@
 import ../utils/mythic_responses
 import ../utils/debug
+import ../utils/strenc
 import std/[json, os, strformat, strutils]
 
 type
@@ -26,9 +27,9 @@ proc makeDirectory*(taskId: string, params: string): JsonNode =
     
     debug "[DEBUG] Created directory: ", normalizedPath
     
-    return mythicSuccess(taskId, &"Created directory '{normalizedPath}'")
+    return mythicSuccess(taskId, obf("Created directory '") & normalizedPath & "'")
     
   except OSError as e:
-    return mythicError(taskId, &"Failed to create directory: {e.msg}")
+    return mythicError(taskId, obf("Failed to create directory: ") & e.msg)
   except Exception as e:
-    return mythicError(taskId, &"Error: {e.msg}")
+    return mythicError(taskId, obf("Error: ") & e.msg)

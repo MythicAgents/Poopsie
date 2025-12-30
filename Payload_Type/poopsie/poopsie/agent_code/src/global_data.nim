@@ -70,7 +70,7 @@ when defined(windows):
       }
       return $data
 
-when defined(posix):
+when defined(linux):
   # Linux agents don't need process spawning configuration
   # This exists for API compatibility
   type

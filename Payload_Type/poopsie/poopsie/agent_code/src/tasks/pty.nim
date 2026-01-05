@@ -1,5 +1,5 @@
 import std/[json, os, osproc, strutils, base64, strformat]
-import ../utils/mythic_responses
+import ../utils/m_responses
 import ../utils/debug
 import ../utils/strenc
 

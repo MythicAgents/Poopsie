@@ -1,5 +1,5 @@
 import ../config
-import ../utils/mythic_responses
+import ../utils/m_responses
 import ../global_data
 import ../tasks/token_manager
 import ../utils/debug

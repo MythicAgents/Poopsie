@@ -1,5 +1,5 @@
 import std/[json, strformat]
-import ../utils/mythic_responses
+import ../utils/m_responses
 import ../utils/debug
 import ../utils/strenc
 import token_manager

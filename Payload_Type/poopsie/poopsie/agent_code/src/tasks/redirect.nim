@@ -1,6 +1,6 @@
 import std/[json, net, nativesockets, strformat, tables, os]
 import ../config
-import ../utils/mythic_responses
+import ../utils/m_responses
 import ../utils/strenc
 
 const BUFFER_SIZE = 8192

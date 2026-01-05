@@ -6,7 +6,7 @@ import profiles/websocket_profile
 import profiles/httpx_profile
 import profiles/dns_profile
 import utils/sysinfo
-import utils/mythic_responses
+import utils/m_responses
 import utils/debug
 import utils/strenc
 import tasks/exit

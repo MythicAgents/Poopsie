@@ -13,6 +13,7 @@ type
   HttpxProfile* = ref object
     config: Config
     aesKey: seq[byte]
+    aesDecKey: seq[byte]  # Separate key for decryption
     rawC2Config: JsonNode
     callbackDomains: seq[string]
     domainRotation: string
@@ -194,6 +195,10 @@ proc close*(profile: var HttpxProfile) =
 proc setAesKey*(profile: var HttpxProfile, key: seq[byte]) =
   ## Set the AES encryption key
   profile.aesKey = key
+
+proc setAesDecKey*(profile: var HttpxProfile, key: seq[byte]) =
+  ## Set the AES decryption key
+  profile.aesDecKey = key
 
 proc hasAesKey*(profile: HttpxProfile): bool =
   ## Check if AES key is set

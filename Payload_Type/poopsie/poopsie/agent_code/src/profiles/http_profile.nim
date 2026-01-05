@@ -13,6 +13,7 @@ type
   HttpProfile* = ref object
     config: Config
     aesKey: seq[byte]
+    aesDecKey: seq[byte]  # Separate key for decryption
     client: HttpClientWrapper
 
 proc newHttpProfile*(): HttpProfile =
@@ -182,6 +183,10 @@ proc send*(profile: HttpProfile, data: string, callbackUuid: string = ""): strin
 proc setAesKey*(profile: var HttpProfile, key: seq[byte]) =
   ## Set the AES encryption key
   profile.aesKey = key
+
+proc setAesDecKey*(profile: var HttpProfile, key: seq[byte]) =
+  ## Set the AES decryption key
+  profile.aesDecKey = key
 
 proc hasAesKey*(profile: HttpProfile): bool =
   ## Check if AES key is set

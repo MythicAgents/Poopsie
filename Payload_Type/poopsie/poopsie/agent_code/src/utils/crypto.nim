@@ -1,4 +1,4 @@
-import std/base64
+import std/[base64, sequtils]
 import nimcrypto/[rijndael, bcmode, sysrand, hmac, sha2]
 import strutils
 import strenc
@@ -36,18 +36,30 @@ proc encryptAES256*(data: seq[byte], key: seq[byte]): seq[byte] =
   result = ivAndCiphertext & hmacSeq
 
 proc decryptAES256*(data: seq[byte], key: seq[byte]): seq[byte] =
+  ## Decrypt AES256-CBC with HMAC verification
+  ## Format: IV(16) + Ciphertext(N) + HMAC(32)
+  ## HMAC is calculated over IV+Ciphertext (must match encryption)
   if data.len < 48:
+    echo "[CRYPTO] Data too short: ", data.len, " bytes (minimum 48)"
     return @[]
   
   let hmacSize = 32
   let ivAndCiphertextLen = data.len - hmacSize
-  let ivAndCiphertext = data[0..<ivAndCiphertextLen]
+  let iv = data[0..<16]
+  let ciphertext = data[16..<ivAndCiphertextLen]
   let receivedHmac = data[ivAndCiphertextLen..^1]
   
+  echo "[CRYPTO] IV+Ciphertext length: ", ivAndCiphertextLen
+  echo "[CRYPTO] Received HMAC: ", receivedHmac.mapIt(it.toHex(2)).join(" ")
+  
+  # Calculate HMAC over IV+Ciphertext (same as encryption does)
   var hmacCtx: HMAC[sha256]
   hmacCtx.init(key)
-  hmacCtx.update(ivAndCiphertext)
+  hmacCtx.update(iv)
+  hmacCtx.update(ciphertext)
   let calculatedHmac = hmacCtx.finish()
+  
+  echo "[CRYPTO] Calculated HMAC (IV+Ciphertext): ", calculatedHmac.data.mapIt(it.toHex(2)).join(" ")
   
   var hmacMatch = true
   for i in 0..<hmacSize:
@@ -56,16 +68,16 @@ proc decryptAES256*(data: seq[byte], key: seq[byte]): seq[byte] =
       break
   
   if not hmacMatch:
+    echo "[CRYPTO] HMAC verification FAILED"
     return @[]
   
-  let iv = ivAndCiphertext[0..<16]
-  let encrypted = ivAndCiphertext[16..^1]
+  echo "[CRYPTO] HMAC verification OK"
   
   var ctx: CBC[aes256]
   ctx.init(key, iv)
   
-  var decrypted = newSeq[byte](encrypted.len)
-  ctx.decrypt(encrypted, decrypted)
+  var decrypted = newSeq[byte](ciphertext.len)
+  ctx.decrypt(ciphertext, decrypted)
   ctx.clear()
   
   if decrypted.len > 0:
@@ -76,6 +88,8 @@ proc decryptAES256*(data: seq[byte], key: seq[byte]): seq[byte] =
       result = decrypted
   else:
     result = @[]
+
+
 
 proc encryptPayload*(message: string, key: seq[byte], uuid: string): string =
   let messageBytes = cast[seq[byte]](message)

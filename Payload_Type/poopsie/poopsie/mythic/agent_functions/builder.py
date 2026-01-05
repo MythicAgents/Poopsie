@@ -380,7 +380,7 @@ class Poopsie(PayloadType):
                 StepStdout=f"Successfully compiled Nim agent for {selected_os}",
                 StepSuccess=True
             ))
-            resp.build_message += f"Build command: {build_result['command']}\n"
+            resp.build_message += f"Build command:\n{build_result['command']}\n"
 
             output_path = build_result["path"]
 

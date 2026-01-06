@@ -27,6 +27,8 @@ type
     maxQueryLength*: int
     maxSubdomainLength*: int
     failoverThreshold*: int
+    # SMB-specific field
+    pipename*: string
 
 proc getConfig*(): Config =
   ## Get configuration from compile-time environment variables
@@ -64,4 +66,7 @@ proc getConfig*(): Config =
   result.maxQueryLength = static: parseInt(getEnv(obf("MAX_QUERY_LENGTH"), "0"))
   result.maxSubdomainLength = static: parseInt(getEnv(obf("MAX_SUBDOMAIN_LENGTH"), "0"))
   result.failoverThreshold = static: parseInt(getEnv(obf("FAILOVER_THRESHOLD"), "0"))
+  
+  # SMB-specific configuration
+  result.pipename = static: getEnv(obf("PIPENAME"), "")
   

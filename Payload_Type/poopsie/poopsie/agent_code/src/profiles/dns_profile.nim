@@ -69,11 +69,10 @@ proc newDnsProfile*(): DnsProfile =
   
   debug "[DEBUG] DNS Profile: Initializing DNS profile..."
   
-  # Parse DNS server and port from DNS_SERVER env var (format: "ip:port")
-  let dnsServerStr = static: getEnv("DNS_SERVER")
-  if dnsServerStr.len == 0:
+  # Parse DNS server and port from config.dnsServer (format: "ip:port")
+  if result.config.dnsServer.len == 0:
     raise newException(ValueError, "DNS_SERVER environment variable is not set")
-  let serverParts = dnsServerStr.split(":")
+  let serverParts = result.config.dnsServer.split(":")
   if serverParts.len == 2:
     result.dnsServer = serverParts[0]
     try:
@@ -85,12 +84,11 @@ proc newDnsProfile*(): DnsProfile =
   
   debug "[DEBUG] DNS Server: ", result.dnsServer, ":", $result.dnsPort
   
-  # Parse domains from DOMAINS env var (JSON array)
-  let domainsStr = static: getEnv("DOMAINS")
-  if domainsStr.len == 0:
+  # Parse domains from config.domains (JSON array)
+  if result.config.domains.len == 0:
     raise newException(ValueError, "DOMAINS environment variable is not set")
   try:
-    let domainsJson = parseJson(domainsStr)
+    let domainsJson = parseJson(result.config.domains)
     result.domains = @[]
     for domain in domainsJson:
       result.domains.add(domain.getStr())
@@ -104,58 +102,42 @@ proc newDnsProfile*(): DnsProfile =
   
   result.currentDomainIndex = 0
   
-  # Parse record type from RECORD_TYPE env var
-  let recordTypeStr = static: getEnv("RECORD_TYPE")
-  if recordTypeStr.len == 0:
+  # Parse record type from config
+  if result.config.recordType.len == 0:
     raise newException(ValueError, "RECORD_TYPE environment variable is not set")
-  case recordTypeStr.toUpperAscii():
+  case result.config.recordType.toUpperAscii():
     of "A": result.recordType = DnsRecordType.A
     of "AAAA": result.recordType = DnsRecordType.AAAA
     of "TXT": result.recordType = DnsRecordType.TXT
     else:
       raise newException(ValueError, "RECORD_TYPE must be A, AAAA, or TXT")
   
-  # Parse domain rotation strategy from DOMAIN_ROTATION env var
-  let rotationStr = static: getEnv("DOMAIN_ROTATION")
-  if rotationStr.len == 0:
+  # Parse domain rotation strategy from config
+  if result.config.domainRotation.len == 0:
     raise newException(ValueError, "DOMAIN_ROTATION environment variable is not set")
-  case rotationStr.toLowerAscii():
+  case result.config.domainRotation.toLowerAscii():
     of "round-robin": result.domainRotation = DomainRotation.RoundRobin
     of "random": result.domainRotation = DomainRotation.Random
     of "sequential": result.domainRotation = DomainRotation.Sequential
     else:
       raise newException(ValueError, "DOMAIN_ROTATION must be round-robin, random, or sequential")
   
-  # Parse max query length from MAX_QUERY_LENGTH env var
-  let maxQueryStr = static: getEnv("MAX_QUERY_LENGTH")
-  if maxQueryStr.len == 0:
+  # Validate and use config values
+  if result.config.maxQueryLength == 0:
     raise newException(ValueError, "MAX_QUERY_LENGTH environment variable is not set")
-  try:
-    result.maxQueryLength = parseInt(maxQueryStr)
-  except:
-    raise newException(ValueError, "MAX_QUERY_LENGTH is not a valid integer")
+  result.maxQueryLength = result.config.maxQueryLength
   
-  # Parse max subdomain length from MAX_SUBDOMAIN_LENGTH env var
-  let maxSubdomainStr = static: getEnv("MAX_SUBDOMAIN_LENGTH")
-  if maxSubdomainStr.len == 0:
+  if result.config.maxSubdomainLength == 0:
     raise newException(ValueError, "MAX_SUBDOMAIN_LENGTH environment variable is not set")
-  try:
-    result.maxSubdomainLength = parseInt(maxSubdomainStr)
-    # DNS labels have a maximum length of 63 bytes (RFC 1035)
-    if result.maxSubdomainLength > 63:
-      result.maxSubdomainLength = 63
-      debug "[DEBUG] Clamped MAX_SUBDOMAIN_LENGTH to 63 (DNS label limit)"
-  except:
-    raise newException(ValueError, "MAX_SUBDOMAIN_LENGTH is not a valid integer")
+  result.maxSubdomainLength = result.config.maxSubdomainLength
+  # DNS labels have a maximum length of 63 bytes (RFC 1035)
+  if result.maxSubdomainLength > 63:
+    result.maxSubdomainLength = 63
+    debug "[DEBUG] Clamped MAX_SUBDOMAIN_LENGTH to 63 (DNS label limit)"
   
-  # Parse failover threshold from FAILOVER_THRESHOLD env var
-  let failoverStr = static: getEnv("FAILOVER_THRESHOLD")
-  if failoverStr.len == 0:
+  if result.config.failoverThreshold == 0:
     raise newException(ValueError, "FAILOVER_THRESHOLD environment variable is not set")
-  try:
-    result.failoverThreshold = parseInt(failoverStr)
-  except:
-    raise newException(ValueError, "FAILOVER_THRESHOLD is not a valid integer")
+  result.failoverThreshold = result.config.failoverThreshold
   
   result.failureCount = 0
   

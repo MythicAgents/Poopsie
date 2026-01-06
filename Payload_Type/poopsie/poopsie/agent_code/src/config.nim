@@ -19,13 +19,26 @@ type
     callbackInterval*: int
     callbackJitter*: int
     killdate*: string
+    # DNS-specific fields
+    dnsServer*: string
+    domains*: string
+    recordType*: string
+    domainRotation*: string
+    maxQueryLength*: int
+    maxSubdomainLength*: int
+    failoverThreshold*: int
 
 proc getConfig*(): Config =
   ## Get configuration from compile-time environment variables
   result.uuid = static: getEnv(obf("UUID"), "")
   result.profile = static: getEnv(obf("PROFILE"), "")
   result.callbackHost = static: getEnv(obf("CALLBACK_HOST"), "")
-  result.callbackPort = static: getEnv(obf("CALLBACK_PORT"), "")
+  
+  # TCP uses PORT, HTTP uses CALLBACK_PORT
+  let port = static: getEnv(obf("PORT"), "")
+  let callbackPort = static: getEnv(obf("CALLBACK_PORT"), "")
+  result.callbackPort = if callbackPort.len > 0: callbackPort elif port.len > 0: port else: ""
+  
   result.postUri = static: getEnv(obf("POST_URI"), "")
   result.userAgent = static: getEnv(obf("USER_AGENT"), "")
   result.headers = static: getEnv(obf("HEADERS"), "")
@@ -38,7 +51,17 @@ proc getConfig*(): Config =
   let eec = static: getEnv(obf("ENCRYPTED_EXCHANGE_CHECK"), "")
   result.encryptedExchange = eec.toLowerAscii in ["true", "t"]
   
-  result.callbackInterval = static: parseInt(getEnv(obf("CALLBACK_INTERVAL"), ""))
-  result.callbackJitter = static: parseInt(getEnv(obf("CALLBACK_JITTER"), ""))
+  # Default to 10 and 23 if not provided (TCP doesn't use these)
+  result.callbackInterval = static: parseInt(getEnv(obf("CALLBACK_INTERVAL"), "10"))
+  result.callbackJitter = static: parseInt(getEnv(obf("CALLBACK_JITTER"), "23"))
   result.killdate = static: getEnv(obf("KILLDATE"), "")
+  
+  # DNS-specific configuration (empty if not DNS profile)
+  result.dnsServer = static: getEnv(obf("DNS_SERVER"), "")
+  result.domains = static: getEnv(obf("DOMAINS"), "")
+  result.recordType = static: getEnv(obf("RECORD_TYPE"), "")
+  result.domainRotation = static: getEnv(obf("DOMAIN_ROTATION"), "")
+  result.maxQueryLength = static: parseInt(getEnv(obf("MAX_QUERY_LENGTH"), "0"))
+  result.maxSubdomainLength = static: parseInt(getEnv(obf("MAX_SUBDOMAIN_LENGTH"), "0"))
+  result.failoverThreshold = static: parseInt(getEnv(obf("FAILOVER_THRESHOLD"), "0"))
   

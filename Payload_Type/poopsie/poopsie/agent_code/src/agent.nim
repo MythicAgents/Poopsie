@@ -1,11 +1,11 @@
 import std/[json, random, os, base64, tables, times, strutils, strformat, asyncdispatch]
 import config
 import global_data
-import profiles/http_profile
-import profiles/websocket_profile
-import profiles/httpx_profile
-import profiles/dns_profile
-import profiles/tcp_profile
+import profiles/http
+import profiles/websocket
+import profiles/httpx
+import profiles/dns
+import profiles/tcp
 import utils/sysinfo
 import utils/m_responses
 import utils/debug

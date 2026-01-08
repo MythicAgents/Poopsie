@@ -34,7 +34,7 @@ Poopsie is a cross-platform C2 agent for the Mythic framework, written in Nim. I
 
 ### Process & Execution
 - `execute_assembly` - Execute .NET assemblies in-memory
-- `inline_execute` - Execute position-independent shellcode in-process
+- `inline_execute` - Coff loader, execute beacon object files.
 - `powerpick` - Execute PowerShell without `powershell.exe`
 - `ps` - List running processes
 - `pty` - Spawn an interactive pseudo-terminal
@@ -66,8 +66,17 @@ Poopsie is a cross-platform C2 agent for the Mythic framework, written in Nim. I
 - `exit` - Terminate the agent
 
 ## Installation
+To install Poopsie, you will need [Mythic](https://github.com/its-a-feature/Mythic) set up on a machine.
 
-1. Clone this repository into your Mythic server's `Mythic/InstalledServices/` directory
+In the Mythic root directory, use `mythic-cli` to install the agent.
+```bash
+sudo ./mythic-cli install github https://github.com/MythicAgents/Poopsie
+sudo ./mythic-cli payload start poopsie
+```
+
+or
+
+1. Clone this repository
 2. From the Mythic server, run: `sudo ./mythic-cli install folder /path/to/Poopsie/`
 3. Start the Mythic server: `sudo ./mythic-cli start`
 

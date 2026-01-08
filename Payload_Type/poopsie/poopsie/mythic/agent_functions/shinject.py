@@ -32,18 +32,43 @@ class ShInjectArguments(TaskArguments):
                         ui_position=2
                     ),
                 ]),
-                CommandParameter(
-                    name="key",
-                    cli_name="key",
-                    display_name="XOR Key",
-                    type=ParameterType.String,
-                    parameter_group_info=[
-                        ParameterGroupInfo(
-                            required=False,
-                            group_name="Default",
-                            ui_position=3
-                        ),
-                    ]),
+            CommandParameter(
+                name="encryption",
+                cli_name="encryption",
+                display_name="Encryption Method",
+                type=ParameterType.ChooseOne,
+                choices=["none", "xor_single", "xor_multi", "xor_counter", "xor_feedback", "xor_rolling", "rc4", "chacha20"],
+                default_value="none",
+                description="Shellcode encryption method",
+                parameter_group_info=[ParameterGroupInfo(required=False, group_name="Default", ui_position=3)]
+            ),
+            CommandParameter(
+                name="key",
+                cli_name="key",
+                display_name="Encryption Key",
+                type=ParameterType.String,
+                default_value="",
+                description="Encryption key (hex or plain text)",
+                parameter_group_info=[ParameterGroupInfo(required=False, group_name="Default", ui_position=4)]
+            ),
+            CommandParameter(
+                name="iv",
+                cli_name="iv",
+                display_name="IV (xor_feedback)",
+                type=ParameterType.String,
+                default_value="",
+                description="Initialization vector for xor_feedback",
+                parameter_group_info=[ParameterGroupInfo(required=False, group_name="Default", ui_position=5)]
+            ),
+            CommandParameter(
+                name="nonce",
+                cli_name="nonce",
+                display_name="Nonce (chacha20)",
+                type=ParameterType.String,
+                default_value="",
+                description="Nonce for ChaCha20 (12 bytes)",
+                parameter_group_info=[ParameterGroupInfo(required=False, group_name="Default", ui_position=6)]
+            ),
         ]
 
     async def parse_arguments(self):
@@ -61,7 +86,7 @@ class ShInjectCommand(CommandBase):
     help_cmd = "shinject (modal popup)"
     description = "Inject shellcode into a remote process."
     version = 2
-    author = "@djhohnstein"
+    author = "@haha150"
     argument_class = ShInjectArguments
     attackmapping = ["T1055"]
     attributes = CommandAttributes(
@@ -87,8 +112,14 @@ class ShInjectCommand(CommandBase):
             response.DisplayParams += " -File {}".format(original_file_name)
         else:
             raise Exception("No file provided.")
+        if taskData.args.get_arg("encryption") is not None:
+            response.DisplayParams += " -Encryption {}".format(taskData.args.get_arg("encryption"))
         if taskData.args.get_arg("key") is not None:
             response.DisplayParams += " -Key {}".format(taskData.args.get_arg("key"))
+        if taskData.args.get_arg("iv") is not None:
+            response.DisplayParams += " -IV {}".format(taskData.args.get_arg("iv"))
+        if taskData.args.get_arg("nonce") is not None:
+            response.DisplayParams += " -Nonce {}".format(taskData.args.get_arg("nonce"))
         return response
 
     async def process_response(self, task: PTTaskMessageAllData, response: any) -> PTTaskProcessResponseMessageResponse:

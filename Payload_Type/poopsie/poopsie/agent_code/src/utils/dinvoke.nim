@@ -1,5 +1,6 @@
 import winim/lean
 import strutils
+import strenc
 
 var
     SYSCALL_STUB_SIZE*: int = 23
@@ -17,7 +18,7 @@ proc GetSyscallStub*(functionName: LPCSTR, syscallStub: LPVOID): BOOL =
         fileSize: DWORD
         bytesRead: DWORD
         fileData: LPVOID
-        ntdllString: LPCSTR = "C:\\windows\\system32\\ntdll.dll"
+        ntdllString: LPCSTR = obf("C:\\windows\\system32\\ntdll.dll")
         nullHandle: HANDLE
 
     file = CreateFileA(ntdllString, cast[DWORD](GENERIC_READ), cast[DWORD](FILE_SHARE_READ), cast[LPSECURITY_ATTRIBUTES](NULL), cast[DWORD](OPEN_EXISTING), cast[DWORD](FILE_ATTRIBUTE_NORMAL), nullHandle)
@@ -36,7 +37,7 @@ proc GetSyscallStub*(functionName: LPCSTR, syscallStub: LPVOID): BOOL =
     let i: uint16 = 0
     for Section in i ..< imageNTHeaders.FileHeader.NumberOfSections:
         var ntdllSectionHeader = cast[PIMAGE_SECTION_HEADER](cast[DWORD_PTR](IMAGE_FIRST_SECTION(imageNTHeaders)) + cast[DWORD_PTR](IMAGE_SIZEOF_SECTION_HEADER * Section))
-        if ".rdata" in toString(ntdllSectionHeader.Name):
+        if obf(".rdata") in toString(ntdllSectionHeader.Name):
             rdataSection = ntdllSectionHeader
 
     var exportDirectory: PIMAGE_EXPORT_DIRECTORY = cast[PIMAGE_EXPORT_DIRECTORY](RVAtoRawOffset(cast[DWORD_PTR](fileData) + exportDirRVA, rdataSection))

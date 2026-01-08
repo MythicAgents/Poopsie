@@ -1,8 +1,5 @@
 import winim/lean
 
-# Function type definitions for NT API direct syscalls
-# These are used with dinvoke.nim for EDR evasion
-
 type
   NtOpenProcess* = proc(
     ProcessHandle: PHANDLE,

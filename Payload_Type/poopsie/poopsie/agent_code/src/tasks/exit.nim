@@ -1,9 +1,9 @@
 import json
+import ../utils/strenc
 
 proc executeExit*(params: JsonNode): JsonNode =
-  ## Execute the exit command - signals agent to terminate
   result = %*{
-    "user_output": "Exiting agent...",
-    "completed": true,
-    "status": "completed"
+    obf("user_output"): obf("Exiting agent..."),
+    obf("completed"): true,
+    obf("status"): obf("completed")
   }

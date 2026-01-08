@@ -4,6 +4,7 @@
 import winim/lean
 import ptr_math
 import system
+import strenc
 
 #[
 typedef struct {
@@ -137,12 +138,11 @@ proc BeaconFormatAppend(format:ptr Formatp,text:ptr char,len:int):void{.stdcall.
 
 # void   BeaconPrintf(int type, char* fmt, ...);
 # Reference: https://forum.nim-lang.org/t/7352
-type va_list* {.importc: "va_list", header: "<stdarg.h>".} = object
-proc va_start(format: va_list, args: ptr char) {.stdcall, importc, header: "stdio.h"}
-proc va_end(ap: va_list) {.stdcall, importc, header: "stdio.h"}
-proc vprintf(format: cstring, args: va_list) {.stdcall, importc, header: "stdio.h"}
-proc vsnprintf(buffer: cstring; size: int; fmt: cstring; args: va_list): int {.stdcall, importc, dynlib: "msvcrt".}
-
+type va_list* {.importc: obf("va_list"), header: obf("<stdarg.h>").} = object
+proc va_start(format: va_list, args: ptr char) {.stdcall, importc, header: obf("stdio.h")}
+proc va_end(ap: va_list) {.stdcall, importc, header: obf("stdio.h")}
+proc vprintf(format: cstring, args: va_list) {.stdcall, importc, header: obf("stdio.h")}
+proc vsnprintf(buffer: cstring; size: int; fmt: cstring; args: va_list): int {.stdcall, importc, dynlib: obf("msvcrt").}
 
 # void    BeaconFormatPrintf(formatp* format, char* fmt, ...);
 proc BeaconFormatPrintf(format:ptr Formatp,fmt:ptr char):void{.stdcall, varargs.} =
@@ -261,12 +261,12 @@ proc BeaconGetSpawnTo(x86: BOOL, buffer:ptr char, length:int):void{.stdcall.} =
     if(cast[uint64](buffer) == 0):
         return 
     if(x86):
-        tempBufferPath = "C:\\Windows\\SysWOW64\\rundll32.exe"
+        tempBufferPath = obf("C:\\Windows\\SysWOW64\\rundll32.exe")
         if(tempBufferPath.len > length):
             return
         copyMem(buffer,unsafeaddr(tempBufferPath[0]),tempBufferPath.len)
     else:
-        tempBufferPath = "C:\\Windows\\System32\\rundll32.exe"
+        tempBufferPath = obf("C:\\Windows\\System32\\rundll32.exe")
         if(tempBufferPath.len > length):
             return
         copyMem(buffer,unsafeaddr(tempBufferPath[0]),tempBufferPath.len)
@@ -275,9 +275,9 @@ proc BeaconGetSpawnTo(x86: BOOL, buffer:ptr char, length:int):void{.stdcall.} =
 proc BeaconSpawnTemporaryProcess(x86: BOOL, ignoreToken:BOOL, sInfo:ptr STARTUPINFOA, pInfo: ptr PROCESS_INFORMATION):BOOL{.stdcall.} =
     var bSuccess:BOOL = FALSE
     if(x86):
-        bSuccess = CreateProcessA(NULL,"C:\\Windows\\SysWOW64\\rundll32.exe",NULL,NULL,TRUE,CREATE_NO_WINDOW,NULL,NULL,sInfo,pInfo)
+        bSuccess = CreateProcessA(NULL,obf("C:\\Windows\\SysWOW64\\rundll32.exe"),NULL,NULL,TRUE,CREATE_NO_WINDOW,NULL,NULL,sInfo,pInfo)
     else:
-        bSuccess = CreateProcessA(NULL,"C:\\Windows\\System32\\rundll32.exe",NULL,NULL,TRUE,CREATE_NO_WINDOW,NULL,NULL,sInfo,pInfo)
+        bSuccess = CreateProcessA(NULL,obf("C:\\Windows\\System32\\rundll32.exe"),NULL,NULL,TRUE,CREATE_NO_WINDOW,NULL,NULL,sInfo,pInfo)
     return bSuccess
 
 # void   BeaconInjectProcess(HANDLE hProc, int pid, char* payload, int p_len, int p_offset, char* arg, int a_len);
@@ -313,27 +313,27 @@ proc BeaconGetOutputData*(outSize:ptr int):ptr char{.stdcall.} =
     return outData
 
 var functionAddresses*:array[23,tuple[name: string, address: uint64]] = [
-    ("BeaconDataParse", cast[uint64](BeaconDataParse)),
-    ("BeaconDataInt", cast[uint64](BeaconDataInt)),
-    ("BeaconDataShort", cast[uint64](BeaconDataShort)),
-    ("BeaconDataLength", cast[uint64](BeaconDataLength)),
-    ("BeaconDataExtract", cast[uint64](BeaconDataExtract)),
-    ("BeaconFormatAlloc", cast[uint64](BeaconFormatAlloc)),
-    ("BeaconFormatReset", cast[uint64](BeaconFormatReset)),
-    ("BeaconFormatFree", cast[uint64](BeaconFormatFree)),
-    ("BeaconFormatAppend", cast[uint64](BeaconFormatAppend)),
-    ("BeaconFormatPrintf", cast[uint64](BeaconFormatPrintf)),
-    ("BeaconFormatToString", cast[uint64](BeaconFormatToString)),
-    ("BeaconFormatInt", cast[uint64](BeaconFormatInt)),
-    ("BeaconPrintf", cast[uint64](BeaconPrintf)),
-    ("BeaconOutput", cast[uint64](BeaconOutput)),
-    ("BeaconUseToken", cast[uint64](BeaconUseToken)),
-    ("BeaconRevertToken", cast[uint64](BeaconRevertToken)),
-    ("BeaconIsAdmin", cast[uint64](BeaconIsAdmin)),
-    ("BeaconGetSpawnTo", cast[uint64](BeaconGetSpawnTo)),
-    ("BeaconSpawnTemporaryProcess", cast[uint64](BeaconSpawnTemporaryProcess)),
-    ("BeaconInjectProcess", cast[uint64](BeaconInjectProcess)),
-    ("BeaconInjectTemporaryProcess", cast[uint64](BeaconInjectTemporaryProcess)),
-    ("BeaconCleanupProcess", cast[uint64](BeaconCleanupProcess)),
-    ("toWideChar", cast[uint64](toWideChar))
+    (obf("BeaconDataParse"), cast[uint64](BeaconDataParse)),
+    (obf("BeaconDataInt"), cast[uint64](BeaconDataInt)),
+    (obf("BeaconDataShort"), cast[uint64](BeaconDataShort)),
+    (obf("BeaconDataLength"), cast[uint64](BeaconDataLength)),
+    (obf("BeaconDataExtract"), cast[uint64](BeaconDataExtract)),
+    (obf("BeaconFormatAlloc"), cast[uint64](BeaconFormatAlloc)),
+    (obf("BeaconFormatReset"), cast[uint64](BeaconFormatReset)),
+    (obf("BeaconFormatFree"), cast[uint64](BeaconFormatFree)),
+    (obf("BeaconFormatAppend"), cast[uint64](BeaconFormatAppend)),
+    (obf("BeaconFormatPrintf"), cast[uint64](BeaconFormatPrintf)),
+    (obf("BeaconFormatToString"), cast[uint64](BeaconFormatToString)),
+    (obf("BeaconFormatInt"), cast[uint64](BeaconFormatInt)),
+    (obf("BeaconPrintf"), cast[uint64](BeaconPrintf)),
+    (obf("BeaconOutput"), cast[uint64](BeaconOutput)),
+    (obf("BeaconUseToken"), cast[uint64](BeaconUseToken)),
+    (obf("BeaconRevertToken"), cast[uint64](BeaconRevertToken)),
+    (obf("BeaconIsAdmin"), cast[uint64](BeaconIsAdmin)),
+    (obf("BeaconGetSpawnTo"), cast[uint64](BeaconGetSpawnTo)),
+    (obf("BeaconSpawnTemporaryProcess"), cast[uint64](BeaconSpawnTemporaryProcess)),
+    (obf("BeaconInjectProcess"), cast[uint64](BeaconInjectProcess)),
+    (obf("BeaconInjectTemporaryProcess"), cast[uint64](BeaconInjectTemporaryProcess)),
+    (obf("BeaconCleanupProcess"), cast[uint64](BeaconCleanupProcess)),
+    (obf("toWideChar"), cast[uint64](toWideChar))
 ]

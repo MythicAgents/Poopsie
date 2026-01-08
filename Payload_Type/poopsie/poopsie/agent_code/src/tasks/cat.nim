@@ -1,52 +1,47 @@
-import ../config
-import ../utils/mythic_responses
-import std/[json, strformat, os]
+import ../utils/m_responses
+import ../utils/debug
+import ../utils/strenc
+import std/[json, strformat, os, strutils]
 
 type
   CatArgs = object
     path: string
 
 proc catFile*(taskId: string, params: string): JsonNode =
-  let cfg = getConfig()
   
   # Parse arguments
   let args = parseJson(params).to(CatArgs)
   
-  if cfg.debug:
-    echo "[DEBUG] Reading file: ", args.path
+  debug "[DEBUG] Reading file: ", args.path
   
   try:
-    # Get current working directory
-    let cwd = getCurrentDir()
-    
-    # Handle path resolution
-    let fullPath = if args.path.isAbsolute():
+    # Handle UNC paths (\\server\share) and absolute paths
+    let fullPath = if args.path.startsWith("\\\\") or isAbsolute(args.path):
       args.path
     else:
-      cwd / args.path
+      getCurrentDir() / args.path
     
     # Check if file exists
     if not fileExists(fullPath):
-      return mythicError(taskId, &"File not found: {fullPath}")
+      return mythicError(taskId, obf("File not found: ") & fullPath)
     
     # Read file contents
     let content = readFile(fullPath)
     
-    if cfg.debug:
-      echo &"[DEBUG] Read {content.len} bytes from {fullPath}"
+    debug &"[DEBUG] Read {content.len} bytes from {fullPath}"
     
     # Create response with artifact
     var response = mythicSuccess(taskId, content)
-    response["artifacts"] = %* [
+    response[obf("artifacts")] = %* [
       {
-        "base_artifact": "FileOpen",
-        "artifact": fullPath
+        obf("base_artifact"): obf("FileOpen"),
+        obf("artifact"): fullPath
       }
     ]
     
     return response
     
   except IOError as e:
-    return mythicError(taskId, &"Failed to read file: {e.msg}")
+    return mythicError(taskId, obf("Failed to read file: ") & e.msg)
   except Exception as e:
     return mythicError(taskId, &"Error: {e.msg}")

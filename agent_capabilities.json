@@ -28,7 +28,10 @@
   ],
   "c2": [
     "http",
-    "httpx"
+    "httpx",
+    "websocket",
+    "dns",
+    "tcp"
   ],
   "mythic_version": "3.4.6",
   "agent_version": "0.1.0",

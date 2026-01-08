@@ -1,6 +1,7 @@
 import macros, hashes
 
 # Automatically obfuscate static strings in binary
+# https://github.com/chvancooten/NimPlant/blob/main/client/util/strenc.nim
 type
     dstring = distinct string
 

@@ -105,4 +105,6 @@ Poopsie is written in Nim and uses:
 
 ## Credits
 
-Poopsie is inspired by and incorporates techniques from various open-source projects in the red team community.
+- Author: @haha150
+- Poopsie is inspired by and incorporates techniques from various open-source projects in the red team community.
+- Your friendly neighborhood LLM

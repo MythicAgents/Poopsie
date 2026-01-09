@@ -1,3 +1,5 @@
+# https://github.com/chvancooten/NimPlant/blob/main/client/util/risky/delegates.nim
+
 import winim/lean
 
 type

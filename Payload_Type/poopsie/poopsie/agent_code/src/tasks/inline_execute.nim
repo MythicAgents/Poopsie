@@ -45,6 +45,7 @@ when defined(windows):
     
     let symbolWithoutPrefix = symbolName[6..^1]
     
+    # Check for Beacon API functions
     if symbolName.startsWith(obf("__imp_Beacon")) or symbolName.startsWith(obf("__imp_toWideChar")):
       for i in 0..22:
         if symbolWithoutPrefix == functionAddresses[i].name:
@@ -52,22 +53,43 @@ when defined(windows):
       return 0
     
     try:
+      # Try format: __imp_LibraryName$FunctionName (e.g., __imp_kernel32$GetModuleHandleA)
       let parts = symbolWithoutPrefix.split('$', 1)
-      if parts.len < 2:
+      if parts.len == 2:
+        var libName = parts[0]
+        var funcName = parts[1]
+        
+        if not libName.toLowerAscii().endsWith(".dll"):
+          libName &= ".dll"
+        
+        if '@' in funcName:
+          funcName = funcName.split('@')[0]
+        
+        let lib = LoadLibraryA(addr(libName[0]))
+        if lib != 0:
+          return cast[uint64](GetProcAddress(lib, addr(funcName[0])))
         return 0
       
-      var libName = parts[0]
-      var funcName = parts[1]
-      
-      if not libName.toLowerAscii().endsWith(".dll"):
-        libName &= ".dll"
-      
+      # Try standard format: __imp_FunctionName (e.g., __imp_GetModuleHandleA)
+      # Search in common Windows DLLs
+      var funcName = symbolWithoutPrefix
       if '@' in funcName:
         funcName = funcName.split('@')[0]
       
-      let lib = LoadLibraryA(addr(libName[0]))
-      if lib != 0:
-        return cast[uint64](GetProcAddress(lib, addr(funcName[0])))
+      const commonDLLs = [
+        obf("kernel32.dll"), obf("ntdll.dll"), obf("advapi32.dll"), obf("user32.dll"),
+        obf("ws2_32.dll"), obf("msvcrt.dll"), obf("ole32.dll"), obf("shell32.dll"),
+        obf("crypt32.dll"), obf("bcrypt.dll"), obf("winhttp.dll"), obf("secur32.dll")
+      ]
+      
+      for dllName in commonDLLs:
+        var dllNameCopy = dllName
+        let lib = GetModuleHandleA(addr dllNameCopy[0])
+        if lib != 0:
+          let funcAddr = cast[uint64](GetProcAddress(lib, addr(funcName[0])))
+          if funcAddr != 0:
+            return funcAddr
+      
     except:
       discard
     return 0

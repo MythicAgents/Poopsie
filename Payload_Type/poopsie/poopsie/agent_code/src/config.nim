@@ -27,6 +27,11 @@ type
     maxQueryLength*: int
     maxSubdomainLength*: int
     failoverThreshold*: int
+    # HTTPX-specific fields
+    callbackDomains*: string
+    rawC2Config*: string
+    # WebSocket-specific fields
+    endpointReplace*: string
 
 proc getConfig*(): Config =
   ## Get configuration from compile-time environment variables
@@ -64,4 +69,11 @@ proc getConfig*(): Config =
   result.maxQueryLength = static: parseInt(getEnv(obf("MAX_QUERY_LENGTH"), "0"))
   result.maxSubdomainLength = static: parseInt(getEnv(obf("MAX_SUBDOMAIN_LENGTH"), "0"))
   result.failoverThreshold = static: parseInt(getEnv(obf("FAILOVER_THRESHOLD"), "0"))
+  
+  # HTTPX-specific configuration (empty if not httpx profile)
+  result.callbackDomains = static: getEnv(obf("CALLBACK_DOMAINS"), "")
+  result.rawC2Config = static: getEnv(obf("RAW_C2_CONFIG"), "")
+  
+  # WebSocket-specific configuration (empty if not websocket profile)
+  result.endpointReplace = static: getEnv(obf("ENDPOINT_REPLACE"), "")
   

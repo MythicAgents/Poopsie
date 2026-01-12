@@ -30,7 +30,7 @@ proc buildWebSocketUrl(profile: WebSocketProfile): string =
   var host = profile.config.callbackHost
   let port = profile.config.callbackPort
   # WebSocket uses ENDPOINT_REPLACE instead of POST_URI
-  let endpoint = static: getEnv(obf("ENDPOINT_REPLACE"))
+  let endpoint = profile.config.endpointReplace
   if endpoint.len == 0:
     raise newException(ValueError, obf("ENDPOINT_REPLACE environment variable is not set"))
   

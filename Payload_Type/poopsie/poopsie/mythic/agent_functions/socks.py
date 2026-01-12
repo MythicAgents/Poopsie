@@ -29,7 +29,7 @@ class SocksArguments(TaskArguments):
                 description="Start or stop proxy server for this port.",
                 parameter_group_info=[ParameterGroupInfo(
                     ui_position=1,
-                    required=False
+                    required=True
                 )],
             ),
             CommandParameter(
@@ -54,6 +54,24 @@ class SocksArguments(TaskArguments):
                     ui_position=3,
                 )]
             ),
+            CommandParameter(
+                name="sleep_interval",
+                type=ParameterType.Number,
+                default_value=0,
+                parameter_group_info=[ParameterGroupInfo(
+                    ui_position=4,
+                    required=False,
+                )]
+            ),
+            CommandParameter(
+                name="sleep_jitter",
+                type=ParameterType.Number,
+                default_value=0,
+                parameter_group_info=[ParameterGroupInfo(
+                    ui_position=5,
+                    required=False,
+                )]
+            )
         ]
 
     async def parse_arguments(self):
@@ -74,9 +92,9 @@ class SocksCommand(CommandBase):
     needs_admin = False
     help_cmd = "socks -Port [port number] -Action {start|stop}"
     description = "Enable SOCKS 5 compliant proxy to send data to the target network. Compatible with proxychains and proxychains4."
-    version = 2
+    version = 1
     script_only = False
-    author = "@djhohnstein"
+    author = "@haha150"
     argument_class = SocksArguments
     attackmapping = ["T1090"]
     
@@ -104,15 +122,22 @@ class SocksCommand(CommandBase):
                     Response=resp.Error.encode()
                 ))
             else:
+                sleep_interval = taskData.args.get_arg('sleep_interval')
+                sleep_jitter = taskData.args.get_arg('sleep_jitter')
+                interval = sleep_interval if sleep_interval else 0
+                jitter = sleep_jitter if sleep_jitter else 0
+                taskData.args.remove_arg('sleep_interval')
+                taskData.args.remove_arg('sleep_jitter')
                 await SendMythicRPCResponseCreate(MythicRPCResponseCreateMessage(
                     TaskID=taskData.Task.ID,
-                    Response=f"Started SOCKS5 server on port {taskData.args.get_arg('port')}\nUpdating Sleep to 0\n".encode()
+                    Response=f"Started SOCKS5 server on port {taskData.args.get_arg('port')}\nUpdating Sleep to {interval} (jitter: {jitter})\n".encode()
                 ))
                 await SendMythicRPCTaskCreateSubtask(MythicRPCTaskCreateSubtaskMessage(
                     TaskID=taskData.Task.ID,
                     CommandName="sleep",
                     Params=json.dumps({
-                        "interval": 0,
+                        "interval": interval,
+                        "jitter": jitter,
                     })
                 ))
         else:
@@ -123,7 +148,6 @@ class SocksCommand(CommandBase):
                 Username=taskData.args.get_arg("username"),
                 Password=taskData.args.get_arg("password")
             ))
-
             if not resp.Success:
                 response.TaskStatus = MythicStatus.Error
                 response.Stderr = resp.Error
@@ -132,16 +156,23 @@ class SocksCommand(CommandBase):
                     Response=resp.Error.encode()
                 ))
             else:
+                sleep_interval = taskData.args.get_arg('sleep_interval')
+                sleep_jitter = taskData.args.get_arg('sleep_jitter')
+                interval = sleep_interval if sleep_interval else 10
+                jitter = sleep_jitter if sleep_jitter else 0
+                taskData.args.remove_arg('sleep_interval')
+                taskData.args.remove_arg('sleep_jitter')
                 response.Completed = True
                 await SendMythicRPCResponseCreate(MythicRPCResponseCreateMessage(
                     TaskID=taskData.Task.ID,
-                    Response=f"Stopped SOCKS5 server on port {taskData.args.get_arg('port')}\nUpdating Sleep to 1".encode()
+                    Response=f"Stopped SOCKS5 server on port {taskData.args.get_arg('port')}\nUpdating Sleep to {interval} (jitter: {jitter})".encode()
                 ))
                 await SendMythicRPCTaskCreateSubtask(MythicRPCTaskCreateSubtaskMessage(
                     TaskID=taskData.Task.ID,
                     CommandName="sleep",
                     Params=json.dumps({
-                        "interval": 3,
+                        "interval": interval,
+                        "jitter": jitter,
                     })
                 ))
         return response

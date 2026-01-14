@@ -35,23 +35,23 @@ async def upload_if_missing(file_name: str, taskData, upload_type):
 
     try:
         if upload_type == "SA":
-            # Construct path dynamically, e.g. woopsie/mythic/SA/arp/arp.x64.o
+            # Construct path dynamically, e.g. poopsie/mythic/SA/arp/arp.x64.o
             module_path = (
-                Path("woopsie/mythic/SA")
+                Path("poopsie/mythic/SA")
                 / file_name.split(".")[0]
                 / file_name
             )
         elif upload_type == "BOF":
             module_path = (
-                Path("woopsie/mythic/bof")
+                Path("poopsie/mythic/bof")
                 / file_name.split(".")[0]
                 / file_name
             )
         elif upload_type == "DLL":
             # For DLL files in the dll directory
-            module_path = Path("woopsie/mythic/dll") / file_name
+            module_path = Path("poopsie/mythic/dll") / file_name
         elif upload_type == "EXE":
-            module_path = Path("/exe") / file_name
+            module_path = Path("poopsie/mythic/exe") / file_name
         else:   
             logging.error(f"[Upload] Unknown upload type: {upload_type}")
             return False

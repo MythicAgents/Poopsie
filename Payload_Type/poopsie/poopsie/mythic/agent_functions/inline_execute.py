@@ -301,9 +301,7 @@ class InlineExecuteCommand(CommandBase):
         if taskData.args.get_parameter_group_name() == "New BOF":
             fileSearchResp = await SendMythicRPCFileSearch(MythicRPCFileSearchMessage(
                     TaskID=taskData.Task.ID,
-                    Filename=taskData.args.get_arg("bof_name"),
-                    LimitByCallback=False,
-                    MaxResults=1
+                    AgentFileID=taskData.args.get_arg("bof_file")
                 ))
             if not fileSearchResp.Success:
                 raise Exception(f"Failed to find uploaded file: {fileSearchResp.Error}")

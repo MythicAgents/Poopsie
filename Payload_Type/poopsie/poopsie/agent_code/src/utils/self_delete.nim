@@ -1,3 +1,5 @@
+# https://github.com/chvancooten/NimPlant/blob/main/client/util/selfDelete.nim
+
 import debug
 import strenc
 from winim import PathFileExistsW

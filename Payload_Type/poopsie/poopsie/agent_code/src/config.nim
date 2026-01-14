@@ -32,6 +32,8 @@ type
     rawC2Config*: string
     # WebSocket-specific fields
     endpointReplace*: string
+    # SMB-specific field
+    pipename*: string
 
 proc getConfig*(): Config =
   ## Get configuration from compile-time environment variables
@@ -76,4 +78,7 @@ proc getConfig*(): Config =
   
   # WebSocket-specific configuration (empty if not websocket profile)
   result.endpointReplace = static: getEnv(obf("ENDPOINT_REPLACE"), "")
+  
+  # SMB-specific configuration
+  result.pipename = static: getEnv(obf("PIPENAME"), "")
   

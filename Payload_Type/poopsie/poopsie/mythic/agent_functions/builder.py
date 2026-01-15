@@ -1,5 +1,6 @@
 import asyncio
 import json
+import tomllib
 import os
 import pathlib
 import subprocess
@@ -321,13 +322,28 @@ class Poopsie(PayloadType):
                         response = await SendMythicRPCFileGetContent(MythicRPCFileGetContentMessage(val))
                         if response.Success:
                             val = response.Content.decode('utf-8')
+                            config = None
+                            format_used = ""
                             try:
                                 config = json.loads(val)
+                                format_used = "JSON"
                             except json.JSONDecodeError:
-                                resp.build_message = f"Failed to parse raw_c2_config JSON: {val}"
-                                resp.status = BuildStatus.Error
-                                return resp
+                                try:
+                                    config = tomllib.loads(val)
+                                    format_used = "TOML"
+                                except Exception as toml_error:
+                                    resp.build_message = f"Failed to parse raw_c2_config as JSON or TOML.\nJSON error: Invalid JSON\nTOML error: {str(toml_error)}"
+                                    resp.status = BuildStatus.Error
+                                    return resp
+                            
+                            # Normalize TOML structure to match JSON expectations
+                            # TOML omits keys with empty values, but the agent expects them
+                            if format_used == "TOML":
+                                config = self.normalize_c2_config(config)
+                            
+                            # Convert to JSON string for environment variable
                             val = json.dumps(config)
+                            resp.build_message += f"Parsed raw_c2_config as {format_used}\n"
                         else:
                             resp.build_message = "Failed to get raw C2 config file"
                             resp.status = BuildStatus.Error
@@ -757,6 +773,69 @@ class Poopsie(PayloadType):
             return key_str.encode()
         else:
             return key_str.encode()
+
+    def normalize_c2_config(self, config):
+        """Normalize TOML-parsed config to match JSON structure expectations.
+        TOML omits keys with empty string values, but the agent expects them to exist."""
+        
+        def ensure_keys(obj, keys_with_defaults):
+            """Ensure specified keys exist in object with default values"""
+            if isinstance(obj, dict):
+                for key, default_value in keys_with_defaults.items():
+                    if key not in obj:
+                        obj[key] = default_value
+        
+        def normalize_transforms(transforms):
+            """Ensure each transform has 'value' key"""
+            if isinstance(transforms, list):
+                for transform in transforms:
+                    if isinstance(transform, dict):
+                        ensure_keys(transform, {"value": ""})
+        
+        def normalize_message(message):
+            """Ensure message has 'name' key"""
+            if isinstance(message, dict):
+                ensure_keys(message, {"name": ""})
+        
+        # Normalize GET section
+        if "get" in config:
+            get_section = config["get"]
+            
+            # Normalize client
+            if "client" in get_section:
+                client = get_section["client"]
+                if "transforms" in client:
+                    normalize_transforms(client["transforms"])
+                if "message" in client:
+                    normalize_message(client["message"])
+                ensure_keys(client, {"parameters": None})
+            
+            # Normalize server
+            if "server" in get_section:
+                server = get_section["server"]
+                if "transforms" in server:
+                    normalize_transforms(server["transforms"])
+        
+        # Normalize POST section
+        if "post" in config:
+            post_section = config["post"]
+            
+            # Normalize client
+            if "client" in post_section:
+                client = post_section["client"]
+                if "transforms" in client:
+                    normalize_transforms(client["transforms"])
+                if "message" in client:
+                    normalize_message(client["message"])
+                ensure_keys(client, {"parameters": None})
+            
+            # Normalize server
+            if "server" in post_section:
+                server = post_section["server"]
+                if "transforms" in server:
+                    normalize_transforms(server["transforms"])
+        
+        return config
 
     def encrypt(self, payload_path):
         encrypted_path = str(payload_path) + ".enc"

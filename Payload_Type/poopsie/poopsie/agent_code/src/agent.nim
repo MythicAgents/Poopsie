@@ -42,7 +42,7 @@ import tasks/pkill
 
 when defined(windows):
   import tasks/link
-  import profiles/smb_profile
+  import profiles/smb
   import tasks/execute_assembly
   import tasks/inline_execute
   import tasks/powerpick

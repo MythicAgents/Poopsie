@@ -655,8 +655,8 @@ proc dnsQuery(profile: var DnsProfile, encodedData: string): string =
         return ""
       pos += 4  # Skip type and class
       
-      # Parse ALL TXT answers and concatenate their strings
-      var allStrings = ""
+      # Parse ALL TXT answers - collect them first, then filter action-only records
+      var txtRecords: seq[string] = @[]
       for i in 0..<int(answerCount):
         if pos + 10 < responseData.len:
           # Skip answer name (might be compressed)
@@ -681,6 +681,7 @@ proc dnsQuery(profile: var DnsProfile, encodedData: string): string =
           
           # TXT record contains one or more length-prefixed strings
           let endPos = pos + dataLen
+          var recordData = ""
           
           while pos < endPos and pos < responseData.len:
             # Each string: [length_byte][string_data]
@@ -688,12 +689,37 @@ proc dnsQuery(profile: var DnsProfile, encodedData: string): string =
             inc pos
             
             if pos + txtLen <= responseData.len:
-              allStrings.add(responseData[pos..<pos+txtLen])
+              recordData.add(responseData[pos..<pos+txtLen])
               pos += txtLen
             else:
               break
+          
+          debug "[DEBUG] TXT record ", i, ": extracted ", recordData.len, " bytes"
+          txtRecords.add(recordData)
       
-      debug "[DEBUG] TXT extracted ", allStrings.len, " bytes from ", answerCount, " answers"
+      # Filter out action-only TXT records ONLY if we have multiple records
+      var allStrings = ""
+      if txtRecords.len > 1:
+        # Multiple TXT records - filter out action-only ones
+        for record in txtRecords:
+          # Check if this is an action-only record (≤3 bytes, all '0'-'3')
+          var isActionOnly = record.len <= 3
+          if isActionOnly:
+            for c in record:
+              if ord(c) < ord('0') or ord(c) > ord('3'):
+                isActionOnly = false
+                break
+          
+          if not isActionOnly:
+            allStrings.add(record)
+            debug "[DEBUG] Appended ", record.len, " bytes (data)"
+          else:
+            debug "[DEBUG] Skipped ", record.len, " bytes (action-only)"
+      elif txtRecords.len == 1:
+        # Single TXT record - keep it as-is (could be action code or data)
+        allStrings = txtRecords[0]
+      
+      debug "[DEBUG] Total TXT data: ", allStrings.len, " bytes from ", answerCount, " answers"
       result = allStrings
     
     elif profile.recordType == DnsRecordType.AAAA:
@@ -986,6 +1012,24 @@ proc send*(profile: var DnsProfile, data: string, callbackUuid: string = ""): st
           let fetchBytes = cast[seq[byte]](fetchResponse)
           debug "[DEBUG] Fetched chunk ", lastChunk, ": ", fetchBytes.len, " bytes"
           
+          # Check for action-only TXT response (single character '0'-'3')
+          if profile.recordType == DnsRecordType.TXT and fetchBytes.len <= 3:
+            let responseStr = cast[string](fetchBytes).strip()
+            if responseStr.len == 1 and ord(responseStr[0]) >= 48 and ord(responseStr[0]) <= 51:
+              let actionCode = uint8(ord(responseStr[0]) - ord('0'))
+              debug "[DEBUG] TXT fetch returned action-only response: ", actionCode
+              if actionCode == 2:  # ReTransmit
+                debug "[DEBUG] Server requested retransmit during fetch"
+                # TODO: Should we retry the entire fetch?
+                break
+              elif actionCode == 3:  # MessageLost
+                debug "[DEBUG] Server lost message during fetch"
+                break
+              else:
+                # Action 0 or 1 without data is an error for fetch operations
+                debug "[DEBUG] Invalid action-only response during fetch (action=", actionCode, ")"
+                break
+          
           # Unmarshal as protobuf
           try:
             # For TXT records, data is base64-encoded and needs decoding
@@ -998,9 +1042,8 @@ proc send*(profile: var DnsProfile, data: string, callbackUuid: string = ""): st
                 debug "[DEBUG] First 50 chars: ", cast[string](fetchBytes)[0..<min(50, fetchBytes.len)]
                 debug "[DEBUG] Last 50 chars: ", cast[string](fetchBytes)[max(0, fetchBytes.len-50)..<fetchBytes.len]
               
-              # For fetch responses, TXT data has format: <action_code><base64_data><action_code>
-              # Strip action codes from BOTH ends if present
-              # Check if first/last characters are '0', '1', '2', or '3' (ASCII 48-51)
+              # For fetch responses, TXT data has format: <action_code><base64_data>
+              # Strip leading action code only (trailing action code should not exist for data responses)
               var base64Data = cast[string](fetchBytes)
               
               # Strip leading action code
@@ -1008,17 +1051,12 @@ proc send*(profile: var DnsProfile, data: string, callbackUuid: string = ""): st
                 debug "[DEBUG] First char is action code ('", base64Data[0], "'), stripping it"
                 base64Data = base64Data[1..^1]
               
-              # Strip trailing action code
-              if base64Data.len > 0 and ord(base64Data[^1]) >= 48 and ord(base64Data[^1]) <= 51:
-                debug "[DEBUG] Last char is action code ('", base64Data[^1], "'), stripping it"
-                base64Data = base64Data[0..^2]
-              
               try:
                 # Clean base64 string - remove any whitespace/newlines
                 base64Data = base64Data.strip()
                 if base64Data.len == 0:
-                  debug "[DEBUG] Empty base64 string after stripping action code"
-                  fetchBytes  # Use original bytes
+                  debug "[DEBUG] Empty base64 string after stripping action code - no data in response"
+                  newSeq[byte](0)  # Return empty byte array to trigger error below
                 else:
                   let decoded = decode(base64Data)
                   debug "[DEBUG] Base64 decode successful: ", decoded.len, " bytes"
@@ -1033,10 +1071,14 @@ proc send*(profile: var DnsProfile, data: string, callbackUuid: string = ""): st
                   debug "[DEBUG] Base64 decode with adjusted padding successful"
                   cast[seq[byte]](decoded)
                 except:
-                  debug "[DEBUG] Adjusted padding also failed, trying as raw bytes"
-                  fetchBytes
+                  debug "[DEBUG] Adjusted padding also failed"
+                  newSeq[byte](0)  # Return empty to trigger error
             else:
               removeTrailingBytes(fetchBytes)
+            
+            if cleanBytes.len == 0:
+              debug "[DEBUG] No data to unmarshal after decoding, breaking fetch loop"
+              break
             
             debug "[DEBUG] cleanBytes length: ", cleanBytes.len
             debug "[DEBUG] cleanBytes hex (first 60): ", cleanBytes[0..<min(60, cleanBytes.len)].mapIt(it.toHex(2)).join(" ")

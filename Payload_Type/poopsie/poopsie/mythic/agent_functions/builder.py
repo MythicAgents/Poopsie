@@ -702,7 +702,7 @@ class Poopsie(PayloadType):
                 env=env
             )
             
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=600)
             
             if process.returncode != 0:
                 stdout_text = stdout.decode() if stdout else ""

@@ -49,8 +49,12 @@ const
   LDRP_RELEASE_TLS_ENTRY_SIGNATURE_BYTES = [byte 0x83, 0xE1, 0x07, 0x48, 0xC1, 0xEA, 0x03]
   LDRP_HANDLE_TLS_DATA_SIGNATURE_BYTES = [byte 0xBA, 0x23, 0x00, 0x00, 0x00, 0x48, 0x83, 0xC9, 0xFF]
 
-proc GetPPEB(p: culong): PPEB {.header: """#include <windows.h>
-           #include <winnt.h>""", importc: "__readgsqword".}
+when defined(amd64):
+  proc GetPPEB(p: culong): PPEB {.header: """#include <windows.h>
+             #include <winnt.h>""", importc: "__readgsqword".}
+else:
+  proc GetPPEB(p: culong): PPEB {.header: """#include <windows.h>
+             #include <winnt.h>""", importc: "__readfsdword".}
 
 proc getNtHdrs*(peBuffer: ptr BYTE): ptr BYTE =
   if peBuffer == nil:
@@ -171,7 +175,10 @@ proc fixIAT*(modulePtr: PVOID; exeArgs: string): bool =
     if (libDesc.OriginalFirstThunk == 0) and (libDesc.FirstThunk == 0):
       break
     
-    let libname = cast[LPSTR](cast[ULONGLONG](modulePtr) + libDesc.Name)
+    when defined(amd64):
+      let libname = cast[LPSTR](cast[ULONGLONG](modulePtr) + libDesc.Name)
+    else:
+      let libname = cast[LPSTR](cast[DWORD](modulePtr) + libDesc.Name)
     debug "    [+] Import DLL: " & $libname
     var callVia = csize_t(libDesc.FirstThunk)
     var thunkAddr = csize_t(libDesc.OriginalFirstThunk)
@@ -216,7 +223,10 @@ proc fixIAT*(modulePtr: PVOID; exeArgs: string): bool =
       
       if boolvar:
         let libaddr = cast[csize_t](GetProcAddress(LoadLibraryA(libname), cast[LPSTR](orginThunk.u1.Ordinal and 0xFFFF)))
-        fieldThunk.u1.Function = ULONGLONG(libaddr)
+        when defined(amd64):
+          fieldThunk.u1.Function = ULONGLONG(libaddr)
+        else:
+          fieldThunk.u1.Function = DWORD(libaddr)
         debug "        [V] API ord: " & $(orginThunk.u1.Ordinal and 0xFFFF)
       
       if fieldThunk.u1.Function == 0:
@@ -224,11 +234,17 @@ proc fixIAT*(modulePtr: PVOID; exeArgs: string): bool =
       
       if fieldThunk.u1.Function == orginThunk.u1.Function:
         let nameData = cast[PIMAGE_IMPORT_BY_NAME](orginThunk.u1.AddressOfData)
-        let byname = cast[PIMAGE_IMPORT_BY_NAME](cast[ULONGLONG](modulePtr) + cast[DWORD](nameData))
+        when defined(amd64):
+          let byname = cast[PIMAGE_IMPORT_BY_NAME](cast[ULONGLONG](modulePtr) + cast[DWORD](nameData))
+        else:
+          let byname = cast[PIMAGE_IMPORT_BY_NAME](cast[DWORD](modulePtr) + cast[DWORD](nameData))
         let funcName = cast[LPCSTR](addr byname.Name)
         let libaddr = cast[csize_t](GetProcAddress(hmodule, funcName))
         debug "        [V] API: " & $funcName
-        fieldThunk.u1.Function = ULONGLONG(libaddr)
+        when defined(amd64):
+          fieldThunk.u1.Function = ULONGLONG(libaddr)
+        else:
+          fieldThunk.u1.Function = DWORD(libaddr)
         
         # Patch command line functions if args provided
         if exeArgsPassed and persistentCmdW != nil and persistentCmdA != nil:
@@ -251,7 +267,10 @@ proc fixIAT*(modulePtr: PVOID; exeArgs: string): bool =
           debug "           [>] Hooking ExitProcess -> redirecting to ExitThread"
           let exitThreadAddr = GetProcAddress(hmodule, obf("ExitThread"))
           if exitThreadAddr != nil:
-            fieldThunk.u1.Function = cast[ULONGLONG](exitThreadAddr)
+            when defined(amd64):
+              fieldThunk.u1.Function = cast[ULONGLONG](exitThreadAddr)
+            else:
+              fieldThunk.u1.Function = cast[DWORD](exitThreadAddr)
           else:
             debug "           [-] WARNING: Failed to get ExitThread address"
       
@@ -338,7 +357,10 @@ proc fullPatchTLS(newBaseAddress: ptr byte; moduleSize: int; entrypoint: pointer
   return calledRelease and calledHandle
 
 proc execTLSCallbacks*(baseAddress: PVOID; tlsDir: ptr IMAGE_DATA_DIRECTORY; fullTls: bool) =
-  let tls = cast[ptr IMAGE_TLS_DIRECTORY](cast[ULONGLONG](baseAddress) + tlsDir.VirtualAddress)
+  when defined(amd64):
+    let tls = cast[ptr IMAGE_TLS_DIRECTORY](cast[ULONGLONG](baseAddress) + tlsDir.VirtualAddress)
+  else:
+    let tls = cast[ptr IMAGE_TLS_DIRECTORY](cast[DWORD](baseAddress) + tlsDir.VirtualAddress)
   var tlsCallback = cast[ptr ULONGLONG](tls.AddressOfCallBacks)
   
   while tlsCallback[] != 0:
@@ -392,7 +414,10 @@ proc runPE*(peBytes: seq[byte]; exeArgs: string = ""; fullTls: bool = false): st
         return "Error: Failed to allocate memory for image base"
     
     # Update image base
-    ntHeader.OptionalHeader.ImageBase = cast[ULONGLONG](pImageBase)
+    when defined(amd64):
+      ntHeader.OptionalHeader.ImageBase = cast[ULONGLONG](pImageBase)
+    else:
+      ntHeader.OptionalHeader.ImageBase = cast[DWORD](pImageBase)
     
     # Copy headers
     copymem(pImageBase, shellcodePtr, ntHeader.OptionalHeader.SizeOfHeaders)
@@ -426,8 +451,12 @@ proc runPE*(peBytes: seq[byte]; exeArgs: string = ""; fullTls: bool = false): st
     
     # Apply relocations if needed
     if pImageBase != preferAddr:
-      if not applyReloc(cast[ULONGLONG](pImageBase), cast[ULONGLONG](preferAddr), pImageBase, ntHeader.OptionalHeader.SizeOfImage):
-        return "Error: Failed to apply relocations"
+      when defined(amd64):
+        if not applyReloc(cast[ULONGLONG](pImageBase), cast[ULONGLONG](preferAddr), pImageBase, ntHeader.OptionalHeader.SizeOfImage):
+          return "Error: Failed to apply relocations"
+      else:
+        if not applyReloc(cast[ULONGLONG](cast[DWORD](pImageBase)), cast[ULONGLONG](cast[DWORD](preferAddr)), pImageBase, ntHeader.OptionalHeader.SizeOfImage):
+          return "Error: Failed to apply relocations"
       debug "[+] Relocation Fixed."
     
     debug "Run Exe Module:"

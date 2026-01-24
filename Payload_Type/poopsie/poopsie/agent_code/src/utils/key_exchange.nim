@@ -36,7 +36,7 @@ proc performRsaKeyExchange*(config: Config, uuid: string, sendProc: proc(data: s
   if not isRsaAvailable():
     debug "[DEBUG] RSA key exchange not available: OpenSSL not found"
     debug "[DEBUG] Use AESPSK (pre-shared key) for encryption instead"
-    result.success = true  # Don't fail, just skip key exchange
+    result.success = false  # Fail key exchange
     return
   
   debug "[DEBUG] === PERFORMING RSA KEY EXCHANGE ==="

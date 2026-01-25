@@ -52,27 +52,6 @@ RUN curl -L -o donut_shellcode-2.0.0.tar.gz https://github.com/MEhrn00/donut/rel
     cd .. && \
     rm -rf donut_shellcode-2.0.0 donut_shellcode-2.0.0.tar.gz
 
-RUN mkdir -p /opt/openssl-build && cd /opt/openssl-build && \
-    wget -q https://www.openssl.org/source/openssl-3.5.4.tar.gz && \
-    tar -xzf openssl-3.5.4.tar.gz && \
-    cd openssl-3.5.4 && \
-    ./Configure mingw64 \
-        --cross-compile-prefix=x86_64-w64-mingw32- \
-        --prefix=/opt/openssl-mingw64-static \
-        no-shared \
-        -static -static-libgcc && \
-    make -j$(nproc) && \
-    make install && \
-    make clean && \
-    ./Configure mingw \
-        --cross-compile-prefix=i686-w64-mingw32- \
-        --prefix=/opt/openssl-mingw32-static \
-        no-shared \
-        -static -static-libgcc && \
-    make -j$(nproc) && \
-    make install && \
-    cd / && rm -rf /opt/openssl-build
-
 RUN set -eux; \
     curl -L "https://github.com/upx/upx/releases/download/v5.0.2/upx-5.0.2-amd64_linux.tar.xz" \
       -o upx.tar.xz; \

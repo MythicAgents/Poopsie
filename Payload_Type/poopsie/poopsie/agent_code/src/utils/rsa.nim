@@ -5,7 +5,7 @@
 
 import std/[base64, strutils]
 
-when defined(staticOpenSSL):
+when defined(windows):
   # Windows BCrypt/CNG API
   type
     BCRYPT_ALG_HANDLE = pointer

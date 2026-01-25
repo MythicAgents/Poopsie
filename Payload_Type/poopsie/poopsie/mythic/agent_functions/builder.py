@@ -601,27 +601,7 @@ class Poopsie(PayloadType):
 
             if use_openssl:
                 if selected_os == "Windows":
-                    if architecture == "x64":
-                        openssl_path = "/opt/openssl-mingw64-static"
-                        openssl_lib = f"{openssl_path}/lib64"
-                    else:
-                        openssl_path = "/opt/openssl-mingw32-static"
-                        openssl_lib = f"{openssl_path}/lib"
-                    
-                    nim_args.extend([
-                        "-d:staticOpenSSL",
-                        f"--passC:-I{openssl_path}/include",
-                        "--dynlibOverride:ssl",
-                        "--dynlibOverride:crypto",
-                        f"--passL:{openssl_lib}/libssl.a",
-                        f"--passL:{openssl_lib}/libcrypto.a",
-                        "--passL:-lws2_32",
-                        "--passL:-lcrypt32",
-                        "--passL:-lbcrypt",
-                        "--passL:-ladvapi32",
-                    ])
-                    
-                    build_messages.append(f"Static OpenSSL 3.5.4 enabled ({architecture}, RSA key exchange, no DLL dependencies)")
+                    build_messages.append("Static OpenSSL enabled (RSA key exchange + HTTPS/WSS transport, no DLL dependencies)")
                 elif selected_os == "Linux":
                     nim_args.extend([
                         "-d:ssl",
@@ -677,7 +657,19 @@ class Poopsie(PayloadType):
                 else:
                     output_name = "poopsie.exe"
             elif selected_os == "Linux":
-                nim_args.extend(["--os:linux", f"--cpu:{nim_cpu}"])
+                if architecture == "x86":
+                    nim_args.extend([
+                        "--os:linux",
+                        "--cpu:i386",
+                        "--passC:-m32",
+                        "--passL:-m32",
+                    ])
+                    build_messages.append("Building for Linux x86 (32-bit) with -m32 flag")
+                else:
+                    nim_args.extend([
+                        "--os:linux",
+                        "--cpu:amd64"
+                    ])
                 output_name = "libpoopsie.so" if output_type == "DLL" else "poopsie"
             else:
                 output_name = "libpoopsie.so" if output_type == "DLL" else "poopsie"

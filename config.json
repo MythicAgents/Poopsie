@@ -6,6 +6,6 @@
   "exclude_documentation_wrapper": true,
   "exclude_agent_icons": false,
   "remote_images": {
-    "poopsie": "ghcr.io/mythicagents/poopsie:v0.0.12"
+    "poopsie": "ghcr.io/mythicagents/poopsie:v0.0.13"
   }
 }

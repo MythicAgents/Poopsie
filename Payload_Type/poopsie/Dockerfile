@@ -18,6 +18,9 @@ RUN apt-get update && apt-get install -y \
     gcc-mingw-w64-i686 \
     gcc-mingw-w64-x86-64 \
     ccache \
+    gcc-multilib \
+    g++-multilib \
+    lib32z1-dev \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /tmp

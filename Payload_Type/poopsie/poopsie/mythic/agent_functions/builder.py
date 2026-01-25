@@ -677,7 +677,19 @@ class Poopsie(PayloadType):
                 else:
                     output_name = "poopsie.exe"
             elif selected_os == "Linux":
-                nim_args.extend(["--os:linux", f"--cpu:{nim_cpu}"])
+                if architecture == "x86":
+                    nim_args.extend([
+                        "--os:linux",
+                        "--cpu:i386",
+                        "--passC:-m32",
+                        "--passL:-m32",
+                    ])
+                    build_messages.append("Building for Linux x86 (32-bit) with -m32 flag")
+                else:
+                    nim_args.extend([
+                        "--os:linux",
+                        "--cpu:amd64"
+                    ])
                 output_name = "libpoopsie.so" if output_type == "DLL" else "poopsie"
             else:
                 output_name = "libpoopsie.so" if output_type == "DLL" else "poopsie"

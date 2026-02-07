@@ -234,5 +234,13 @@ else:
     else:
       result = httpclient.newHttpClient(proxy = proxy)
   
+  proc closeWrapper*(client: HttpClientWrapper) =
+    ## Close the HTTP client and its underlying connections
+    ## This properly cleans up TCP connections before the object is garbage collected
+    try:
+      httpclient.close(client)
+    except:
+      discard
+  
   proc postContent*(client: HttpClientWrapper, url: string, body: string): string =
     result = httpclient.postContent(client, url, body)

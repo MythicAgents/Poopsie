@@ -207,6 +207,18 @@ proc close*(profile: var WebSocketProfile) =
       discard
     profile.connected = false
 
+proc cleanup*(profile: var WebSocketProfile) =
+  ## Close WebSocket connection to avoid keeping ESTABLISHED connections during sleep
+  debug "[DEBUG] WebSocket Profile: Cleaning up connection"
+  profile.close()
+  debug "[DEBUG] WebSocket Profile: Connection closed"
+
+proc reconnect*(profile: var WebSocketProfile) =
+  ## Recreate WebSocket connection after cleanup
+  debug "[DEBUG] WebSocket Profile: Reconnecting"
+  discard profile.ensureConnection()
+  debug "[DEBUG] WebSocket Profile: Reconnection complete"
+
 proc setAesKey*(profile: var WebSocketProfile, key: seq[byte]) =
   ## Set the AES encryption key
   profile.aesKey = key

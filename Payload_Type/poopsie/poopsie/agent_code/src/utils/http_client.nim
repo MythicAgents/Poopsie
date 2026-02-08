@@ -51,6 +51,12 @@ when defined(windows):
     result.headers = HttpHeaders(table: initTable[string, seq[string]]())
     result.proxyUrl = proxyUrl
   
+  proc closeWrapper*(client: HttpClientWrapper) =
+    ## Close the HTTP client wrapper
+    ## On Windows with WinHTTP, each request creates and closes its own handles,
+    ## so this is a no-op. Connection cleanup is handled by the Connection: close header.
+    discard
+  
   proc postContent*(client: HttpClientWrapper, url: string, body: string): string =
     ## Send HTTP POST request using native WinHTTP API with proxy support
     var
@@ -129,6 +135,13 @@ when defined(windows):
           discard WinHttpAddRequestHeaders(hRequest,
             cast[LPCWSTR](addr headerWide[0]), DWORD(-1),
             WINHTTP_ADDREQ_FLAG_ADD or WINHTTP_ADDREQ_FLAG_REPLACE)
+      
+      # Add Connection: close header to prevent persistent connections
+      # This ensures TCP connections are closed after each request for better OPSEC
+      let connCloseHeader = newWideCString("Connection: close\r\n")
+      discard WinHttpAddRequestHeaders(hRequest,
+        cast[LPCWSTR](addr connCloseHeader[0]), DWORD(-1),
+        WINHTTP_ADDREQ_FLAG_ADD or WINHTTP_ADDREQ_FLAG_REPLACE)
 
       # Send request
       let bodyLen = DWORD(body.len)
@@ -233,6 +246,14 @@ else:
       result = httpclient.newHttpClient(proxy = proxy, sslContext = newContext(verifyMode = CVerifyNone))
     else:
       result = httpclient.newHttpClient(proxy = proxy)
+  
+  proc closeWrapper*(client: HttpClientWrapper) =
+    ## Close the HTTP client and its underlying connections
+    ## This properly cleans up TCP connections before the object is garbage collected
+    try:
+      httpclient.close(client)
+    except:
+      discard
   
   proc postContent*(client: HttpClientWrapper, url: string, body: string): string =
     result = httpclient.postContent(client, url, body)

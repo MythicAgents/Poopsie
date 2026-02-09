@@ -62,7 +62,7 @@ proc performRsaKeyExchange*(config: Config, uuid: string, sendProc: proc(data: s
     
     debug "[DEBUG] Session ID: ", sessionId
     
-    # Build staging_rsa message (JSON format matching oopsie)
+    # Build staging_rsa message (JSON format)
     let stagingRsa = %*{
       obf("action"): obf("staging_rsa"),
       obf("session_id"): sessionId,

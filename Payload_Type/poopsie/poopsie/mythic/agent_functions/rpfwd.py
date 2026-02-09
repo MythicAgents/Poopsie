@@ -153,7 +153,7 @@ class RpfwdCommand(CommandBase):
                 taskData.args.add_arg("debugLevel", value=3, type=ParameterType.Number)
             await SendMythicRPCResponseCreate(MythicRPCResponseCreateMessage(
                 TaskID=taskData.Task.ID,
-                Response=f"Starting server on port {taskData.args.get_arg('port')} where Oopsie is running.\nUpdating Sleep to 0\n".encode()
+                Response=f"Starting server on port {taskData.args.get_arg('port')} where poopsie is running.\nUpdating Sleep to 0\n".encode()
             ))
             await SendMythicRPCTaskCreateSubtask(MythicRPCTaskCreateSubtaskMessage(
                 TaskID=taskData.Task.ID,

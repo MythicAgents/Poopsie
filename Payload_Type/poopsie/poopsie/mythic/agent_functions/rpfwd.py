@@ -182,7 +182,6 @@ class RpfwdCommand(CommandBase):
                 ))
             else:
                 response.TaskStatus = MythicStatus.Success
-                response.Completed = True
                 response.DisplayParams = f"-Port {taskData.args.get_arg('port')} -RemoteIP {taskData.args.get_arg('remote_ip')} -RemotePort {taskData.args.get_arg('remote_port')}"
                 if taskData.args.get_arg("debugLevel") != "None":
                     response.DisplayParams += f" -DebugLevel \"{taskData.args.get_arg('debugLevel')}\""

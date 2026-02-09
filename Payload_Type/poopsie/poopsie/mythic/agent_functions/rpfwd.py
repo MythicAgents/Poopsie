@@ -107,7 +107,7 @@ class RpfwdCommand(CommandBase):
     cmd = "rpfwd"
     needs_admin = False
     help_cmd = "rpfwd -Port 445 -RemoteIP 1.2.3.4 -RemotePort 80"
-    description = "Start listening on a port on the target host and forwarding traffic through Mythic to the remoteIP:remotePort. Stop this with the jobs and jobkill commands"
+    description = "Start listening on a port on the target host and forwarding traffic through Mythic to the remoteIP:remotePort. Stop this with -Action stop"
     version = 2
     script_only = False
     author = "@its_a_feature_"

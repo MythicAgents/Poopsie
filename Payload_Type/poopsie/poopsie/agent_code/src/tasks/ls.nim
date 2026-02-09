@@ -85,7 +85,7 @@ proc getFileOwner(path: string): string =
         return $statBuf.st_uid
     return "unknown"
   elif defined(windows):
-    # For Windows, return empty string (matches oopsie behavior)
+    # For Windows, return empty string
     # Full Windows implementation would use GetNamedSecurityInfo API
     return ""
 

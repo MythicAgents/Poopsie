@@ -184,7 +184,7 @@ proc getsystem*(taskId: string, params: JsonNode): JsonNode =
       # Store the token handle
       setTokenHandle(duplicatedToken)
       
-      # After getsystem, we're always NT AUTHORITY\SYSTEM (hardcoded like oopsie)
+      # After getsystem, we're always NT AUTHORITY\SYSTEM (hardcoded)
       let newUser = obf("NT AUTHORITY\\SYSTEM")
       
       debug &"[DEBUG] GetSystem: New user: {newUser}"

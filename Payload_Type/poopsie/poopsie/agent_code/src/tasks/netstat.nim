@@ -281,7 +281,7 @@ proc netstat*(taskId: string, params: JsonNode): JsonNode =
             connections.add(conn)
     
     when defined(linux):
-      # Read directly from /proc/net/tcp and /proc/net/udp like oopsie does
+      # Read directly from /proc/net/tcp and /proc/net/udp
       try:
         # Parse /proc/net/tcp
         if fileExists(obf("/proc/net/tcp")):

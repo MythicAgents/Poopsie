@@ -156,7 +156,7 @@ proc executeDonutShellcode*(taskId: string, shellcode: seq[byte], params: JsonNo
         return mythicError(taskId, obf("Failed to create thread for shellcode execution: CreateThread failed with error ") & $err)
       
       # Wait for execution with timeout
-      let timeoutMs = if args.timeout > 0: DWORD(args.timeout * 1000) else: 30000  # Default 30s like oopsie
+      let timeoutMs = if args.timeout > 0: DWORD(args.timeout * 1000) else: 30000  # Default 30s
       let timeoutSec = if args.timeout > 0: args.timeout else: 30
       
       debug &"[DEBUG] Donut: Waiting for execution to complete (timeout: {timeoutSec}s)"

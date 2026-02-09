@@ -61,7 +61,7 @@ when defined(windows):
         CloseHandle(impersonationToken)
         return mythicError(taskId, obf("Failed to revert to self. Error code: ") & $errorCode)
       
-      # Use SetThreadToken (like oopsie) instead of ImpersonateLoggedOnUser
+      # Use SetThreadToken instead of ImpersonateLoggedOnUser
       # SetThreadToken works better with duplicated tokens
       if SetThreadToken(nil, impersonationToken) == 0:
         let errorCode = GetLastError()

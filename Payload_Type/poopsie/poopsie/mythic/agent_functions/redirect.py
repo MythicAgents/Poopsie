@@ -22,10 +22,10 @@ class RedirectArguments(TaskArguments):
                 cli_name="RemotePort",
                 display_name="Remote Port",
                 type=ParameterType.Number,
-                description="Remote port to send rpfwd traffic to.",
+                description="Remote port to send redirect traffic to.",
                 parameter_group_info=[ParameterGroupInfo(
                     required=True,
-                    ui_position=3,
+                    ui_position=2,
                 )]
             ),
             CommandParameter(
@@ -36,8 +36,21 @@ class RedirectArguments(TaskArguments):
                 description="Remote IP to send rpfwd traffic to.",
                 parameter_group_info=[ParameterGroupInfo(
                     required=True,
-                    ui_position=2,
+                    ui_position=3,
                 )]
+            ),
+            CommandParameter(
+                name="action",
+                cli_name="Action",
+                display_name="Action",
+                type=ParameterType.ChooseOne,
+                choices=["start", "stop"],
+                default_value="start",
+                description="Start or stop port redirect.",
+                parameter_group_info=[ParameterGroupInfo(
+                    ui_position=4,
+                    required=True
+                )],
             ),
         ]
 
@@ -60,7 +73,7 @@ class RedirectCommand(CommandBase):
     help_cmd = (
         "redirect -Port 445 -RemoteIP 1.2.3.4 -RemotePort 80"
     )
-    description = "Start listening on a port on the target host and forwarding traffic to the remoteIP:remotePort. Stop this with the jobs and jobkill commands"
+    description = "Start listening on a port on the target host and forwarding traffic to the remoteIP:remotePort. Stop this with -Action stop"
     version = 1
     author = "@haha150"
     argument_class = RedirectArguments
@@ -73,7 +86,11 @@ class RedirectCommand(CommandBase):
         )
         # Redirect does NOT proxy through Mythic - it's direct TCP forwarding on the agent
         # No need to register with Mythic's proxy system
-        response.DisplayParams = f"on port {taskData.args.get_arg('port')} sending to {taskData.args.get_arg('remote_ip')}:{taskData.args.get_arg('remote_port')}"
+        action = taskData.args.get_arg("action")
+        if action == "start":
+            response.DisplayParams = f"-Action start on port {taskData.args.get_arg('port')} sending to {taskData.args.get_arg('remote_ip')}:{taskData.args.get_arg('remote_port')}"
+        else:
+            response.DisplayParams = f"-Action stop on port {taskData.args.get_arg('port')}"
         return response
 
 

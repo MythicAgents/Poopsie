@@ -265,7 +265,7 @@ proc handleNewConnection(serverId: uint32, data: seq[byte]): seq[JsonNode] =
   debug &"[DEBUG] SOCKS: Connecting to {address}:{portStr}"
   
   try:
-    var socket = newSocket()
+    var socket = newSocket(buffered = false)
     socket.connect(address, Port(destAddr.port))
     
     # Disable Nagle's algorithm for better interactive protocol performance (RDP, SSH, etc)

@@ -13,7 +13,7 @@ Poopsie is a cross-platform C2 agent for the Mythic framework, written in Nim. I
 - **Token Impersonation**: Full support for `make_token` and `steal_token` with thread-level impersonation
 - **Network Operations**: UNC path support for remote file operations with impersonated credentials
 - **Process Injection**: Advanced injection capabilities with `shinject` and `inline_execute`
-- **SOCKS Proxy**: Built-in SOCKS5 proxy support for pivoting
+- **SOCKS Proxy**: Built-in SOCKS5 proxy support
 - **Assembly Execution**: Load and execute .NET assemblies in-memory
 - **PowerShell**: Execute PowerShell commands without `powershell.exe` via PowerPick
 - **Lightweight**: Small binary size with optimized compilation flags

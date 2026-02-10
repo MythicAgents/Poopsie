@@ -20,7 +20,6 @@ const
   ADDR_TYPE_NOT_SUPPORTED = 0x08'u8
   
   BUFFER_SIZE = 65536
-  SLEEP_INTERVAL_MS = 0
 
 type
   SocksMessage* = object

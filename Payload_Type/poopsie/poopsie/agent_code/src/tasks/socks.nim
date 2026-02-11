@@ -4,9 +4,10 @@ import ../utils/debug
 import ../utils/strenc
 
 # C-level shutdown() to send TCP FIN and unblock blocking recv/send in threads
-# Cross-platform: winsock2 on Windows, sys/socket.h on POSIX
+# Windows: runtime load from ws2_32.dll (avoids __imp_shutdown static link error)
+# POSIX: standard sys/socket.h link
 when defined(windows):
-  proc cShutdown(fd: cint, how: cint): cint {.importc: "shutdown", header: "<winsock2.h>".}
+  proc cShutdown(fd: cint, how: cint): cint {.importc: "shutdown", dynlib: "ws2_32".}
 else:
   proc cShutdown(fd: cint, how: cint): cint {.importc: "shutdown", header: "<sys/socket.h>".}
 

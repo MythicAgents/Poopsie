@@ -2,7 +2,7 @@ import std/[json, net, nativesockets, strutils, base64, strformat, tables, os]
 when defined(windows):
   import winlean
 else:
-  from std/posix import shutdown, SHUT_RDWR
+  import std/posix
 import ../utils/m_responses
 import ../utils/debug
 import ../utils/strenc
@@ -13,7 +13,7 @@ proc shutdownSocket(fd: SocketHandle) =
     const SD_BOTH: cint = 2
     discard winlean.shutdown(fd, SD_BOTH)
   else:
-    discard shutdown(fd.cint, SHUT_RDWR)
+    discard posix.shutdown(fd.cint, posix.SHUT_RDWR)
 
 # SOCKS5 Protocol Constants
 const

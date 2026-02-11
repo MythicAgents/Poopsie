@@ -3,11 +3,16 @@ import ../utils/m_responses
 import ../utils/debug
 import ../utils/strenc
 
-# Cross-platform socket shutdown - sends TCP FIN and unblocks pending I/O
-# nativesockets.shutdown(SocketHandle, cint) is available on both Windows and POSIX
+# C-level shutdown() to send TCP FIN and unblock blocking recv/send in threads
+# Cross-platform: winsock2 on Windows, sys/socket.h on POSIX
+when defined(windows):
+  proc cShutdown(fd: cint, how: cint): cint {.importc: "shutdown", header: "<winsock2.h>".}
+else:
+  proc cShutdown(fd: cint, how: cint): cint {.importc: "shutdown", header: "<sys/socket.h>".}
+
 # Constant 2 = SHUT_RDWR (POSIX) = SD_BOTH (Windows)
 proc shutdownSocket(fd: SocketHandle) =
-  discard nativesockets.shutdown(fd, 2.cint)
+  discard cShutdown(fd.cint, 2.cint)
 
 # SOCKS5 Protocol Constants
 const

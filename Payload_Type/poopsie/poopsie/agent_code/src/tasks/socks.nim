@@ -1,19 +1,13 @@
 import std/[json, net, nativesockets, strutils, base64, strformat, tables, os]
-when defined(windows):
-  import winlean
-else:
-  import std/posix
 import ../utils/m_responses
 import ../utils/debug
 import ../utils/strenc
 
 # Cross-platform socket shutdown - sends TCP FIN and unblocks pending I/O
+# nativesockets.shutdown(SocketHandle, cint) is available on both Windows and POSIX
+# Constant 2 = SHUT_RDWR (POSIX) = SD_BOTH (Windows)
 proc shutdownSocket(fd: SocketHandle) =
-  when defined(windows):
-    const SD_BOTH: cint = 2
-    discard winlean.shutdown(fd, SD_BOTH)
-  else:
-    discard posix.shutdown(fd.cint, posix.SHUT_RDWR)
+  discard nativesockets.shutdown(fd, 2.cint)
 
 # SOCKS5 Protocol Constants
 const

@@ -11,9 +11,9 @@ when defined(windows):
 else:
   proc cShutdown(fd: cint, how: cint): cint {.importc: "shutdown", header: "<sys/socket.h>".}
 
-# Constant 2 = SHUT_RDWR (POSIX) = SD_BOTH (Windows)
+# Constant 1 = SHUT_WR (POSIX) = SD_SEND (Windows) - close write side, send FIN, keep reading
 proc shutdownSocket(fd: SocketHandle) =
-  discard cShutdown(fd.cint, 2.cint)
+  discard cShutdown(fd.cint, 1.cint)
 
 # SOCKS5 Protocol Constants
 const

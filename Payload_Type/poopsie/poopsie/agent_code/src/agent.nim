@@ -708,7 +708,12 @@ proc postResponses*(agent: var Agent) =
         if edgeCopy.hasKey(obf("source")) and edgeCopy[obf("source")].getStr() == "":
           edgeCopy[obf("source")] = %agent.callbackUuid
         edgeMessages.add(edgeCopy)
-      # Don't add the edge wrapper to responses
+      
+      # Keep the response (without edges) if it has other fields like task output
+      if resp.len > 1:  # More than just edges
+        var cleanResp = resp.copy()
+        cleanResp.delete(obf("edges"))
+        regularResponses.add(cleanResp)
     else:
       regularResponses.add(resp)
   

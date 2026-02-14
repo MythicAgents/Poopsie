@@ -19,6 +19,7 @@ class Poopsie(PayloadType):
     name = "poopsie"
     file_extension = "exe"
     author = "@haha150"
+    semver = "0.0.19"
     supported_os = [
         SupportedOS.Windows,
         SupportedOS.Linux,

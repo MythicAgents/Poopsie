@@ -172,7 +172,8 @@ proc checkActiveConnectConnections*(): seq[JsonNode] =
     # Check for data from thread (non-blocking) - drain channel even if inactive
     var (hasData, data) = conn.outChannel[].tryRecv()
     
-    debug &"[DEBUG] Connect: Checking connection for {agentUuid}, hasData: {hasData}, dataLen: {data.len}"
+    if hasData:
+      debug &"[DEBUG] Connect: Data from {agentUuid}, dataLen: {data.len}"
     
     while hasData:
       if data.len == 0:

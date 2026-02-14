@@ -148,14 +148,10 @@ proc sendChunkedMessage(pipeHandle: HANDLE, message: seq[byte]): bool =
       
       debug &"[DEBUG] Link: Wrote {bytesWritten} bytes of chunk data successfully"
   
-  # Flush pipe buffers to ensure data is sent immediately
-  debug "[DEBUG] Link: About to call FlushFileBuffers"
-  let flushResult = FlushFileBuffers(pipeHandle)
-  debug &"[DEBUG] Link: FlushFileBuffers result={flushResult}"
-  if flushResult == 0:
-    let err = GetLastError()
-    debug &"[DEBUG] Link: FlushFileBuffers failed, error: {err}"
-  
+  # Note: FlushFileBuffers intentionally NOT called here.
+  # On named pipes, it blocks until the remote end reads ALL data,
+  # which can deadlock the writer thread on large messages.
+  # WriteFile on a synchronous pipe already writes to the kernel buffer.
   debug "[DEBUG] Link: Message sent successfully"
   return true
 
@@ -363,7 +359,8 @@ proc checkActiveLinkConnections*(): seq[JsonNode] =
     # Check for data from thread (non-blocking) - drain channel even if inactive
     var (hasData, data) = conn.outChannel[].tryRecv()
     
-    debug &"[DEBUG] Link: Checking connection for {agentUuid}, hasData: {hasData}, dataLen: {data.len}"
+    if hasData:
+      debug &"[DEBUG] Link: Data from {agentUuid}, dataLen: {data.len}"
     
     while hasData:
       if data.len == 0:

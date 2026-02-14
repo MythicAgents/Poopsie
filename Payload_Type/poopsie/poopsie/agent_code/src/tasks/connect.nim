@@ -8,25 +8,25 @@ type
   ConnectConnectionObj = object
     agentUuid: string
     socket: Socket
-    active: bool
-    receivedEof: bool  # True when reader thread sends empty seq EOF signal
+    active*: bool
+    receivedEof*: bool  # True when reader thread sends empty seq EOF signal
     edgeRemovalSent: bool  # True after edge removal has been sent (2-phase)
-    inChannel: ptr Channel[seq[byte]]   # Mythic → Writer → Socket
+    inChannel*: ptr Channel[seq[byte]]   # Mythic → Writer → Socket
     outChannel: ptr Channel[seq[byte]]  # Socket → Reader → Mythic
     readerThread: Thread[ptr ConnectConnectionObj]
     writerThread: Thread[ptr ConnectConnectionObj]
   
-  ConnectConnection = ref object
-    agentUuid: string
-    socket: Socket
-    active: bool
-    receivedEof: bool
+  ConnectConnection* = ref object
+    agentUuid*: string
+    socket*: Socket
+    active*: bool
+    receivedEof*: bool
     edgeRemovalSent: bool
-    inChannel: ptr Channel[seq[byte]]
+    inChannel*: ptr Channel[seq[byte]]
     outChannel: ptr Channel[seq[byte]]
     readerThread: Thread[ptr ConnectConnectionObj]
     writerThread: Thread[ptr ConnectConnectionObj]
-    sharedPtr: ptr ConnectConnectionObj  # Stable pointer for threads
+    sharedPtr*: ptr ConnectConnectionObj  # Stable pointer for threads
 
 var
   activeConnectConnections* {.threadvar.}: Table[string, ConnectConnection]

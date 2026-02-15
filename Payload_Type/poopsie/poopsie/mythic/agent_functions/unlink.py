@@ -26,8 +26,8 @@ class UnlinkCommand(CommandBase):
     needs_admin = False
     help_cmd = "unlink"
     description = "Unlink from an SMB P2P agent."
-    version = 2
-    author = "@djhohnstein"
+    version = 1
+    author = "@haha150"
     argument_class = UnlinkArguments
     attackmapping = ["T1570", "T1572", "T1021"]
     attributes = CommandAttributes(

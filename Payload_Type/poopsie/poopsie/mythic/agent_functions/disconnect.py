@@ -26,8 +26,8 @@ class DisconnectCommand(CommandBase):
     needs_admin = False
     help_cmd = "disconnect"
     description = "Disconnect from a TCP P2P agent."
-    version = 2
-    author = "@djhohnstein"
+    version = 1
+    author = "@haha150"
     argument_class = DisconnectArguments
     attackmapping = ["T1570", "T1572", "T1021"]
 

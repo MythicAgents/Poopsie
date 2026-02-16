@@ -65,6 +65,52 @@ type
 
 var activePtySessions*: seq[PtySession] = @[]
 
+proc cleanupPtySession*(session: PtySession) =
+  ## Properly clean up a PTY session: stop threads, reap child process, free memory
+  ## This prevents zombie (<defunct>) processes by calling waitForExit/close
+  session.active = false
+  session.threadData[].active = false
+  
+  # Give threads a moment to notice the active flag and exit
+  sleep(50)
+  
+  # Terminate the process if still running
+  if session.process.running():
+    session.process.terminate()
+  
+  # Reap the child process - this calls waitpid() on Unix, preventing zombies
+  try:
+    discard session.process.waitForExit()
+  except:
+    discard
+  
+  # Close the process (closes pipes/handles)
+  try:
+    session.process.close()
+  except:
+    discard
+  
+  # Join threads to ensure they've fully stopped
+  joinThread(session.readerThread)
+  joinThread(session.writerThread)
+  
+  # Clean up shared memory
+  session.threadData[].outputChan[].close()
+  session.threadData[].inputChan[].close()
+  deallocShared(session.threadData[].outputChan)
+  deallocShared(session.threadData[].inputChan)
+  deallocShared(session.threadData)
+  
+  debug &"[DEBUG] PTY session {session.taskId} fully cleaned up"
+
+proc removeSessionFromActive(taskId: string) =
+  ## Remove a session from the active sessions list
+  var newSessions: seq[PtySession] = @[]
+  for s in activePtySessions:
+    if s.taskId != taskId:
+      newSessions.add(s)
+  activePtySessions = newSessions
+
 when defined(windows):
   proc outputReaderThread(data: ptr ThreadData) {.thread.} =
     ## Windows: Read from stdout handle in background thread
@@ -253,10 +299,9 @@ proc handlePtyInteractive*(taskId: string, interactive: seq[JsonNode]): JsonNode
           # Check for exit command
           let inputLower = data.strip().toLowerAscii()
           if inputLower == obf("exit") or inputLower == obf("exit\n"):
-            session.active = false
-            session.threadData[].active = false
-            session.process.terminate()
             interactiveMessages.add(createInteractiveMessage(taskId, Output, obf("Exiting PTY session...\n")))
+            cleanupPtySession(session)
+            removeSessionFromActive(taskId)
             return %*{
               obf("task_id"): taskId,
               obf("interactive"): interactiveMessages
@@ -266,12 +311,11 @@ proc handlePtyInteractive*(taskId: string, interactive: seq[JsonNode]): JsonNode
         # Terminate the PTY session
         debug &"[DEBUG] PTY exit requested"
         
-        session.active = false
-        session.threadData[].active = false
         session.threadData[].inputChan[].send(obf("exit\n"))
         sleep(100)
-        session.process.terminate()
         interactiveMessages.add(createInteractiveMessage(taskId, Output, obf("PTY session terminated\n")))
+        cleanupPtySession(session)
+        removeSessionFromActive(taskId)
       
       of Escape, CtrlA, CtrlB, CtrlC, CtrlD, CtrlE, CtrlF, CtrlG, Backspace, Tab, 
          CtrlK, CtrlL, CtrlN, CtrlP, CtrlQ, CtrlR, CtrlS, CtrlU, CtrlW, CtrlY, CtrlZ:
@@ -323,18 +367,12 @@ proc handlePtyInteractive*(taskId: string, interactive: seq[JsonNode]): JsonNode
       (hasOutput, output) = session.threadData[].outputChan[].tryRecv()
     
     # Check if process has exited
-    if not session.process.running():
-      session.active = false
-      session.threadData[].active = false
+    if not session.active or not session.process.running():
       if interactiveMessages.len == 0:
         interactiveMessages.add(createInteractiveMessage(taskId, Exit, obf("Process terminated\n")))
       
-      # Remove from active sessions
-      var newSessions: seq[PtySession] = @[]
-      for s in activePtySessions:
-        if s.taskId != taskId:
-          newSessions.add(s)
-      activePtySessions = newSessions
+      cleanupPtySession(session)
+      removeSessionFromActive(taskId)
     
     # Return response with interactive messages
     if interactiveMessages.len > 0:
@@ -347,8 +385,8 @@ proc handlePtyInteractive*(taskId: string, interactive: seq[JsonNode]): JsonNode
       
   except:
     let e = getCurrentException()
-    session.active = false
-    session.threadData[].active = false
+    cleanupPtySession(session)
+    removeSessionFromActive(taskId)
     return %*{
       obf("task_id"): taskId,
       obf("user_output"): &"PTY error: {e.msg}",

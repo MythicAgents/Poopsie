@@ -50,6 +50,7 @@ when defined(windows):
   import ../tasks/powerpick
   import ../tasks/powershell
   import ../tasks/powershell_import
+  import ../tasks/powershell_list
   import ../tasks/shinject
   import ../tasks/make_token
   import ../tasks/steal_token
@@ -280,6 +281,18 @@ proc executeTask*(taskId: string, command: string, params: JsonNode): TaskExecut
           obf("completed"): true,
           obf("status"): "error",
           obf("user_output"): obf("powershell_import command is only available on Windows")
+        }
+    
+    of obf("powershell_list"):
+      when defined(windows):
+        debug "[DEBUG] Executing powershell_list command"
+        result.response = powershellList(taskId, params)
+      else:
+        result.response = %*{
+          obf("task_id"): taskId,
+          obf("completed"): true,
+          obf("status"): "error",
+          obf("user_output"): obf("powershell_list command is only available on Windows")
         }
     
     of obf("whoami"):

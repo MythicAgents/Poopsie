@@ -100,7 +100,8 @@ proc processPowershellImportChunk*(taskId: string, fileId: string, fileName: str
         output.add(obf("[*] Currently imported scripts:\n"))
         for name in importedNames:
           output.add(obf("    - ") & name & "\n")
-        output.add(obf("[*] Functions from imported scripts are now available in powerpick"))
+        output.add(obf("[*] Functions from imported scripts are available via 'scripts' parameter in powershell/powerpick.\n"))
+        output.add(obf("[*] Use powershell_list to see all imported scripts."))
         
         return %*{
           obf("task_id"): taskId,

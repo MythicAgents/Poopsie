@@ -29,10 +29,10 @@ class PowershellImportCommand(CommandBase):
     needs_admin = False
     help_cmd = "powershell_import (modal popup to select .ps1 file)"
     description = (
-        "Import a PowerShell script (.ps1) into the agent's memory. "
-        "Once imported, all functions and cmdlets defined in the script become "
-        "available for use with the powerpick command. Multiple scripts can be "
-        "imported and they will all be loaded into the runspace."
+        "Import a PowerShell script (.ps1) into the agent's memory (encrypted). "
+        "Once imported, scripts can be selectively loaded using the 'scripts' "
+        "parameter in powershell or powerpick commands. Use powershell_list "
+        "to see all imported scripts."
     )
     version = 1
     author = "@haha150"

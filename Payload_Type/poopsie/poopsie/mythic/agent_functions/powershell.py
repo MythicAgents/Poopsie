@@ -1,6 +1,6 @@
 from mythic_container.MythicCommandBase import *
 
-class PowerpickArguments(TaskArguments):
+class PowershellArguments(TaskArguments):
 
     def __init__(self, command_line, **kwargs):
         super().__init__(command_line, **kwargs)
@@ -10,11 +10,10 @@ class PowerpickArguments(TaskArguments):
                 cli_name="Command",
                 display_name="Command",
                 type=ParameterType.String,
-                description="Command to run.",
+                description="The PowerShell command to execute.",
                 parameter_group_info=[
                     ParameterGroupInfo(
                         required=True,
-                        group_name="specific_payload",
                         ui_position=1
                     ),
                 ]
@@ -28,8 +27,7 @@ class PowerpickArguments(TaskArguments):
                 description="Bypass AMSI.",
                 parameter_group_info=[
                     ParameterGroupInfo(
-                        required=True,
-                        group_name="specific_payload",
+                        required=False,
                         ui_position=2
                     ),
                 ]
@@ -43,8 +41,7 @@ class PowerpickArguments(TaskArguments):
                 description="Block ETW.",
                 parameter_group_info=[
                     ParameterGroupInfo(
-                        required=True,
-                        group_name="specific_payload",
+                        required=False,
                         ui_position=3
                     ),
                 ]
@@ -59,7 +56,6 @@ class PowerpickArguments(TaskArguments):
                 parameter_group_info=[
                     ParameterGroupInfo(
                         required=False,
-                        group_name="specific_payload",
                         ui_position=4
                     ),
                 ]
@@ -68,29 +64,30 @@ class PowerpickArguments(TaskArguments):
 
     async def parse_arguments(self):
         if len(self.command_line.strip()) == 0:
-            raise Exception("At least one command on the command line must be passed to Powerpick.")
+            raise Exception("At least one command on the command line must be passed to PowerShell.")
         if self.command_line[0] == "{":
             self.load_args_from_json_string(self.command_line)
         else:
-            self.add_arg("command", self.command_line[0])
-            self.add_arg("patch_amsi_arg", self.command_line[1])
-            self.add_arg("block_etw_arg", self.command_line[2])
+            self.add_arg("command", self.command_line)
+            self.add_arg("patch_amsi_arg", False)
+            self.add_arg("block_etw_arg", False)
             self.add_arg("scripts", [])
 
 
-class PowerpickCommand(CommandBase):
-    cmd = "powerpick"
+class PowershellCommand(CommandBase):
+    cmd = "powershell"
     needs_admin = False
-    help_cmd = "powerpick <BYPASSAMSI=0> <BLOCKETW=0> [command] [-Scripts script1.ps1,script2.ps1]"
+    help_cmd = "powershell [command] [-BYPASSAMSI] [-BLOCKETW] [-Scripts script1.ps1,script2.ps1]"
     description = (
-        "Run a PowerShell command in a custom runspace. "
+        "Run a PowerShell command by spawning powershell.exe (non-blocking). "
+        "Optionally bypass AMSI and/or block ETW. "
         "Optionally specify imported scripts to load by name. "
         "Use powershell_list to see available imported scripts."
     )
     version = 3
     author = "@haha150"
-    argument_class = PowerpickArguments
-    attackmapping = ["T1059"]
+    argument_class = PowershellArguments
+    attackmapping = ["T1059.001"]
     attributes = CommandAttributes(
         supported_os=[SupportedOS.Windows],
     )
@@ -100,6 +97,16 @@ class PowerpickCommand(CommandBase):
             TaskID=taskData.Task.ID,
             Success=True,
         )
+        scripts = taskData.args.get_arg("scripts") or []
+        if scripts:
+            response.DisplayParams = "-Command {} -Scripts {}".format(
+                taskData.args.get_arg("command"),
+                ",".join(scripts)
+            )
+        else:
+            response.DisplayParams = "-Command {}".format(
+                taskData.args.get_arg("command")
+            )
         return response
 
     async def process_response(self, task: PTTaskMessageAllData, response: any) -> PTTaskProcessResponseMessageResponse:

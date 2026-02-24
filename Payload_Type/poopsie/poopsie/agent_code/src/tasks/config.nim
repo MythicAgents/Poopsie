@@ -85,6 +85,9 @@ proc config*(taskId: string, params: JsonNode): JsonNode =
       if ppid != 0:
         output &= obf("PPID Spoofing: ") & $ppid & "\n"
       
+      let blockDlls = getBlockDlls()
+      output &= obf("Block Non-Microsoft DLLs: ") & $blockDlls & "\n"
+      
       # Token information
       let tokenHandle = getTokenHandle()
       if tokenHandle != 0:

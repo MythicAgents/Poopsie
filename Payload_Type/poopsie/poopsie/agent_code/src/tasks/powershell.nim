@@ -306,7 +306,7 @@ proc powershell*(taskId: string, params: JsonNode): JsonNode =
               
               createResult = CreateProcessA(
                 nil, addr commandLine[0], nil, nil,
-                TRUE, CREATE_NO_WINDOW or EXTENDED_STARTUPINFO_PRESENT_PS,
+                TRUE, DWORD(CREATE_NO_WINDOW or EXTENDED_STARTUPINFO_PRESENT_PS),
                 nil, nil, cast[ptr STARTUPINFOA](addr siEx), addr pi
               )
               DeleteProcThreadAttributeListPS(attrListPtr)
@@ -346,7 +346,7 @@ proc powershell*(taskId: string, params: JsonNode): JsonNode =
           
           createResult = CreateProcessA(
             nil, addr commandLine[0], nil, nil,
-            TRUE, CREATE_NO_WINDOW or EXTENDED_STARTUPINFO_PRESENT_PS,
+            TRUE, DWORD(CREATE_NO_WINDOW or EXTENDED_STARTUPINFO_PRESENT_PS),
             nil, nil, cast[ptr STARTUPINFOA](addr siEx), addr pi
           )
           DeleteProcThreadAttributeListPS(attrListPtr)

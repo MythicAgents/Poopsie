@@ -23,20 +23,20 @@ when defined(windows):
     SERVICE_ERROR_NORMAL_SC = 1
     SERVICE_ERROR_IGNORE_SC = 0
     SERVICE_WIN32_OWN_PROCESS_SC = 0x10
-    SERVICE_CONTROL_STOP_SC = 0x00000001'u32
+    SERVICE_CONTROL_STOP_SC = 0x00000001'i32
     SC_STATUS_PROCESS_INFO_SC = 0
 
-    SERVICE_STOPPED_SC = 0x00000001'u32
-    SERVICE_START_PENDING_SC = 0x00000002'u32
-    SERVICE_STOP_PENDING_SC = 0x00000003'u32
-    SERVICE_RUNNING_SC = 0x00000004'u32
-    SERVICE_CONTINUE_PENDING_SC = 0x00000005'u32
-    SERVICE_PAUSE_PENDING_SC = 0x00000006'u32
-    SERVICE_PAUSED_SC = 0x00000007'u32
+    SERVICE_STOPPED_SC = 0x00000001'i32
+    SERVICE_START_PENDING_SC = 0x00000002'i32
+    SERVICE_STOP_PENDING_SC = 0x00000003'i32
+    SERVICE_RUNNING_SC = 0x00000004'i32
+    SERVICE_CONTINUE_PENDING_SC = 0x00000005'i32
+    SERVICE_PAUSE_PENDING_SC = 0x00000006'i32
+    SERVICE_PAUSED_SC = 0x00000007'i32
     DELETE_SC = 0x00010000
   
   type
-    QUERY_SERVICE_CONFIGW_SC = object
+    SC_QUERY_SERVICE_CONFIG = object
       dwServiceType: DWORD
       dwStartType: DWORD
       dwErrorControl: DWORD
@@ -143,9 +143,10 @@ when defined(windows):
   
   proc scQuery(service: string, computer: string): string =
     impersonateIfToken()
-    var computerWide = if computer.len > 0: newWideCString(computer) else: WideCString(nil)
+    var computerWide: WideCString
+    if computer.len > 0: computerWide = newWideCString(computer)
     let scm = OpenSCManagerWSc(
-      if computerWide.isNil: nil else: cast[LPCWSTR](addr computerWide[0]),
+      if computer.len == 0: nil else: cast[LPCWSTR](addr computerWide[0]),
       nil,
       SC_MANAGER_CONNECT_SC or SC_MANAGER_ENUMERATE_SERVICE_SC
     )
@@ -167,7 +168,7 @@ when defined(windows):
     discard QueryServiceConfigWSc(svc, nil, 0, addr needed)
     if needed > 0:
       var buffer = newSeq[byte](needed)
-      let qscPtr = cast[ptr QUERY_SERVICE_CONFIGW_SC](addr buffer[0])
+      let qscPtr = cast[ptr SC_QUERY_SERVICE_CONFIG](addr buffer[0])
       if QueryServiceConfigWSc(svc, qscPtr, needed, addr needed) != 0:
         output.add(obf("Service: ") & service & "\n")
         if qscPtr.lpDisplayName != nil:
@@ -197,9 +198,10 @@ when defined(windows):
   
   proc scStart(service: string, computer: string): string =
     impersonateIfToken()
-    var computerWide = if computer.len > 0: newWideCString(computer) else: WideCString(nil)
+    var computerWide: WideCString
+    if computer.len > 0: computerWide = newWideCString(computer)
     let scm = OpenSCManagerWSc(
-      if computerWide.isNil: nil else: cast[LPCWSTR](addr computerWide[0]),
+      if computer.len == 0: nil else: cast[LPCWSTR](addr computerWide[0]),
       nil, SC_MANAGER_CONNECT_SC)
     if scm == 0:
       return obf("OpenSCManagerW failed: ") & $GetLastError()
@@ -223,9 +225,10 @@ when defined(windows):
   
   proc scStop(service: string, computer: string): string =
     impersonateIfToken()
-    var computerWide = if computer.len > 0: newWideCString(computer) else: WideCString(nil)
+    var computerWide: WideCString
+    if computer.len > 0: computerWide = newWideCString(computer)
     let scm = OpenSCManagerWSc(
-      if computerWide.isNil: nil else: cast[LPCWSTR](addr computerWide[0]),
+      if computer.len == 0: nil else: cast[LPCWSTR](addr computerWide[0]),
       nil, SC_MANAGER_CONNECT_SC)
     if scm == 0:
       return obf("OpenSCManagerW failed: ") & $GetLastError()
@@ -251,9 +254,10 @@ when defined(windows):
   proc scCreate(service: string, computer: string, binaryPath: string,
                 displayName: string, startType: string): string =
     impersonateIfToken()
-    var computerWide = if computer.len > 0: newWideCString(computer) else: WideCString(nil)
+    var computerWide: WideCString
+    if computer.len > 0: computerWide = newWideCString(computer)
     let scm = OpenSCManagerWSc(
-      if computerWide.isNil: nil else: cast[LPCWSTR](addr computerWide[0]),
+      if computer.len == 0: nil else: cast[LPCWSTR](addr computerWide[0]),
       nil, SC_MANAGER_ALL_ACCESS_SC)
     if scm == 0:
       return obf("OpenSCManagerW failed: ") & $GetLastError()
@@ -287,9 +291,10 @@ when defined(windows):
   
   proc scDelete(service: string, computer: string): string =
     impersonateIfToken()
-    var computerWide = if computer.len > 0: newWideCString(computer) else: WideCString(nil)
+    var computerWide: WideCString
+    if computer.len > 0: computerWide = newWideCString(computer)
     let scm = OpenSCManagerWSc(
-      if computerWide.isNil: nil else: cast[LPCWSTR](addr computerWide[0]),
+      if computer.len == 0: nil else: cast[LPCWSTR](addr computerWide[0]),
       nil, SC_MANAGER_CONNECT_SC)
     if scm == 0:
       return obf("OpenSCManagerW failed: ") & $GetLastError()

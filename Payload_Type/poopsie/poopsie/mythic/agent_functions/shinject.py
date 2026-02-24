@@ -19,6 +19,11 @@ class ShInjectArguments(TaskArguments):
                         group_name="Default",
                         ui_position=1
                     ),
+                    ParameterGroupInfo(
+                        required=True,
+                        group_name="Cached",
+                        ui_position=2
+                    ),
                 ]),
             CommandParameter(
                 name="shellcode_name",
@@ -40,7 +45,10 @@ class ShInjectArguments(TaskArguments):
                 choices=["none", "xor_single", "xor_multi", "xor_counter", "xor_feedback", "xor_rolling", "rc4", "chacha20"],
                 default_value="none",
                 description="Shellcode encryption method",
-                parameter_group_info=[ParameterGroupInfo(required=False, group_name="Default", ui_position=3)]
+                parameter_group_info=[
+                    ParameterGroupInfo(required=False, group_name="Default", ui_position=3),
+                    ParameterGroupInfo(required=False, group_name="Cached", ui_position=3),
+                ]
             ),
             CommandParameter(
                 name="key",
@@ -49,7 +57,10 @@ class ShInjectArguments(TaskArguments):
                 type=ParameterType.String,
                 default_value="",
                 description="Encryption key (hex or plain text)",
-                parameter_group_info=[ParameterGroupInfo(required=False, group_name="Default", ui_position=4)]
+                parameter_group_info=[
+                    ParameterGroupInfo(required=False, group_name="Default", ui_position=4),
+                    ParameterGroupInfo(required=False, group_name="Cached", ui_position=4),
+                ]
             ),
             CommandParameter(
                 name="iv",
@@ -58,7 +69,10 @@ class ShInjectArguments(TaskArguments):
                 type=ParameterType.String,
                 default_value="",
                 description="Initialization vector for xor_feedback",
-                parameter_group_info=[ParameterGroupInfo(required=False, group_name="Default", ui_position=5)]
+                parameter_group_info=[
+                    ParameterGroupInfo(required=False, group_name="Default", ui_position=5),
+                    ParameterGroupInfo(required=False, group_name="Cached", ui_position=5),
+                ]
             ),
             CommandParameter(
                 name="nonce",
@@ -67,7 +81,20 @@ class ShInjectArguments(TaskArguments):
                 type=ParameterType.String,
                 default_value="",
                 description="Nonce for ChaCha20 (12 bytes)",
-                parameter_group_info=[ParameterGroupInfo(required=False, group_name="Default", ui_position=6)]
+                parameter_group_info=[
+                    ParameterGroupInfo(required=False, group_name="Default", ui_position=6),
+                    ParameterGroupInfo(required=False, group_name="Cached", ui_position=6),
+                ]
+            ),
+            CommandParameter(
+                name="cached",
+                cli_name="Cached",
+                display_name="Cached File Name",
+                type=ParameterType.String,
+                description="Name of a cached file (from register_file) to use instead of uploading.",
+                parameter_group_info=[
+                    ParameterGroupInfo(required=True, group_name="Cached", ui_position=1),
+                ]
             ),
         ]
 
@@ -99,6 +126,13 @@ class ShInjectCommand(CommandBase):
             Success=True,
         )
         response.DisplayParams = "-PID {}".format(taskData.args.get_arg("pid"))
+        if taskData.args.get_parameter_group_name() == "Cached":
+            response.DisplayParams += " -Cached {}".format(taskData.args.get_arg("cached"))
+            if taskData.args.get_arg("encryption") is not None:
+                response.DisplayParams += " -Encryption {}".format(taskData.args.get_arg("encryption"))
+            if taskData.args.get_arg("key") is not None:
+                response.DisplayParams += " -Key {}".format(taskData.args.get_arg("key"))
+            return response
         if taskData.args.get_arg("shellcode_name") is not None:
             file_resp = await SendMythicRPCFileSearch(MythicRPCFileSearchMessage(
                 AgentFileID=taskData.args.get_arg("shellcode_name"),

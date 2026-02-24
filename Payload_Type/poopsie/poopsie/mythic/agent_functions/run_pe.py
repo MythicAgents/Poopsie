@@ -34,7 +34,8 @@ class RunPeArguments(TaskArguments):
                 default_value="",
                 parameter_group_info=[
                     ParameterGroupInfo(required=False, group_name="Default", ui_position=2),
-                    ParameterGroupInfo(required=False, group_name="New PE", ui_position=2)
+                    ParameterGroupInfo(required=False, group_name="New PE", ui_position=2),
+                    ParameterGroupInfo(required=False, group_name="Cached", ui_position=2),
                 ],
             ),
             CommandParameter(
@@ -44,7 +45,18 @@ class RunPeArguments(TaskArguments):
                 default_value=False,
                 parameter_group_info=[
                     ParameterGroupInfo(required=False, group_name="Default", ui_position=3),
-                    ParameterGroupInfo(required=False, group_name="New PE", ui_position=3)
+                    ParameterGroupInfo(required=False, group_name="New PE", ui_position=3),
+                    ParameterGroupInfo(required=False, group_name="Cached", ui_position=3),
+                ],
+            ),
+            CommandParameter(
+                name="cached",
+                cli_name="Cached",
+                display_name="Cached File Name",
+                type=ParameterType.String,
+                description="Name of a cached file (from register_file) to use instead of uploading.",
+                parameter_group_info=[
+                    ParameterGroupInfo(required=True, group_name="Cached", ui_position=1),
                 ],
             ),
         ]
@@ -102,7 +114,15 @@ class RunPeCommand(CommandBase):
         )
 
         try:
-            if taskData.args.get_parameter_group_name() == "New PE":
+            if taskData.args.get_parameter_group_name() == "Cached":
+                response.DisplayParams = "-Cached {}".format(taskData.args.get_arg("cached"))
+                taskData.args.add_arg("program_name", taskData.args.get_arg("cached"))
+                if taskData.args.get_arg("args"):
+                    response.DisplayParams += " -Arguments {}".format(taskData.args.get_arg("args"))
+                if taskData.args.get_arg("full_tls"):
+                    response.DisplayParams += " -FullTLS True"
+                return response
+            elif taskData.args.get_parameter_group_name() == "New PE":
                 # Handle new PE file upload
                 file_resp = await SendMythicRPCFileSearch(MythicRPCFileSearchMessage(
                     TaskID=taskData.Task.ID,

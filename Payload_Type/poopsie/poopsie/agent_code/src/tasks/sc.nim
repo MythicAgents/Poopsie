@@ -7,6 +7,7 @@ when defined(windows):
   import winim/lean
   import token_manager
   
+  {.push used.}
   const
     SC_MANAGER_ALL_ACCESS_SC = 0xF003F
     SC_MANAGER_CONNECT_SC = 0x0001
@@ -34,6 +35,7 @@ when defined(windows):
     SERVICE_PAUSE_PENDING_SC = 0x00000006'i32
     SERVICE_PAUSED_SC = 0x00000007'i32
     DELETE_SC = 0x00010000
+  {.pop.}
   
   type
     SC_QUERY_SERVICE_CONFIG = object

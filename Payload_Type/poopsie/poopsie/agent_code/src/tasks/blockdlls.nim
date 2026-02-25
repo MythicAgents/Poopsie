@@ -24,5 +24,5 @@ proc blockdlls*(taskId: string, params: JsonNode): JsonNode =
     except Exception as e:
       return mythicError(taskId, obf("blockdlls error: ") & e.msg)
   
-  when defined(linux):
+  else:
     return mythicError(taskId, obf("blockdlls is only available on Windows"))

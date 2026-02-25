@@ -24,7 +24,7 @@ const
   FILE_ATTRIBUTE_NORMAL = 0x80
   INVALID_HANDLE_VALUE = -1
 
-{.push importc, stdcall, dynlib: "kernel32".}
+{.push importc, stdcall, dynlib: "kernel32", used.}
 proc CreateFileW(
   lpFileName: LPCWSTR,
   dwDesiredAccess: DWORD,

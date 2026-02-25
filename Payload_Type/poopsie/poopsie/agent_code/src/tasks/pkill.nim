@@ -34,10 +34,10 @@ proc pkill*(taskId: string, params: JsonNode): JsonNode =
         return mythicError(taskId, obf("Failed to open process ") & $pid & obf(". Error code: ") & $errorCode & obf(". Make sure the process exists and you have sufficient permissions."))
       
       # Terminate the process
-      let result = TerminateProcess(hProcess, 1)
+      let terminateResult = TerminateProcess(hProcess, 1)
       CloseHandle(hProcess)
       
-      if result == 0:
+      if terminateResult == 0:
         let errorCode = GetLastError()
         return mythicError(taskId, obf("Failed to terminate process ") & $pid & obf(". Error code: ") & $errorCode)
       
@@ -49,7 +49,7 @@ proc pkill*(taskId: string, params: JsonNode): JsonNode =
       
       if exitCode != 0:
         # Check if process exists
-        let (checkOutput, checkCode) = execCmdEx(obf("kill -0") & " " & $pid & " 2>&1")
+        let (_, checkCode) = execCmdEx(obf("kill -0") & " " & $pid & " 2>&1")
         if checkCode != 0:
           return mythicError(taskId, obf("Process ") & $pid & obf(" does not exist or you don't have permission to signal it"))
         return mythicError(taskId, obf("Failed to kill process ") & $pid & ": " & output)

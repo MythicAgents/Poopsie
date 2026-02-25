@@ -1,11 +1,11 @@
 import ../utils/m_responses
 import ../utils/debug
-import std/[json, strformat]
+import std/[json]
 import ../utils/strenc
 
 when defined(windows):
+  import std/[strformat, widestrs]
   import winim/lean
-  import std/widestrs
 
   proc whoamiWindows(): string =
     var hToken: HANDLE

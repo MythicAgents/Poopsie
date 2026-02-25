@@ -1,10 +1,12 @@
 import ../config
 import ../utils/m_responses
-import ../global_data
-import ../tasks/token_manager
 import ../utils/debug
 import ../utils/strenc
-import std/[json, strformat]
+import std/[json]
+
+when defined(windows):
+  import ../global_data
+  import ../tasks/token_manager
 
 proc config*(taskId: string, params: JsonNode): JsonNode =
   ## Display current agent configuration

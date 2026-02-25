@@ -28,7 +28,7 @@ else:
     const cSO_LINGER = 0x0080.cint
 
 # Constant 1 = SHUT_WR (POSIX) = SD_SEND (Windows) - close write side, send FIN, keep reading
-proc shutdownSocket(fd: SocketHandle) =
+proc shutdownSocket(fd: SocketHandle) {.used.} =
   discard cShutdown(fd.cint, 1.cint)
 
 proc resetSocket(sock: Socket) =

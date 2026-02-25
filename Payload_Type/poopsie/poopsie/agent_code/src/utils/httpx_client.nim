@@ -1,4 +1,4 @@
-import std/[base64, strutils, json, tables, uri, sequtils]
+import std/[base64, strutils, json]
 import http_client
 export http_client  # Re-export so httpx profile can use HttpClientWrapper
 import debug

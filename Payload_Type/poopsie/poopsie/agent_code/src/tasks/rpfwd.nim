@@ -1,5 +1,4 @@
-import std/[json, net, nativesockets, strutils, base64, strformat, tables, random, os]
-import ../config
+import std/[json, net, nativesockets, base64, strformat, tables, random, os]
 import ../utils/m_responses
 import ../utils/strenc
 
@@ -335,7 +334,6 @@ proc rpfwd*(taskId: string, params: JsonNode): JsonNode =
 proc handleRpfwdMessages*(messages: seq[JsonNode]): seq[JsonNode] =
   ## Process RPfwd messages from Mythic (data to send to connections)
   var responses: seq[JsonNode] = @[]
-  let cfg = getConfig()
   
   # Sync connections table with accept thread FIRST
   for taskId, listener in activeRpfwdListeners:
@@ -382,7 +380,6 @@ proc checkActiveRpfwdConnections*(): seq[JsonNode] =
   ## Check all active RPfwd connections for data to send to Mythic
   ## Called from main agent loop every iteration
   var responses: seq[JsonNode] = @[]
-  let cfg = getConfig()
   
   if not rpfwdActive:
     return responses

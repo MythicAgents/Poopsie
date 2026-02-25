@@ -224,9 +224,9 @@ proc executeSpawn*(taskId: string, shellcode: seq[byte], params: JsonNode): Json
         return mythicError(taskId, obf("Shellcode is empty - file download may have failed"))
       
       when hostCPU == "amd64":
-        let (spawntoPath, spawntoArgs) = getSpawntoX64()
+        let (spawntoPath, _) = getSpawntoX64()
       else:
-        let (spawntoPath, spawntoArgs) = getSpawntoX86()
+        let (spawntoPath, _) = getSpawntoX86()
       
       if spawntoPath.len == 0:
         return mythicError(taskId, obf("spawnto path is not set for this architecture"))

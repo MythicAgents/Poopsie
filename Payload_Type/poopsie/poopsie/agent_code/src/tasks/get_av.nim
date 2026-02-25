@@ -1,7 +1,7 @@
 import ../utils/m_responses
 import ../utils/debug
 import ../utils/strenc
-import std/[json, strformat]
+import std/[json]
 when defined(windows):
   import winim/com
   import std/strutils

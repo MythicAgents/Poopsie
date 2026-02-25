@@ -1,5 +1,5 @@
 ## Shared RSA key exchange implementation for all C2 profiles
-import json, base64, strutils, random
+import json, base64, random
 import ../config
 import debug
 import rsa

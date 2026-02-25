@@ -1,4 +1,4 @@
-import std/[json, strformat, os, strutils]
+import std/[json, strformat]
 import ../utils/debug
 import ../utils/strenc
 
@@ -104,7 +104,7 @@ when defined(windows):
     CloseHandle(hSnapshot)
 
 when not defined(windows):
-  import std/osproc
+  import std/[os, strutils, osproc]
   
   proc getProcessListLinux(): seq[ProcessEntry] =
     result = @[]

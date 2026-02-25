@@ -1,7 +1,7 @@
 when not defined(windows):
   {.error: "SMB profile is only supported on Windows".}
 
-import std/[base64, strutils, json, random, os, asyncdispatch, tables]
+import std/[base64, strutils, json, random, os, tables]
 import ../config
 import ../utils/crypto
 import ../utils/debug
@@ -52,6 +52,7 @@ type
   LPVOID = pointer
   LPCVOID = pointer
 
+{.push used.}
 const
   PIPE_ACCESS_DUPLEX = 0x00000003
   FILE_FLAG_OVERLAPPED = 0x40000000
@@ -67,8 +68,9 @@ const
   ERROR_IO_PENDING = 997
   ERROR_NO_DATA = 232
   INFINITE = 0xFFFFFFFF'u32
+{.pop.}
 
-{.push importc, stdcall, dynlib: "kernel32".}
+{.push importc, stdcall, dynlib: "kernel32", used.}
 proc CreateNamedPipeW(
   lpName: LPCWSTR,
   dwOpenMode: DWORD,
@@ -1042,18 +1044,18 @@ proc performKeyExchange*(profile: var SmbProfile): tuple[success: bool, newUuid:
     debug "[DEBUG] SMB P2P: RSA not compiled in (ENCRYPTED_EXCHANGE_CHECK not set at build time)"
     return (true, "")
   
-  when encryptedExchange:
+  else:
     var p = profile
     proc sendWrapper(data: string, uuid: string): string =
       return p.send(data, uuid)
     
-    let result = performRsaKeyExchange(profile.config, profile.config.uuid, sendWrapper)
+    let exchangeResult = performRsaKeyExchange(profile.config, profile.config.uuid, sendWrapper)
     
-    if result.success and result.sessionKey.len > 0:
-      profile.setAesKey(result.sessionKey)
-      return (true, result.newUuid)
-    elif result.success:
+    if exchangeResult.success and exchangeResult.sessionKey.len > 0:
+      profile.setAesKey(exchangeResult.sessionKey)
+      return (true, exchangeResult.newUuid)
+    elif exchangeResult.success:
       return (true, "")
     else:
-      debug "[DEBUG] SMB P2P: Key exchange failed: ", result.error
+      debug "[DEBUG] SMB P2P: Key exchange failed: ", exchangeResult.error
       return (false, "")

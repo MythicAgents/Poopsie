@@ -49,7 +49,6 @@ proc getFilePermissions(path: string): JsonNode =
   else:
     # Windows - basic permissions
     try:
-      let info = getFileInfo(path)
       var rights = "rwx"  # Basic default for Windows
       
       acls.add(%*{

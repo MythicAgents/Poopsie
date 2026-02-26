@@ -2,7 +2,6 @@ import std/[json, strutils, base64, strformat, os, net, nativesockets, tables, e
 import ../utils/m_responses
 import ../utils/debug
 import ../utils/strenc
-import ../config
 
 type
   ConnectConnectionObj = object

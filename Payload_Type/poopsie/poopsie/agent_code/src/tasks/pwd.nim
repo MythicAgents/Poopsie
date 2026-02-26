@@ -1,4 +1,4 @@
-import std/[json, os, strformat]
+import std/[json, os]
 import ../utils/m_responses
 import ../utils/debug
 import ../utils/strenc

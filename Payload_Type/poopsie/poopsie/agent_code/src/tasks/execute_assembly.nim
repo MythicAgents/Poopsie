@@ -6,7 +6,6 @@ when defined(windows):
   import winim/clr except `[]`
   import winim/lean
   import ../utils/patches
-  import ../utils/strenc
   
   type
     ExecuteAssemblyArgs = object

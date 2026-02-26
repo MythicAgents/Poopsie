@@ -1,18 +1,11 @@
-## Task processing utilities for reuse in profiles
-## This module provides functions to execute tasks and build responses
-## This is the single source of truth for task execution logic
-
-import std/[json, strutils]
+import std/[json]
 import ../config
-import ../global_data
 import ../utils/debug
 import ../utils/strenc
-import ../utils/m_responses
 import ../utils/sysinfo
 
 # Import all task modules
 import ../tasks/exit
-import ../tasks/sleep
 import ../tasks/ls
 import ../tasks/download
 import ../tasks/upload
@@ -33,16 +26,14 @@ import ../tasks/redirect
 import ../tasks/getenv as taskGetenv
 import ../tasks/connect
 import ../tasks/disconnect
-
-when defined(windows):
-  import ../tasks/link
-  import ../tasks/unlink
-
 import ../tasks/portscan
 import ../tasks/ifconfig
 import ../tasks/netstat
 import ../tasks/config as taskConfig
 import ../tasks/pkill
+
+when not defined(windows):
+  import ../utils/m_responses
 
 when defined(windows):
   import ../tasks/execute_assembly
@@ -80,6 +71,8 @@ when defined(windows):
   import ../tasks/sc
   import ../tasks/spawn
   import ../tasks/spawnas
+  import ../tasks/link
+  import ../tasks/unlink
 
 type
   TaskExecutionResult* = object

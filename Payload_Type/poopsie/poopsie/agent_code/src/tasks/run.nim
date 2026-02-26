@@ -1,8 +1,8 @@
 import json
 import ../utils/strenc
-import ../global_data
 
 when defined(windows):
+  import ../global_data
   import winim/lean
   import token_manager
   

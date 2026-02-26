@@ -5,7 +5,6 @@ when defined(windows):
   import base64
   import winim/lean
   import ../utils/[delegates, dinvoke, crypto]
-  import strutils
   
   type
     ShinjectArgs = object

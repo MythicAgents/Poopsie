@@ -272,6 +272,11 @@ proc injectViaCreateRemoteThread(shellcode: seq[byte]): tuple[success: bool, err
 
 proc executeInjectHollow*(taskId: string, shellcode: seq[byte], params: JsonNode): JsonNode
 
+# Forward declaration
+proc processInjectHollowChunk*(taskId: string, params: JsonNode, chunkData: string, 
+                               totalChunks: int, currentChunk: int, 
+                               fileData: var seq[byte]): JsonNode
+
 proc injectHollow*(taskId: string, params: JsonNode): JsonNode =
   ## Inject shellcode into a remote process using process hollowing
   when defined(windows):

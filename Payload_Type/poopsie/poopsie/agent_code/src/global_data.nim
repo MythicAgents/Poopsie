@@ -4,6 +4,50 @@
 import std/[locks, json, sequtils, tables]
 import nimcrypto/sysrand
 
+# ============================================================================
+# Cross-platform File Cache
+# ============================================================================
+var
+  fileCacheLock: Lock
+  fileCache: Table[string, seq[byte]]
+
+proc initFileCache*() =
+  ## Initialize the file cache
+  initLock(fileCacheLock)
+  withLock fileCacheLock:
+    fileCache = initTable[string, seq[byte]]()
+
+proc cacheFile*(name: string, data: seq[byte]) =
+  ## Store a file in the cache (replaces if name exists)
+  withLock fileCacheLock:
+    fileCache[name] = data
+
+proc getCachedFile*(name: string): seq[byte] =
+  ## Retrieve a cached file by name. Returns empty seq if not found.
+  withLock fileCacheLock:
+    if fileCache.hasKey(name):
+      return fileCache[name]
+    return @[]
+
+proc removeCachedFile*(name: string): bool =
+  ## Remove a file from the cache. Returns true if it existed.
+  withLock fileCacheLock:
+    if fileCache.hasKey(name):
+      fileCache.del(name)
+      return true
+    return false
+
+proc getCachedFileInfo*(): seq[tuple[name: string, size: int]] =
+  ## Get names and sizes of all cached files
+  withLock fileCacheLock:
+    for name, data in fileCache:
+      result.add((name: name, size: data.len))
+
+proc clearFileCache*() =
+  ## Remove all cached files
+  withLock fileCacheLock:
+    fileCache.clear()
+
 when defined(windows):
   type
     ImportedScript* = object
@@ -197,47 +241,3 @@ when defined(linux):
   proc getGlobalDataJson*(): string =
     ## Get global data as JSON string (empty on Linux)
     return "{}"
-
-# ============================================================================
-# Cross-platform File Cache
-# ============================================================================
-var
-  fileCacheLock: Lock
-  fileCache: Table[string, seq[byte]]
-
-proc initFileCache*() =
-  ## Initialize the file cache
-  initLock(fileCacheLock)
-  withLock fileCacheLock:
-    fileCache = initTable[string, seq[byte]]()
-
-proc cacheFile*(name: string, data: seq[byte]) =
-  ## Store a file in the cache (replaces if name exists)
-  withLock fileCacheLock:
-    fileCache[name] = data
-
-proc getCachedFile*(name: string): seq[byte] =
-  ## Retrieve a cached file by name. Returns empty seq if not found.
-  withLock fileCacheLock:
-    if fileCache.hasKey(name):
-      return fileCache[name]
-    return @[]
-
-proc removeCachedFile*(name: string): bool =
-  ## Remove a file from the cache. Returns true if it existed.
-  withLock fileCacheLock:
-    if fileCache.hasKey(name):
-      fileCache.del(name)
-      return true
-    return false
-
-proc getCachedFileInfo*(): seq[tuple[name: string, size: int]] =
-  ## Get names and sizes of all cached files
-  withLock fileCacheLock:
-    for name, data in fileCache:
-      result.add((name: name, size: data.len))
-
-proc clearFileCache*() =
-  ## Remove all cached files
-  withLock fileCacheLock:
-    fileCache.clear()

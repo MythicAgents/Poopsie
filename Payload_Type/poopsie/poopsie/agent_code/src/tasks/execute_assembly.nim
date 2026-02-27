@@ -18,6 +18,11 @@ when defined(windows):
 
 const CHUNK_SIZE = 512000  # 512KB chunks
 
+# Forward declaration
+proc processExecuteAssemblyChunk*(taskId: string, params: JsonNode, chunkData: string, 
+                                   totalChunks: int, currentChunk: int, 
+                                   fileData: var seq[byte]): JsonNode
+
 proc executeAssembly*(taskId: string, params: JsonNode): JsonNode =
   ## Execute a .NET assembly from memory
   ## First response - request the file from Mythic

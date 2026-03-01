@@ -1,5 +1,5 @@
 import json, strutils
-import ../utils/[strenc, m_responses, debug]
+import ../utils/[strenc, m_responses]
 import ../global_data
 
 type

@@ -68,14 +68,13 @@ when defined(windows):
   import ../tasks/donut
   import ../tasks/inject_hollow
   import ../tasks/run_pe
-  import ../tasks/register_file
   import ../tasks/sc
   import ../tasks/spawn
   import ../tasks/spawnas
   import ../tasks/link
   import ../tasks/unlink
-
-import ../tasks/deregister_file
+  import ../tasks/register_file
+  import ../tasks/deregister_file
 
 type
   TaskExecutionResult* = object
@@ -702,9 +701,17 @@ proc executeTask*(taskId: string, command: string, params: JsonNode): TaskExecut
         }
     
     of obf("deregister_file"):
-      debug "[DEBUG] Executing deregister_file command"
-      result.response = deregisterFile(taskId, params)
-      result.response[obf("task_id")] = %taskId
+      when defined(windows):
+        debug "[DEBUG] Executing deregister_file command"
+        result.response = deregisterFile(taskId, params)
+        result.response[obf("task_id")] = %taskId
+      else:
+        result.response = %*{
+          obf("task_id"): taskId,
+          obf("completed"): true,
+          obf("status"): "error",
+          obf("user_output"): obf("deregister_file command is only available on Windows")
+        }
     
     of obf("sc"):
       when defined(windows):

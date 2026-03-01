@@ -33,9 +33,9 @@ when defined(windows):
   import tasks/inject_hollow
   import tasks/run_pe
   import tasks/powershell_import
-  import tasks/register_file
   import tasks/spawn
   import tasks/spawnas
+  import tasks/register_file
 
 when defined(windows):
   when defined(sleepObfuscationEkko):

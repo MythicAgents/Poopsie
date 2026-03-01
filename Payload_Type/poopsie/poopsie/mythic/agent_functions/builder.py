@@ -19,7 +19,7 @@ class Poopsie(PayloadType):
     name = "poopsie"
     file_extension = "exe"
     author = "@haha150"
-    semver = "0.0.21"
+    semver = "0.0.22"
     supported_os = [
         SupportedOS.Windows,
         SupportedOS.Linux,
@@ -99,10 +99,10 @@ class Poopsie(PayloadType):
         ),
         BuildParameter(
             name="sRDI_flags",
-            parameter_type=BuildParameterType.ChooseOne,
-            description="sRDI flags (0x1 = Clear the PE header on load, 0x4 = Randomize import dependency load order, 0x8 = Pass shellcode base address to exported function)",
-            default_value="0",
-            choices=["0", "0x1", "0x4", "0x8"],
+            parameter_type=BuildParameterType.ChooseMultiple,
+            description="sRDI flags (select multiple to combine)",
+            default_value=[],
+            choices=["Clear PE Header (0x1)", "Randomize Import Order (0x4)", "Pass Shellcode Base (0x8)"],
             required=False,
             group_name="Shellcode Options",
             hide_conditions=[
@@ -474,12 +474,15 @@ class Poopsie(PayloadType):
                 if tool == "sRDI":
                     with open(dll_path, "rb") as f:
                         dll_bytes = f.read()
-                    flags = int(self.get_parameter("sRDI_flags"), 16) if self.get_parameter("sRDI_flags") else 0
+                    flag_map = {"Clear PE Header (0x1)": 0x1, "Randomize Import Order (0x4)": 0x4, "Pass Shellcode Base (0x8)": 0x8}
+                    flags = 0
+                    for selected in (self.get_parameter("sRDI_flags") or []):
+                        flags |= flag_map.get(selected, 0)
                     shellcode = ConvertToShellcode(dll_bytes, HashFunctionName("entrypoint"), flags=flags)
                     output_path = self.agent_code_path / "src" / "poopsie.bin"
                     with open(output_path, "wb") as f:
                         f.write(shellcode)
-                    command = "ConvertToShellcode(dll_bytes, HashFunctionName(\"entrypoint\"), flags=flags)"
+                    command = f"ConvertToShellcode(dll_bytes, HashFunctionName('entrypoint'), flags={hex(flags)})"
                     resp.build_message += f"Successfully converted to shellcode using sRDI (flags={hex(flags)})\n"
                 else:
                     output_path = self.agent_code_path / "src" / "poopsie.bin"

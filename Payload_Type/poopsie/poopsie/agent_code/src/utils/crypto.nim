@@ -1,4 +1,4 @@
-import std/[base64, sequtils]
+import std/[base64]
 import nimcrypto/[rijndael, bcmode, sysrand, hmac, sha2]
 import strutils
 import strenc

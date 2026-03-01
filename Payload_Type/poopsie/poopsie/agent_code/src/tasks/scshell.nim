@@ -146,5 +146,5 @@ proc scshell*(taskId: string, params: JsonNode): JsonNode =
     except Exception as e:
       return mythicError(taskId, obf("Scshell error: ") & e.msg)
   
-  when defined(linux):
+  else:
     return mythicError(taskId, obf("Scshell is only available on Windows"))

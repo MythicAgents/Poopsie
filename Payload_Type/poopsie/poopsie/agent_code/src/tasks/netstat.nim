@@ -1,7 +1,7 @@
 import ../utils/m_responses
 import ../utils/debug
 import ../utils/strenc
-import std/[json, strformat, strutils, osproc, os]
+import std/[json, strformat, strutils]
 
 when defined(windows):
   import winim/lean
@@ -11,20 +11,6 @@ when defined(windows):
     AF_INET6 = 23
     
   type
-    MIB_TCP_STATE = enum
-      MIB_TCP_STATE_CLOSED = 1
-      MIB_TCP_STATE_LISTEN = 2
-      MIB_TCP_STATE_SYN_SENT = 3
-      MIB_TCP_STATE_SYN_RCVD = 4
-      MIB_TCP_STATE_ESTAB = 5
-      MIB_TCP_STATE_FIN_WAIT1 = 6
-      MIB_TCP_STATE_FIN_WAIT2 = 7
-      MIB_TCP_STATE_CLOSE_WAIT = 8
-      MIB_TCP_STATE_CLOSING = 9
-      MIB_TCP_STATE_LAST_ACK = 10
-      MIB_TCP_STATE_TIME_WAIT = 11
-      MIB_TCP_STATE_DELETE_TCB = 12
-    
     MIB_TCPROW_OWNER_PID = object
       dwState: DWORD
       dwLocalAddr: DWORD
@@ -78,7 +64,7 @@ when defined(windows):
                           ulAf: ULONG, TableClass: DWORD, Reserved: ULONG): DWORD
     {.importc, dynlib: obf("iphlpapi.dll"), stdcall.}
   
-  proc ntohl(netlong: uint32): uint32 =
+  proc ntohl(netlong: uint32): uint32 {.used.} =
     ((netlong and 0xFF000000'u32) shr 24) or
     ((netlong and 0x00FF0000'u32) shr 8) or
     ((netlong and 0x0000FF00'u32) shl 8) or
@@ -120,57 +106,57 @@ when defined(windows):
     return parts.join(":")
 
 when defined(linux):
-  import std/osproc
+  import std/os
 
-proc parseHexIP(hex: string): string =
-  ## Parse hex IP address (little-endian) from /proc/net to dotted decimal
-  ## Example: 0100007F -> 127.0.0.1
-  if hex.len != 8:
-    return obf("0.0.0.0")
-  try:
-    let a = parseHexInt(hex[6..7])
-    let b = parseHexInt(hex[4..5])
-    let c = parseHexInt(hex[2..3])
-    let d = parseHexInt(hex[0..1])
-    return &"{a}.{b}.{c}.{d}"
-  except:
-    return obf("0.0.0.0")
+  proc parseHexIP(hex: string): string =
+    ## Parse hex IP address (little-endian) from /proc/net to dotted decimal
+    ## Example: 0100007F -> 127.0.0.1
+    if hex.len != 8:
+      return obf("0.0.0.0")
+    try:
+      let a = parseHexInt(hex[6..7])
+      let b = parseHexInt(hex[4..5])
+      let c = parseHexInt(hex[2..3])
+      let d = parseHexInt(hex[0..1])
+      return &"{a}.{b}.{c}.{d}"
+    except:
+      return obf("0.0.0.0")
 
-proc parseHexIPv6(hex: string): string =
-  ## Parse hex IPv6 address from /proc/net to standard format
-  ## Example: 00000000000000000000000001000000 -> ::1
-  if hex.len != 32:
-    return "::"
-  try:
-    var parts: seq[string] = @[]
-    # Read in groups of 4 hex chars, but in little-endian order (reverse each group of 8)
-    for i in countup(0, 28, 8):
-      let group = hex[i+6..i+7] & hex[i+4..i+5] & hex[i+2..i+3] & hex[i..i+1]
-      let val = parseHexInt(group)
-      parts.add(&"{val:x}")
-    return parts.join(":")
-  except:
-    return "::"
+  proc parseHexIPv6(hex: string): string =
+    ## Parse hex IPv6 address from /proc/net to standard format
+    ## Example: 00000000000000000000000001000000 -> ::1
+    if hex.len != 32:
+      return "::"
+    try:
+      var parts: seq[string] = @[]
+      # Read in groups of 4 hex chars, but in little-endian order (reverse each group of 8)
+      for i in countup(0, 28, 8):
+        let group = hex[i+6..i+7] & hex[i+4..i+5] & hex[i+2..i+3] & hex[i..i+1]
+        let val = parseHexInt(group)
+        parts.add(&"{val:x}")
+      return parts.join(":")
+    except:
+      return "::"
 
-proc parseTcpState(stateHex: string): string =
-  ## Parse TCP state from hex to string
-  try:
-    let state = parseHexInt(stateHex)
-    case state
-    of 0x01: return obf("ESTABLISHED")
-    of 0x02: return obf("SYN_SENT")
-    of 0x03: return obf("SYN_RECV")
-    of 0x04: return obf("FIN_WAIT1")
-    of 0x05: return obf("FIN_WAIT2")
-    of 0x06: return obf("TIME_WAIT")
-    of 0x07: return obf("CLOSE")
-    of 0x08: return obf("CLOSE_WAIT")
-    of 0x09: return obf("LAST_ACK")
-    of 0x0A: return obf("LISTEN")
-    of 0x0B: return obf("CLOSING")
-    else: return "UNKNOWN"
-  except:
-    return "UNKNOWN"
+  proc parseTcpState(stateHex: string): string =
+    ## Parse TCP state from hex to string
+    try:
+      let state = parseHexInt(stateHex)
+      case state
+      of 0x01: return obf("ESTABLISHED")
+      of 0x02: return obf("SYN_SENT")
+      of 0x03: return obf("SYN_RECV")
+      of 0x04: return obf("FIN_WAIT1")
+      of 0x05: return obf("FIN_WAIT2")
+      of 0x06: return obf("TIME_WAIT")
+      of 0x07: return obf("CLOSE")
+      of 0x08: return obf("CLOSE_WAIT")
+      of 0x09: return obf("LAST_ACK")
+      of 0x0A: return obf("LISTEN")
+      of 0x0B: return obf("CLOSING")
+      else: return "UNKNOWN"
+    except:
+      return "UNKNOWN"
 
 proc netstat*(taskId: string, params: JsonNode): JsonNode =
   ## Get all active network connections and sockets

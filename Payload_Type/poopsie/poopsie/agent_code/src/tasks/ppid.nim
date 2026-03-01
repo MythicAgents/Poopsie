@@ -25,5 +25,5 @@ proc ppid*(taskId: string, params: JsonNode): JsonNode =
     except Exception as e:
       return mythicError(taskId, obf("ppid error: ") & e.msg)
   
-  when defined(linux):
+  else:
     return mythicError(taskId, obf("ppid is only available on Windows"))

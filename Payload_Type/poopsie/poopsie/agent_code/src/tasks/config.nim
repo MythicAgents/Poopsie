@@ -1,10 +1,12 @@
 import ../config
 import ../utils/m_responses
-import ../global_data
-import ../tasks/token_manager
 import ../utils/debug
 import ../utils/strenc
-import std/[json, strformat]
+import std/[json]
+
+when defined(windows):
+  import ../global_data
+  import ../tasks/token_manager
 
 proc config*(taskId: string, params: JsonNode): JsonNode =
   ## Display current agent configuration
@@ -84,6 +86,9 @@ proc config*(taskId: string, params: JsonNode): JsonNode =
       let ppid = getPpid()
       if ppid != 0:
         output &= obf("PPID Spoofing: ") & $ppid & "\n"
+      
+      let blockDlls = getBlockDlls()
+      output &= obf("Block Non-Microsoft DLLs: ") & $blockDlls & "\n"
       
       # Token information
       let tokenHandle = getTokenHandle()

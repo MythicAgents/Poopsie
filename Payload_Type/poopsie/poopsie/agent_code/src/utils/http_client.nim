@@ -2,7 +2,7 @@ when defined(windows):
   # Windows: Custom WinHTTP implementation for full control
   import winim/lean
   import winim/inc/winhttp
-  import std/[tables, strutils, parseutils, uri]
+  import std/[tables, strutils, uri]
   
   type
     HttpHeaders* = ref object
@@ -13,6 +13,7 @@ when defined(windows):
       proxyUrl*: string  # Empty = no proxy, otherwise proxy URL
   
   # WinHTTP constants not in winim/lean
+  {.push used.}
   const
     WINHTTP_ACCESS_TYPE_DEFAULT_PROXY = 0
     WINHTTP_ACCESS_TYPE_NO_PROXY = 1
@@ -28,6 +29,7 @@ when defined(windows):
     SECURITY_FLAG_IGNORE_CERT_WRONG_USAGE = 0x00000200
     SECURITY_FLAG_IGNORE_CERT_CN_INVALID = 0x00001000
     SECURITY_FLAG_IGNORE_CERT_DATE_INVALID = 0x00002000
+  {.pop.}
   
   proc newHttpHeaders*(headers: openArray[(string, string)]): HttpHeaders =
     result = HttpHeaders(table: initTable[string, seq[string]]())
@@ -168,7 +170,7 @@ when defined(windows):
       # Get Content-Length
       var contentLength: DWORD = 0
       var contentLengthSize = DWORD(sizeof(contentLength))
-      let hasContentLength = WinHttpQueryHeaders(hRequest,
+      discard WinHttpQueryHeaders(hRequest,
         DWORD(5 or 0x20000000), # WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER  
         nil, addr contentLength, addr contentLengthSize, nil)
 
@@ -200,10 +202,10 @@ when defined(windows):
           result.add(buffer[0..<bytesRead])
           totalRead += int(bytesRead)
 
-    except IOError as e:
+    except IOError:
       # HTTP errors (non-2xx status codes) - re-raise to caller after cleanup
       raise
-    except CatchableError as e:
+    except CatchableError:
       # Other errors - log and return empty
       result = ""
     finally:

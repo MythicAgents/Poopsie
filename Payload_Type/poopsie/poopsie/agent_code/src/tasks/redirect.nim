@@ -1,5 +1,4 @@
 import std/[json, net, nativesockets, strformat, tables, os]
-import ../config
 import ../utils/m_responses
 import ../utils/strenc
 
@@ -162,7 +161,7 @@ proc acceptConnections(listener: ptr RedirectListenerObj) {.thread.} =
       var remoteSocket = newSocket()
       try:
         remoteSocket.connect(listener[].remoteIp, Port(listener[].remotePort))
-      except OSError as e:
+      except OSError:
         # Failed to connect to remote
         clientSocket.close()
         continue

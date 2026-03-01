@@ -21,7 +21,7 @@ else:
   when defined(linux):
     import posix
 
-  proc daemonize(): bool =
+  proc daemonize(): bool {.used.} =
     when defined(windows):
       result = FreeConsole() != 0
     else:

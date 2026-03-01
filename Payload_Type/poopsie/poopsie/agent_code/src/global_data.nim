@@ -1,10 +1,68 @@
 ## Global data storage for agent configuration
 ## Stores dynamic configuration like spawnto paths for process injection
 
+import std/[locks, tables]
+import nimcrypto/sysrand
+import utils/crypto
+
+# ============================================================================
+# Cross-platform File Cache (RC4 encrypted at rest)
+# ============================================================================
+type
+  CachedEntry = object
+    data: seq[byte]       # RC4-encrypted content
+    originalSize: int     # Original plaintext size
+
+var
+  fileCacheLock: Lock
+  fileCache: Table[string, CachedEntry]
+  fileCacheKey: seq[byte]  # RC4 key for file cache encryption
+
+proc initFileCache*() =
+  ## Initialize the file cache with a random encryption key
+  initLock(fileCacheLock)
+  fileCacheKey = newSeq[byte](32)
+  discard randomBytes(addr fileCacheKey[0], 32)
+  withLock fileCacheLock:
+    fileCache = initTable[string, CachedEntry]()
+
+proc cacheFile*(name: string, data: seq[byte]) =
+  ## Store a file in the cache, RC4-encrypted at rest
+  var encrypted = data
+  rc4(encrypted, fileCacheKey)
+  withLock fileCacheLock:
+    fileCache[name] = CachedEntry(data: encrypted, originalSize: data.len)
+
+proc getCachedFile*(name: string): seq[byte] =
+  ## Retrieve and decrypt a cached file by name. Returns empty seq if not found.
+  withLock fileCacheLock:
+    if fileCache.hasKey(name):
+      var decrypted = fileCache[name].data
+      rc4(decrypted, fileCacheKey)
+      return decrypted
+    return @[]
+
+proc removeCachedFile*(name: string): bool =
+  ## Remove a file from the cache. Returns true if it existed.
+  withLock fileCacheLock:
+    if fileCache.hasKey(name):
+      fileCache.del(name)
+      return true
+    return false
+
+proc getCachedFileInfo*(): seq[tuple[name: string, size: int]] =
+  ## Get names and sizes of all cached files
+  withLock fileCacheLock:
+    for name, entry in fileCache:
+      result.add((name: name, size: entry.originalSize))
+
+proc clearFileCache*() =
+  ## Remove all cached files
+  withLock fileCacheLock:
+    fileCache.clear()
+
 when defined(windows):
-  import std/[locks, sequtils, json]
-  import nimcrypto/sysrand
-  import utils/crypto
+  import std/[json, sequtils]
 
   type
     ImportedScript* = object
@@ -40,6 +98,7 @@ when defined(windows):
       # Generate random RC4 key for script encryption
       globalData.scriptEncKey = newSeq[byte](32)
       discard randomBytes(globalData.scriptEncKey[0].addr, 32)
+    initFileCache()
 
   proc getSpawntoX64*(): (string, string) =
     ## Get spawnto_x64 path and arguments
@@ -159,6 +218,9 @@ when defined(windows):
       var scriptInfo: seq[JsonNode] = @[]
       for script in globalData.importedPsScripts:
         scriptInfo.add(%*{"name": script.name, "size": script.size})
+      var cacheInfo: seq[JsonNode] = @[]
+      for info in getCachedFileInfo():
+        cacheInfo.add(%*{"name": info.name, "size": info.size})
       let data = %*{
         "spawnto_x64": globalData.spawntoX64,
         "spawnto_x64_arguments": globalData.spawntoX64Args,
@@ -166,7 +228,8 @@ when defined(windows):
         "spawnto_x86_arguments": globalData.spawntoX86Args,
         "ppid": globalData.ppid,
         "block_dlls": globalData.blockDlls,
-        "imported_ps_scripts": scriptInfo
+        "imported_ps_scripts": scriptInfo,
+        "cached_files": cacheInfo
       }
       return $data
 
@@ -179,7 +242,7 @@ when defined(linux):
 
   proc initGlobalData*() =
     ## Initialize global data storage (no-op on Linux)
-    discard
+    initFileCache()
 
   proc getGlobalDataJson*(): string =
     ## Get global data as JSON string (empty on Linux)

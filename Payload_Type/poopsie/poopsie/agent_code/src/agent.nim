@@ -345,7 +345,7 @@ proc getTasks*(agent: Agent): tuple[tasks: seq[JsonNode], interactive: seq[JsonN
   var p2pDelegates: seq[JsonNode] = @[]
   var p2pEdges: seq[JsonNode] = @[]
   
-  let connectResps = when defined(cmd_connect): checkActiveConnectConnections() else: @[]
+  let connectResps = when defined(cmd_connect): checkActiveConnectConnections() else: newSeq[JsonNode]()
   for resp in connectResps:
     if resp.hasKey(obf("delegates")):
       for d in resp[obf("delegates")].getElems():

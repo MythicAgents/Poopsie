@@ -1,7 +1,7 @@
 import ../utils/m_responses
 import ../utils/debug
 import ../utils/strenc
-import std/[json, strformat, strutils, osproc]
+import std/[json, strformat, strutils]
 
 when defined(windows):
   import winim/lean
@@ -80,23 +80,7 @@ when defined(windows):
       Dhcpv6Iaid: ULONG
       FirstDnsSuffix: pointer
     
-    SOCKADDR = object
-      sa_family: uint16
-      sa_data: array[14, byte]
     
-    SOCKADDR_IN = object
-      sin_family: uint16
-      sin_port: uint16
-      sin_addr: array[4, byte]
-      sin_zero: array[8, byte]
-    
-    SOCKADDR_IN6 = object
-      sin6_family: uint16
-      sin6_port: uint16
-      sin6_flowinfo: uint32
-      sin6_addr: array[16, byte]
-      sin6_scope_id: uint32
-  
   proc GetAdaptersAddresses(Family: ULONG, Flags: ULONG, Reserved: pointer,
                            AdapterAddresses: ptr IP_ADAPTER_ADDRESSES,
                            SizePointer: ptr ULONG): ULONG 
@@ -115,10 +99,10 @@ when defined(windows):
     var buffer: array[46, byte]  # INET6_ADDRSTRLEN
     var bufferLen = DWORD(buffer.len)
     
-    let result = WSAAddressToStringA(sockaddr, DWORD(buffer.len), nil, 
+    let wsaResult = WSAAddressToStringA(sockaddr, DWORD(buffer.len), nil, 
                                      cast[ptr byte](addr buffer[0]), addr bufferLen)
     
-    if result != 0:
+    if wsaResult != 0:
       return ""
     
     # Find null terminator and convert to string
@@ -135,7 +119,7 @@ when defined(windows):
       return ""
 
 when defined(linux):
-  import std/[os, strutils, tables]
+  import std/[os, tables, osproc]
   
   proc readFile(path: string): string =
     try:
@@ -166,12 +150,12 @@ proc ifconfig*(taskId: string, params: JsonNode): JsonNode =
       let adapterAddresses = cast[ptr IP_ADAPTER_ADDRESSES](addr buffer[0])
       
       # Second call to get actual data
-      let result = GetAdaptersAddresses(AF_UNSPEC,
+      let adapterResult = GetAdaptersAddresses(AF_UNSPEC,
                                        GAA_FLAG_INCLUDE_GATEWAYS or GAA_FLAG_INCLUDE_PREFIX,
                                        nil, adapterAddresses, addr bufferSize)
       
-      if result != 0:
-        return mythicError(taskId, obf("GetAdaptersAddresses failed with error code: ") & $result)
+      if adapterResult != 0:
+        return mythicError(taskId, obf("GetAdaptersAddresses failed with error code: ") & $adapterResult)
       
       # Iterate through adapters
       var currentAdapter = adapterAddresses
@@ -273,7 +257,7 @@ proc ifconfig*(taskId: string, params: JsonNode): JsonNode =
       
       # Get IP addresses from ip command
       try:
-        let ipOutput = readFile(obf("/proc/net/fib_trie"))
+        discard readFile(obf("/proc/net/fib_trie"))
         # Parse interface addresses - this is complex, use ip addr as fallback
         discard
       except:

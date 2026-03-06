@@ -98,6 +98,7 @@ type
         SectionHeaderPtr*: ptr SectionHeader
 
     
+{.push used.}
 const
     IMAGE_REL_AMD64_ABSOLUTE  =  0x0000
     IMAGE_REL_AMD64_ADDR64    =  0x0001
@@ -149,3 +150,4 @@ const
     IMAGE_SYM_CLASS_SECTION          =   0x0068
     IMAGE_SYM_CLASS_WEAK_EXTERNAL    =   0x0069
     IMAGE_SYM_CLASS_CLR_TOKEN        =   0x006B
+{.pop.}

@@ -3,9 +3,9 @@
 ## Windows: BCrypt API (native, no DLL dependencies, works with Donut shellcode)
 ## Linux: Dynamic linking to system OpenSSL (requires libssl.so)
 
-import std/[base64, strutils]
-
 when defined(windows):
+  import std/[base64]
+
   # Windows BCrypt/CNG API
   type
     BCRYPT_ALG_HANDLE = pointer
@@ -20,12 +20,14 @@ when defined(windows):
       pbLabel: pointer
       cbLabel: ULONG
     
+  {.push used.}
   const
     STATUS_SUCCESS = 0
     BCRYPT_RSA_ALGORITHM = "RSA"
     BCRYPT_RSAFULLPRIVATE_BLOB = "RSAFULLPRIVATEBLOB"
     BCRYPT_RSAPUBLIC_BLOB = "RSAPUBLICBLOB"
     BCRYPT_PAD_OAEP = 0x00000004'u32
+  {.pop.}
     
   # BCrypt API declarations
   proc BCryptOpenAlgorithmProvider(
@@ -316,6 +318,7 @@ elif defined(ssl):
     EVP_PKEY = SslPtr
     EVP_PKEY_CTX = SslPtr
   
+  {.push used.}
   const
     RSA_F4 = 65537'u64
     RSA_PKCS1_OAEP_PADDING = 4
@@ -347,6 +350,7 @@ elif defined(ssl):
   proc BIO_ctrl(bp: ptr BIO, cmd: cint, larg: clong, parg: pointer): clong {.cdecl, dynlib: DLLUtilName, importc.}
   proc BIO_read(b: ptr BIO, data: pointer, dlen: cint): cint {.cdecl, dynlib: DLLUtilName, importc.}
   proc PEM_write_bio_RSAPublicKey(bp: ptr BIO, x: ptr RSA): cint {.cdecl, dynlib: DLLSSLName, importc.}
+  {.pop.}
   
   template BIO_get_mem_data(b: ptr BIO, pp: untyped): clong =
     BIO_ctrl(b, 3, 0, pp)

@@ -195,9 +195,9 @@ proc pty*(taskId: string, params: JsonNode): JsonNode =
     
     # Determine program arguments based on type
     var args: seq[string] = @[]
-    let progLower = program.toLowerAscii()
     
     when defined(windows):
+      let progLower = program.toLowerAscii()
       if obf("cmd") in progLower:
         args = @[obf("/Q"), obf("/D")]
       elif obf("powershell") in progLower or obf("pwsh") in progLower:

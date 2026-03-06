@@ -1,7 +1,7 @@
 import ../utils/m_responses
 import ../utils/debug
 import ../utils/strenc
-import std/[json, strutils, sequtils, net, strformat, os, tables]
+import std/[json, strutils, net, strformat, os]
 
 when defined(windows):
   import winim/lean

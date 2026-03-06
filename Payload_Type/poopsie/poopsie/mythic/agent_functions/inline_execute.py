@@ -101,6 +101,9 @@ class InlineExecuteArguments(TaskArguments):
                     ParameterGroupInfo(
                         required=True, group_name="New BOF", ui_position=2
                     ),
+                    ParameterGroupInfo(
+                        required=True, group_name="Cached", ui_position=2
+                    ),
                 ],
             ),
             CommandParameter(
@@ -124,6 +127,21 @@ class InlineExecuteArguments(TaskArguments):
                     ParameterGroupInfo(
                         required=False, group_name="New BOF", ui_position=3
                     ),
+                    ParameterGroupInfo(
+                        required=False, group_name="Cached", ui_position=3
+                    ),
+                ],
+            ),
+            CommandParameter(
+                name="cached",
+                cli_name="Cached",
+                display_name="Cached File Name",
+                type=ParameterType.String,
+                description="Name of a cached file (from register_file) to use instead of uploading.",
+                parameter_group_info=[
+                    ParameterGroupInfo(
+                        required=True, group_name="Cached", ui_position=1
+                    )
                 ],
             ),
         ]
@@ -297,6 +315,11 @@ class InlineExecuteCommand(CommandBase):
             Success=True,
         )
         global assembly_args_final
+        if taskData.args.get_parameter_group_name() == "Cached":
+            response.DisplayParams = "-Cached {}".format(taskData.args.get_arg("cached"))
+            taskData.args.remove_arg("bof_arguments")
+            taskData.args.add_arg("bof_arguments", assembly_args_final)
+            return response
         originalGroupNameIsDefault = taskData.args.get_parameter_group_name() == "Default"
         if taskData.args.get_parameter_group_name() == "New BOF":
             fileSearchResp = await SendMythicRPCFileSearch(MythicRPCFileSearchMessage(

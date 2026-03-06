@@ -1,7 +1,7 @@
 import ../utils/m_responses
 import ../utils/debug
 import ../utils/strenc
-import std/[json, os, strformat]
+import std/[json, os]
 
 proc getenv*(taskId: string, params: JsonNode): JsonNode =
   ## Get all environment variables

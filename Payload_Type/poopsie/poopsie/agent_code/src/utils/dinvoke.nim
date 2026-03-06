@@ -48,7 +48,6 @@ proc GetSyscallStub*(functionName: LPCSTR, syscallStub: LPVOID): BOOL =
     var addressOfFunctions = cast[ptr UncheckedArray[DWORD]](RVAtoRawOffset(cast[DWORD_PTR](fileData) + cast[DWORD_PTR](exportDirectory.AddressOfFunctions), rdataSection))
     var stubFound: BOOL = 0
 
-    let j: int = 0
     for j in 0 ..< exportDirectory.NumberOfNames:
         var functionNameVA: DWORD_PTR = cast[DWORD_PTR](RVAtoRawOffset(cast[DWORD_PTR](fileData) + addressOfNames[j], rdataSection))
         var functionVA: DWORD_PTR = cast[DWORD_PTR](RVAtoRawOffset(cast[DWORD_PTR](fileData) + addressOfFunctions[j + 1], textSection))

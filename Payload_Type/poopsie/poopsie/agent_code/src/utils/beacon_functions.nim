@@ -149,12 +149,12 @@ proc BeaconFormatPrintf(format:ptr Formatp,fmt:ptr char):void{.stdcall, varargs.
     var length:int = 0
     var args: va_list
     va_start(args, fmt)
-    length = vsnprintf(NULL, 0, fmt, args)
+    length = vsnprintf(NULL, 0, cast[cstring](fmt), args)
     va_end(args)
     if(format.length + length > format.size):
         return
     va_start(args, fmt)
-    discard vsnprintf(format.buffer,length,fmt,args)
+    discard vsnprintf(cast[cstring](format.buffer),length,cast[cstring](fmt),args)
     va_end(args)
     format.length+=length
     format.buffer+=length
@@ -188,11 +188,13 @@ proc BeaconFormatInt(format:ptr Formatp,value:int):void{.stdcall.} =
     format.length += 4
     format.buffer += 4
 
+{.push used.}
 const
     CALLBACK_OUTPUT      = 0x0
     CALLBACK_OUTPUT_OEM  = 0x1e
     CALLBACK_ERROR       = 0x0d
     CALLBACK_OUTPUT_UTF8 = 0x20
+{.pop.}
 
 
 proc BeaconPrintf(typeArg:int,fmt:ptr char):void{.stdcall, varargs.} =
@@ -200,11 +202,11 @@ proc BeaconPrintf(typeArg:int,fmt:ptr char):void{.stdcall, varargs.} =
     var tempPtr:ptr char = nil
     var args: va_list
     va_start(args, fmt)
-    vprintf(fmt, args)
+    vprintf(cast[cstring](fmt), args)
     va_end(args)
 
     va_start(args, fmt)
-    length = vsnprintf(NULL,0,fmt,args)
+    length = vsnprintf(NULL,0,cast[cstring](fmt),args)
     va_end(args)
     tempPtr = cast[ptr char](realloc(beaconCompatibilityOutput,beaconCompatibilitySize+length+1))
     if(tempPtr == nil):
@@ -213,7 +215,7 @@ proc BeaconPrintf(typeArg:int,fmt:ptr char):void{.stdcall, varargs.} =
     for i in countup(0,length):
         (beaconCompatibilityOutput + beaconCompatibilityOffset + i)[] = cast[char](0x00)
     va_start(args, fmt)
-    length = vsnprintf(beaconCompatibilityOutput+beaconCompatibilityOffset,length,fmt,args)
+    length = vsnprintf(cast[cstring](beaconCompatibilityOutput+beaconCompatibilityOffset),length,cast[cstring](fmt),args)
     beaconCompatibilitySize += length
     beaconCompatibilityOffset += length
     va_end(args)

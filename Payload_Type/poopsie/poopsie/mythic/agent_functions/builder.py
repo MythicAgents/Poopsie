@@ -28,7 +28,7 @@ class Poopsie(PayloadType):
     wrapper = False
     wrapped_payloads = []
     note = "Poopsie is a cross-platform C2 agent written in Nim."
-    supports_dynamic_loading = False
+    supports_dynamic_loading = True
     supports_multiple_c2_instances_in_build = False
     supports_multiple_c2_in_build = False
     
@@ -637,6 +637,16 @@ class Poopsie(PayloadType):
                 nim_args.extend([
                     "-d:service",
                 ])
+            
+            # Add command compilation flags from Mythic's built-in command selection
+            selected_commands = self.commands.get_commands()
+            for cmd in selected_commands:
+                nim_args.append(f"-d:cmd_{cmd}")
+            
+            build_messages.append(f"Commands: {len(selected_commands)} compiled")
+            if selected_commands:
+                build_messages.append(f"Selected commands: {', '.join(sorted(selected_commands))}")
+            
             if selected_os == "Windows":
                 if architecture == "x64":
                     nim_args.extend([

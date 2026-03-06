@@ -1,3 +1,5 @@
+[![Build](https://github.com/MythicAgents/Poopsie/actions/workflows/docker.yml/badge.svg)](https://github.com/MythicAgents/Poopsie/actions/workflows/docker.yml)
+
 <p align="center">
   <img alt="Poopsie Logo" src="agent_icons/poopsie.svg" height="25%" width="25%">
 </p>

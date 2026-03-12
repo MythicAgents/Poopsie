@@ -51,11 +51,20 @@ proc newHttpProfile*(): HttpProfile =
   
   # Configure proxy if provided
   if result.config.proxyHost.len > 0 and result.config.proxyPort.len > 0:
-    var proxyUrl = "http://" & result.config.proxyHost & ":" & result.config.proxyPort
+    # Use the scheme Mythic provides; default to http:// if none
+    var proxyHost = result.config.proxyHost
+    var scheme = "http://"
+    if proxyHost.startsWith("https://"):
+      scheme = "https://"
+      proxyHost = proxyHost[8..^1]
+    elif proxyHost.startsWith("http://"):
+      scheme = "http://"
+      proxyHost = proxyHost[7..^1]
+    var proxyUrl = scheme & proxyHost & ":" & result.config.proxyPort
     # Add auth if provided
     if result.config.proxyUser.len > 0 and result.config.proxyPass.len > 0:
-      proxyUrl = "http://" & result.config.proxyUser & ":" & result.config.proxyPass & "@" & 
-                 result.config.proxyHost & ":" & result.config.proxyPort
+      proxyUrl = scheme & result.config.proxyUser & ":" & result.config.proxyPass & "@" & 
+                 proxyHost & ":" & result.config.proxyPort
     debug "[DEBUG] HTTP Profile: Configuring proxy: ", proxyUrl
     try:
       result.client = newClientWrapperWithProxy(proxyUrl)
@@ -209,10 +218,19 @@ proc reconnect*(profile: var HttpProfile) =
   debug "[DEBUG] HTTP Profile: Recreating client connection"
   # Recreate client with same settings
   if profile.config.proxyHost.len > 0 and profile.config.proxyPort.len > 0:
-    var proxyUrl = "http://" & profile.config.proxyHost & ":" & profile.config.proxyPort
+    # Use the scheme Mythic provides; default to http:// if none
+    var proxyHost = profile.config.proxyHost
+    var scheme = "http://"
+    if proxyHost.startsWith("https://"):
+      scheme = "https://"
+      proxyHost = proxyHost[8..^1]
+    elif proxyHost.startsWith("http://"):
+      scheme = "http://"
+      proxyHost = proxyHost[7..^1]
+    var proxyUrl = scheme & proxyHost & ":" & profile.config.proxyPort
     if profile.config.proxyUser.len > 0 and profile.config.proxyPass.len > 0:
-      proxyUrl = "http://" & profile.config.proxyUser & ":" & profile.config.proxyPass & "@" & 
-                 profile.config.proxyHost & ":" & profile.config.proxyPort
+      proxyUrl = scheme & profile.config.proxyUser & ":" & profile.config.proxyPass & "@" & 
+                 proxyHost & ":" & profile.config.proxyPort
     try:
       profile.client = newClientWrapperWithProxy(proxyUrl)
     except:

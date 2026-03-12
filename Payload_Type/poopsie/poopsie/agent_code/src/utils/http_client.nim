@@ -221,6 +221,7 @@ else:
   # Linux: Use standard httpclient with SSL
   import std/httpclient
   import std/net
+  import std/os
   
   type
     HttpClientWrapper* = HttpClient
@@ -236,11 +237,28 @@ else:
       h.del(key)
     h.add(key, val)
   
+  proc getSystemProxy(): string =
+    ## Check runtime environment for system proxy settings
+    for envVar in ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"]:
+      let val = getEnv(envVar)
+      if val.len > 0:
+        return val
+    return ""
+
   proc newClientWrapper*(): HttpClientWrapper =
-    when defined(ssl):
-      result = httpclient.newHttpClient(sslContext = newContext(verifyMode = CVerifyNone))
+    # Check for system proxy at runtime
+    let sysProxy = getSystemProxy()
+    if sysProxy.len > 0:
+      let proxy = httpclient.newProxy(sysProxy)
+      when defined(ssl):
+        result = httpclient.newHttpClient(proxy = proxy, sslContext = newContext(verifyMode = CVerifyNone))
+      else:
+        result = httpclient.newHttpClient(proxy = proxy)
     else:
-      result = httpclient.newHttpClient()
+      when defined(ssl):
+        result = httpclient.newHttpClient(sslContext = newContext(verifyMode = CVerifyNone))
+      else:
+        result = httpclient.newHttpClient()
   
   proc newClientWrapperWithProxy*(proxyUrl: string): HttpClientWrapper =
     let proxy = httpclient.newProxy(proxyUrl)

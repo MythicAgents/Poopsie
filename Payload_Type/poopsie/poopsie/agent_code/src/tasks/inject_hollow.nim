@@ -329,6 +329,9 @@ proc injectHollow*(taskId: string, params: JsonNode): JsonNode =
         let cachedData = getCachedFile(cachedName)
         if cachedData.len == 0:
           return mythicError(taskId, obf("File not found in cache. Use register_file first: ") & cachedName)
+        # Guard: detect raw PE files that aren't shellcode
+        if cachedData.len >= 2 and cachedData[0] == byte('M') and cachedData[1] == byte('Z'):
+          return mythicError(taskId, obf("Cached file appears to be a raw PE (MZ header). Inject_hollow requires raw shellcode, not a PE executable."))
         # Build params with dummy uuid for downstream parsing
         var cachedParams = copy(params)
         if not cachedParams.hasKey(obf("uuid")):

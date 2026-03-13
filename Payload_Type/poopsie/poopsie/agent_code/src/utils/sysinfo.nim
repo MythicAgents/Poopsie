@@ -70,6 +70,9 @@ proc getSystemInfo*(): SystemInfo =
   try:
     when defined(windows):
       result.user = getCurrentUsername()
+      # Strip domain prefix (DOMAIN\user -> user) since domain is sent separately
+      if result.user.contains(obf("\\")):
+        result.user = result.user.split(obf("\\"))[^1]
       if result.user.len == 0:
         result.user = getEnv(obf("USERNAME"), "unknown")
     else:

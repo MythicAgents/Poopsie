@@ -60,8 +60,6 @@ when defined(windows):
     import tasks/getsystem
   when defined(cmd_register_file):
     import tasks/register_file
-  when defined(cmd_webcam_snap) or defined(cmd_webcam_stream):
-    import tasks/webcam
 
 when defined(windows):
   when defined(sleepObfuscationEkko):
@@ -81,7 +79,7 @@ type
     params: JsonNode  # Store original params for execute-assembly
   
   MonitoringTaskType* = enum
-    mtClipboardMonitor, mtPortscan, mtWebcamStream, mtDonut
+    mtClipboardMonitor, mtPortscan, mtDonut
   
   ProfileKind = enum
     pkHttp, pkWebSocket, pkHttpx, pkDns, pkTcp, pkSmb
@@ -788,9 +786,6 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
     of obf("portscan"):
       when defined(cmd_portscan):
         agent.activeMonitoringTasks[taskId] = mtPortscan
-    of obf("webcam_stream"):
-      when defined(cmd_webcam_stream) and defined(windows):
-        agent.activeMonitoringTasks[taskId] = mtWebcamStream
     else:
       discard
     
@@ -813,9 +808,6 @@ proc checkBackgroundTasks*(agent: var Agent) =
     of mtPortscan:
       when defined(cmd_portscan):
         result = checkPortscan(taskId)
-    of mtWebcamStream:
-      when defined(cmd_webcam_stream) and defined(windows):
-        result = checkWebcamStream(taskId)
     of mtDonut:
       when defined(cmd_donut) and defined(windows):
         result = checkDonutExecution(taskId)

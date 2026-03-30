@@ -234,8 +234,57 @@ class Poopsie(PayloadType):
             ],
             supported_os=["Windows"]
         ),
+        BuildParameter(
+            name="guardrail_hostname",
+            parameter_type=BuildParameterType.String,
+            description="Only execute if the hostname matches (case-insensitive). Empty = disabled.",
+            default_value="",
+            required=False,
+            group_name="Execution Guardrails",
+        ),
+        BuildParameter(
+            name="guardrail_domain",
+            parameter_type=BuildParameterType.String,
+            description="Only execute if the machine is joined to this domain (case-insensitive). Empty = disabled.",
+            default_value="",
+            required=False,
+            group_name="Execution Guardrails",
+            supported_os=["Windows"],
+        ),
+        BuildParameter(
+            name="guardrail_username",
+            parameter_type=BuildParameterType.String,
+            description="Only execute if running as this user (case-insensitive). Empty = disabled.",
+            default_value="",
+            required=False,
+            group_name="Execution Guardrails",
+        ),
+        BuildParameter(
+            name="guardrail_ip",
+            parameter_type=BuildParameterType.String,
+            description="Only execute if the host has this IP address. Supports exact match or CIDR notation (e.g. 10.0.0.0/24). Empty = disabled.",
+            default_value="",
+            required=False,
+            group_name="Execution Guardrails",
+        ),
+        BuildParameter(
+            name="guardrail_process",
+            parameter_type=BuildParameterType.String,
+            description="Only execute if this process is currently running (e.g. outlook.exe). Empty = disabled.",
+            default_value="",
+            required=False,
+            group_name="Execution Guardrails",
+        ),
     ]
     
+    guardrail_descriptions = {
+        "hostname": "Only execute if the hostname matches (case-insensitive). Empty = disabled.",
+        "domain": "Only execute if the machine is joined to this domain (case-insensitive). Empty = disabled.",
+        "username": "Only execute if running as this user (case-insensitive). Empty = disabled.",
+        "ip": "Only execute if the host has this IP address. Supports exact match or CIDR notation (e.g. 10.0.0.0/24). Empty = disabled.",
+        "process": "Only execute if this process is currently running (e.g. outlook.exe). Empty = disabled.",
+    }
+
     c2_profiles = ["http", "websocket", "httpx", "dns", "tcp", "smb"]
 
     c2_parameter_deviations = {
@@ -309,6 +358,19 @@ class Poopsie(PayloadType):
                 c2_params["sleep_obfuscation"] = sleep_obfuscation
             
             c2_params["self_delete"] = str(self.get_parameter("self_delete"))
+            
+            # Add execution guardrails to build environment
+            guardrail_hostname = self.get_parameter("guardrail_hostname") or ""
+            guardrail_domain = self.get_parameter("guardrail_domain") or ""
+            guardrail_username = self.get_parameter("guardrail_username") or ""
+            guardrail_ip = self.get_parameter("guardrail_ip") or ""
+            guardrail_process = self.get_parameter("guardrail_process") or ""
+            
+            c2_params["GUARDRAIL_HOSTNAME"] = guardrail_hostname.strip()
+            c2_params["GUARDRAIL_DOMAIN"] = guardrail_domain.strip()
+            c2_params["GUARDRAIL_USERNAME"] = guardrail_username.strip()
+            c2_params["GUARDRAIL_IP"] = guardrail_ip.strip()
+            c2_params["GUARDRAIL_PROCESS"] = guardrail_process.strip()
             
             if output_type == "Service":
                 service_name = self.get_parameter("service_name")

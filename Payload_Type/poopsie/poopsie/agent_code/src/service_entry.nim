@@ -2,6 +2,7 @@ import winim/lean
 import agent
 import std/os
 import utils/strenc
+import utils/guardrails
 
 when defined(windows):
   var
@@ -18,7 +19,8 @@ when defined(windows):
   # Agent thread wrapper
   proc agentThreadProc(lpParameter: LPVOID): DWORD {.stdcall.} =
     try:
-      # Call the shared agent main loop
+      if not checkGuardrails():
+        return 0
       runAgent()
     except:
       discard

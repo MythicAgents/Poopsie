@@ -4,7 +4,11 @@ import ../utils/debug
 import ../global_data
 
 when defined(windows):
-  import winim/lean
+  when defined(evasion_dfr):
+    import winim/lean except CreateProcessA, CreateProcessWithTokenW
+    import ../utils/winapi
+  else:
+    import winim/lean
   import token_manager
   import ../utils/patches
   

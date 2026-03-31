@@ -5,7 +5,11 @@ import std/[json, strformat, strutils]
 import token_manager
 
 when defined(windows):
-  import winim/lean
+  when defined(evasion_dfr):
+    import winim/lean except OpenProcessToken
+    import ../utils/winapi
+  else:
+    import winim/lean
   
   const
     TOKEN_QUERY = 0x0008

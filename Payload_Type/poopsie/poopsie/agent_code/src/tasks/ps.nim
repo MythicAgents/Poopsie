@@ -13,7 +13,11 @@ type
     command_line: string
 
 when defined(windows):
-  import winim
+  when defined(evasion_dfr):
+    import winim except OpenProcess, OpenProcessToken
+    import ../utils/winapi
+  else:
+    import winim
   import std/widestrs
   
   proc getProcessUser(hProcess: HANDLE): string =

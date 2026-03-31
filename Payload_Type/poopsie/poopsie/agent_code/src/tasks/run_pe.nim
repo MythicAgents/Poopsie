@@ -1,4 +1,8 @@
-import winim/lean
+when defined(evasion_dfr):
+  import winim/lean except VirtualAlloc, VirtualProtect, VirtualFree
+  import ../utils/winapi
+else:
+  import winim/lean
 import base64
 import strutils
 import json

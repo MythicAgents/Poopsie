@@ -5,7 +5,11 @@ when defined(linux):
   import posix
 
 when defined(windows):
-  import winim/lean
+  when defined(evasion_dfr):
+    import winim/lean except OpenProcessToken
+    import winapi
+  else:
+    import winim/lean
   import ../tasks/token_manager
 
   proc getIntegrityLevel*(): int =

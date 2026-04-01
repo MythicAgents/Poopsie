@@ -252,6 +252,20 @@ class Poopsie(PayloadType):
             group_name="Evasion Options",
             supported_os=["Windows"],
         ),
+        BuildParameter(
+            name="sandbox_evasion",
+            parameter_type=BuildParameterType.String,
+            description=(
+                "Sandbox evasion delay in seconds (0 = disabled). "
+                "Burns time using CPU work and file enumeration instead of sleep calls. "
+                "Sandboxes typically have short execution windows (5-30s). "
+                "Recommended: 10-30 seconds."
+            ),
+            default_value="0",
+            required=False,
+            group_name="Evasion Options",
+            supported_os=["Windows"],
+        ),
     ]
     
     c2_profiles = ["http", "websocket", "httpx", "dns", "tcp", "smb"]
@@ -692,6 +706,16 @@ class Poopsie(PayloadType):
                     # LTO is incompatible with inline asm used in stack spoofing
                     nim_args = [a for a in nim_args if a not in ("--passC:-flto", "--passL:-flto")]
                     build_messages.append("  LTO disabled (incompatible with stack spoof inline asm)")
+
+            sandbox_delay = self.get_parameter("sandbox_evasion") or "0"
+            try:
+                sandbox_seconds = int(sandbox_delay)
+            except ValueError:
+                sandbox_seconds = 0
+            if selected_os == "Windows" and sandbox_seconds > 0:
+                nim_args.append("-d:sandbox_evasion")
+                nim_args.append(f"-d:sandbox_delay_seconds={sandbox_seconds}")
+                build_messages.append(f"Sandbox evasion: {sandbox_seconds}s delay")
             
             if selected_os == "Windows":
                 if architecture == "x64":

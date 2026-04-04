@@ -3,6 +3,7 @@
 
 import std/[times, random]
 import config, agent
+import utils/guardrails
 
 when defined(windows):
   import winim/lean
@@ -23,7 +24,8 @@ when defined(windows):
   proc agentMain(param: pointer): DWORD {.stdcall.} =
     ## Background thread that runs the agent
     try:
-      # Call the shared agent main loop
+      if not checkGuardrails():
+        return 0
       runAgent()
       return 0
     except:
@@ -34,6 +36,8 @@ when defined(windows):
     ## This can be called via rundll32 or from injected code
     ## Runs agent directly (blocking) - rundll32 will wait for completion
     try:
+      if not checkGuardrails():
+        return TRUE
       runAgent()
       return TRUE
     except:

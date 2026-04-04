@@ -58,7 +58,7 @@ when defined(cmd_config):
 when defined(cmd_pkill):
   import ../tasks/pkill
 
-when not defined(windows):
+when defined(cmd_link) or defined(cmd_unlink):
   import ../utils/m_responses
 
 when defined(windows):

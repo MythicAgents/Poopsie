@@ -5,7 +5,11 @@ import ../utils/strenc
 import token_manager
 
 when defined(windows):
-  import winim/lean
+  when defined(evasion_dfr):
+    import winim/lean except RevertToSelf
+    import ../utils/winapi
+  else:
+    import winim/lean
   
   proc rev2self*(taskId: string, params: JsonNode): JsonNode =
     ## Revert to the original process token

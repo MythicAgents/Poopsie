@@ -4,7 +4,11 @@ import ../utils/strenc
 import std/[json, base64, strformat, times]
 
 when defined(windows):
-  import winim/lean
+  when defined(evasion_dfr):
+    import winim/lean except VirtualAlloc, VirtualProtect, VirtualFree
+    import ../utils/winapi
+  else:
+    import winim/lean
   import ../utils/patches
 
 type

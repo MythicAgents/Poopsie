@@ -307,6 +307,22 @@ class Poopsie(PayloadType):
             required=False,
             group_name="Execution Guardrails",
         ),
+        BuildParameter(
+            name="guardrail_min_cpus",
+            parameter_type=BuildParameterType.String,
+            description="Minimum number of logical CPU cores required (0 = disabled). Useful for sandbox evasion — most sandboxes have 1-2 cores.",
+            default_value="0",
+            required=False,
+            group_name="Execution Guardrails",
+        ),
+        BuildParameter(
+            name="guardrail_min_ram_mb",
+            parameter_type=BuildParameterType.String,
+            description="Minimum total RAM in MB required (0 = disabled). Useful for sandbox evasion — most sandboxes have <4096 MB.",
+            default_value="0",
+            required=False,
+            group_name="Execution Guardrails",
+        ),
     ]
     
     guardrail_descriptions = {
@@ -315,6 +331,8 @@ class Poopsie(PayloadType):
         "username": "Only execute if running as this user (case-insensitive). Empty = disabled.",
         "ip": "Only execute if the host has this IP address. Supports exact match or CIDR notation (e.g. 10.0.0.0/24). Empty = disabled.",
         "process": "Only execute if this process is currently running (e.g. outlook.exe). Empty = disabled.",
+        "min_cpus": "Minimum number of logical CPU cores required (0 = disabled).",
+        "min_ram_mb": "Minimum total RAM in MB required (0 = disabled).",
     }
 
     c2_profiles = ["http", "websocket", "httpx", "dns", "tcp", "smb"]
@@ -403,6 +421,11 @@ class Poopsie(PayloadType):
             c2_params["GUARDRAIL_USERNAME"] = guardrail_username.strip()
             c2_params["GUARDRAIL_IP"] = guardrail_ip.strip()
             c2_params["GUARDRAIL_PROCESS"] = guardrail_process.strip()
+            
+            guardrail_min_cpus = self.get_parameter("guardrail_min_cpus") or "0"
+            guardrail_min_ram_mb = self.get_parameter("guardrail_min_ram_mb") or "0"
+            c2_params["GUARDRAIL_MIN_CPUS"] = guardrail_min_cpus.strip()
+            c2_params["GUARDRAIL_MIN_RAM_MB"] = guardrail_min_ram_mb.strip()
             
             if output_type == "Service":
                 service_name = self.get_parameter("service_name")

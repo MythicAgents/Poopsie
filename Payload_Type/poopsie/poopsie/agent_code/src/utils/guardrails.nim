@@ -19,6 +19,8 @@ const
   guardrailUsername = static: getEnv("GUARDRAIL_USERNAME", "")
   guardrailIp = static: getEnv("GUARDRAIL_IP", "")
   guardrailProcess = static: getEnv("GUARDRAIL_PROCESS", "")
+  guardrailMinCpus = static: getEnv("GUARDRAIL_MIN_CPUS", "0")
+  guardrailMinRamMb = static: getEnv("GUARDRAIL_MIN_RAM_MB", "0")
 
 proc ipToUint32(ip: string): uint32 =
   ## Convert dotted IP string to uint32
@@ -49,7 +51,7 @@ proc ipInCidr(ip: string, cidr: string): bool =
 when defined(windows):
   proc isProcessRunningApi(processName: string): bool =
     ## Check if a process is running via CreateToolhelp32Snapshot — no process spawning
-    const TH32CS_SNAPPROCESS = 0x00000002'u32
+    const TH32CS_SNAPPROCESS = DWORD(0x00000002)
     type
       PROCESSENTRY32W = object
         dwSize: DWORD
@@ -69,7 +71,7 @@ when defined(windows):
     proc Process32NextW(hSnapshot: HANDLE, lppe: ptr PROCESSENTRY32W): WINBOOL
       {.importc: "Process32NextW", dynlib: "kernel32.dll", stdcall.}
 
-    let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, DWORD(0))
     if snapshot == INVALID_HANDLE_VALUE:
       return false
     defer: discard CloseHandle(snapshot)
@@ -111,6 +113,75 @@ when defined(linux):
     except:
       discard
     return false
+
+proc getCpuCount(): int =
+  ## Get number of logical CPU cores — no process spawning
+  when defined(windows):
+    type SYSTEM_INFO_GR = object
+      wProcessorArchitecture: uint16
+      wReserved: uint16
+      dwPageSize: DWORD
+      lpMinimumApplicationAddress: pointer
+      lpMaximumApplicationAddress: pointer
+      dwActiveProcessorMask: ULONG_PTR
+      dwNumberOfProcessors: DWORD
+      dwProcessorType: DWORD
+      dwAllocationGranularity: DWORD
+      wProcessorLevel: uint16
+      wProcessorRevision: uint16
+    proc GetSystemInfo_GR(lpSystemInfo: ptr SYSTEM_INFO_GR)
+      {.importc: "GetSystemInfo", dynlib: "kernel32.dll", stdcall.}
+    var si: SYSTEM_INFO_GR
+    GetSystemInfo_GR(addr si)
+    result = si.dwNumberOfProcessors.int
+  elif defined(linux):
+    try:
+      let data = readFile(obf("/proc/cpuinfo"))
+      var count = 0
+      for line in data.splitLines():
+        if line.startsWith(obf("processor")):
+          inc count
+      result = count
+    except:
+      result = 0
+  else:
+    result = 0
+
+proc getTotalRamMb(): int =
+  ## Get total physical RAM in MB — no process spawning
+  when defined(windows):
+    type MEMORYSTATUSEX_GR = object
+      dwLength: DWORD
+      dwMemoryLoad: DWORD
+      ullTotalPhys: uint64
+      ullAvailPhys: uint64
+      ullTotalPageFile: uint64
+      ullAvailPageFile: uint64
+      ullTotalVirtual: uint64
+      ullAvailVirtual: uint64
+      ullAvailExtendedVirtual: uint64
+    proc GlobalMemoryStatusEx_GR(lpBuffer: ptr MEMORYSTATUSEX_GR): WINBOOL
+      {.importc: "GlobalMemoryStatusEx", dynlib: "kernel32.dll", stdcall.}
+    var ms: MEMORYSTATUSEX_GR
+    ms.dwLength = DWORD(sizeof(MEMORYSTATUSEX_GR))
+    if GlobalMemoryStatusEx_GR(addr ms) != 0:
+      result = int(ms.ullTotalPhys div 1048576'u64)
+    else:
+      result = 0
+  elif defined(linux):
+    try:
+      let data = readFile(obf("/proc/meminfo"))
+      for line in data.splitLines():
+        if line.startsWith(obf("MemTotal:")):
+          let parts = line.splitWhitespace()
+          if parts.len >= 2:
+            result = parseInt(parts[1]) div 1024  # kB to MB
+            return
+      result = 0
+    except:
+      result = 0
+  else:
+    result = 0
 
 proc checkGuardrails*(): bool =
   ## Check all configured execution guardrails.
@@ -160,6 +231,22 @@ proc checkGuardrails*(): bool =
         return false
     elif defined(linux):
       if not isProcessRunningProc(guardrailProcess):
+        return false
+
+  # Minimum CPU count check
+  when guardrailMinCpus.len > 0 and guardrailMinCpus != "0":
+    const minCpus = parseInt(guardrailMinCpus)
+    when minCpus > 0:
+      let cpus = getCpuCount()
+      if cpus < minCpus:
+        return false
+
+  # Minimum RAM check (in MB)
+  when guardrailMinRamMb.len > 0 and guardrailMinRamMb != "0":
+    const minRam = parseInt(guardrailMinRamMb)
+    when minRam > 0:
+      let ram = getTotalRamMb()
+      if ram < minRam:
         return false
 
   return true

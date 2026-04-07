@@ -131,7 +131,7 @@ when defined(linux):
     var ifa = ifap
     while not ifa.isNil:
       if not ifa[].ifa_addr.isNil:
-        let family = ifa[].ifa_addr.sa_family
+        let family = cint(ifa[].ifa_addr.sa_family)
         if family == posix.AF_INET:
           let sa4 = cast[ptr Sockaddr_in](ifa[].ifa_addr)
           let addrBytes = cast[ptr array[4, uint8]](addr sa4.sin_addr)

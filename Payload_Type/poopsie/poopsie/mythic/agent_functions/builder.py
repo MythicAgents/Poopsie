@@ -763,6 +763,9 @@ class Poopsie(PayloadType):
             for cmd in selected_commands:
                 nim_args.append(f"-d:cmd_{cmd}")
             
+            # Add profile compilation flag
+            nim_args.append(f"-d:profile_{profile}")
+            
             build_messages.append(f"Commands: {len(selected_commands)} compiled")
             if selected_commands:
                 build_messages.append(f"Selected commands: {', '.join(sorted(selected_commands))}")

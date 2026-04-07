@@ -236,7 +236,7 @@ class Poopsie(PayloadType):
         ),
     ]
     
-    c2_profiles = ["http", "websocket", "httpx", "dns", "tcp", "smb"]
+    c2_profiles = ["http", "websocket", "httpx", "dns", "tcp", "smb", "mtls"]
 
     c2_parameter_deviations = {
         "http": {
@@ -358,6 +358,58 @@ class Poopsie(PayloadType):
                     build_env[key.upper()] = json.dumps(val)
                 else:
                     build_env[key.upper()] = str(val)
+
+            # ── mTLS certificate handling ──────────────────────────────────────
+            #
+            # The mtls C2 profile requires three PEM values embedded into the agent
+            # at compile time (as base64-encoded env vars):
+            #
+            #   CLIENT_CERT_PEM  – Client certificate presented during TLS handshake
+            #   CLIENT_KEY_PEM   – Client private key (proves cert ownership)
+            #   CA_CERT_PEM      – CA certificate used to verify the server
+            #
+            # User has two options in the Mythic UI:
+            #
+            #   1. AUTO-GENERATE (default) – Leave all three fields empty.
+            #      The builder fetches the CA from the mtls container's cert API
+            #      (GET http://127.0.0.1:8444/ca), generates an ECDSA P-384 key +
+            #      CSR locally, sends the CSR to POST http://127.0.0.1:8444/sign,
+            #      and receives a signed client cert. Retries up to 5× / 2s delay
+            #      in case the cert API is restarting after a config check.
+            #
+            #   2. USER-PROVIDED – Paste raw PEM text into all three fields.
+            #      The builder uses them as-is (no API calls). Useful when you
+            #      have an external CA or want to pre-generate/track certs.
+            #
+            # In both cases the builder base64-encodes each PEM and sets:
+            #   MTLS_CLIENT_CERT, MTLS_CLIENT_KEY, MTLS_CA_CERT
+            # which the Nim agent reads as compile-time constants.
+            # ──────────────────────────────────────────────────────────────────────
+            if profile.lower() == "mtls":
+                import base64 as b64
+                client_cert = build_env.get("CLIENT_CERT_PEM", "").strip()
+                client_key = build_env.get("CLIENT_KEY_PEM", "").strip()
+                ca_cert = build_env.get("CA_CERT_PEM", "").strip()
+
+                if client_cert and client_key and ca_cert:
+                    resp.build_message += "  mTLS: Using user-provided certificates\n"
+                else:
+                    resp.build_message += "  mTLS: Auto-generating client certificate from server CA...\n"
+                    try:
+                        ca_cert, client_cert, client_key = await self._mtls_auto_generate_certs()
+                        resp.build_message += "  mTLS: Auto-generated client cert + key signed by server CA\n"
+                    except Exception as e:
+                        resp.build_message += f"  mTLS: Failed to auto-generate certs: {e}\n"
+                        resp.status = BuildStatus.Error
+                        return resp
+
+                for pem_data, env_key in [
+                    (client_cert, "MTLS_CLIENT_CERT"),
+                    (client_key, "MTLS_CLIENT_KEY"),
+                    (ca_cert, "MTLS_CA_CERT"),
+                ]:
+                    build_env[env_key] = b64.b64encode(pem_data.encode()).decode()
+                    resp.build_message += f"  {env_key}: embedded ({len(pem_data)} bytes PEM)\n"
 
             await SendMythicRPCPayloadUpdatebuildStep(MythicRPCPayloadUpdateBuildStepMessage(
                 PayloadUUID=self.uuid,
@@ -547,6 +599,73 @@ class Poopsie(PayloadType):
 
         return resp
 
+    async def _mtls_auto_generate_certs(self) -> tuple:
+        """Auto-generate client cert signed by the mTLS server's CA.
+        
+        Calls the mtls container's internal cert API (port 8444):
+          GET  /ca   -> CA certificate PEM
+          POST /sign -> signs a CSR, returns client certificate PEM
+        
+        Retries up to 5 times with 2s delay (the cert API may be
+        restarting after config check triggers RestartInternalServer).
+        
+        Returns (ca_cert_pem, client_cert_pem, client_key_pem).
+        """
+        import subprocess
+        import tempfile
+        import urllib.request
+
+        mtls_cert_api = "http://127.0.0.1:8444"
+
+        # Retry loop — cert API may be restarting after config check
+        ca_cert = None
+        last_err = None
+        for attempt in range(5):
+            try:
+                with urllib.request.urlopen(f"{mtls_cert_api}/ca", timeout=10) as resp:
+                    ca_cert = resp.read().decode()
+                break
+            except Exception as e:
+                last_err = e
+                await asyncio.sleep(2)
+        if ca_cert is None:
+            raise RuntimeError(f"Cannot reach mtls cert API after 5 attempts: {last_err}")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            client_key_path = os.path.join(tmpdir, "client_key.pem")
+            client_csr_path = os.path.join(tmpdir, "client.csr")
+
+            # Generate client ECDSA P-384 key
+            subprocess.run(
+                ["openssl", "ecparam", "-name", "secp384r1", "-genkey", "-noout", "-out", client_key_path],
+                capture_output=True, check=True, timeout=10
+            )
+            # Generate CSR
+            subprocess.run(
+                ["openssl", "req", "-new", "-key", client_key_path,
+                 "-subj", "/O=Mythic mTLS Agent/CN=agent",
+                 "-out", client_csr_path],
+                capture_output=True, check=True, timeout=10
+            )
+
+            with open(client_csr_path, "rb") as f:
+                csr_data = f.read()
+
+            # Send CSR to mtls server for signing
+            req = urllib.request.Request(
+                f"{mtls_cert_api}/sign",
+                data=csr_data,
+                headers={"Content-Type": "application/x-pem-file"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                client_cert = resp.read().decode()
+
+            with open(client_key_path) as f:
+                client_key = f.read()
+
+        return ca_cert, client_cert, client_key
+
     async def run_nim_build(self, selected_os: str, output_type: str, build_env: dict) -> dict:
         """Compile Nim agent with environment variables"""
         try:
@@ -565,12 +684,13 @@ class Poopsie(PayloadType):
             needs_openssl_for_exchange = encrypted_exchange in ["T", "TRUE"]
             
             if selected_os == "Windows":
-                needs_openssl_for_transport = False
+                needs_openssl_for_transport = (profile == "mtls")
             else:
                 needs_openssl_for_transport = (
                     callback_host.startswith("https://") or 
                     callback_host.startswith("wss://") or
-                    (profile == "websocket" and callback_host.startswith("wss://"))
+                    (profile == "websocket" and callback_host.startswith("wss://")) or
+                    profile == "mtls"
                 )
             
             use_openssl = needs_openssl_for_exchange or needs_openssl_for_transport

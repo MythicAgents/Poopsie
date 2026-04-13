@@ -87,6 +87,6 @@ proc whoami*(taskId: string, params: string): JsonNode =
   else:
     let output = whoamiUnix()
   
-  debug "[DEBUG] whoami output: ", output
+  debugLog "whoami", "whoami output: ", output
   
   return mythicSuccess(taskId, output)

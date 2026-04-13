@@ -20,7 +20,7 @@ proc pkill*(taskId: string, params: JsonNode): JsonNode =
     except:
       return mythicError(taskId, obf("Invalid PID: ") & pidStr)
     
-    debug &"[DEBUG] pkill: Attempting to kill process with PID {pid}"
+    debugLog "pkill", &"pkill: Attempting to kill process with PID {pid}"
     
     when defined(windows):
       # Windows implementation using TerminateProcess

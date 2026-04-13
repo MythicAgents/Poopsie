@@ -435,7 +435,7 @@ proc powershell*(taskId: string, params: JsonNode): JsonNode =
 
       activePsSessions.add(session)
 
-      debug "[DEBUG] PowerShell session started in background for task " & taskId
+      debugLog "powershell", "PowerShell session started in background for task " & taskId
 
       # Return immediately - not completed, processing in background
       result = %*{

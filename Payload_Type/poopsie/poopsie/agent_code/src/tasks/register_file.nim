@@ -14,7 +14,7 @@ proc registerFile*(taskId: string, params: JsonNode): JsonNode =
   ## First response - request the file from Mythic for chunked download
   try:
     let args = to(params, RegisterFileArgs)
-    debug "[DEBUG] register_file: Requesting file '" & args.name & "'"
+    debugLog "register_file", "register_file: Requesting file '" & args.name & "'"
 
     # Request the file from Mythic
     return %*{
@@ -57,7 +57,7 @@ proc processRegisterFileChunk*(taskId: string, params: JsonNode, chunkData: stri
     let size = fileData.len
     cacheFile(args.name, fileData)
 
-    debug "[DEBUG] register_file: Cached '" & args.name & "' (" & $size & " bytes)"
+    debugLog "register_file", "register_file: Cached '" & args.name & "' (" & $size & " bytes)"
 
     return mythicSuccess(taskId, obf("File '") & args.name & obf("' cached successfully (") & $size & obf(" bytes)"))
 

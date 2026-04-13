@@ -49,7 +49,7 @@ proc regWriteValue*(taskId: string, params: JsonNode): JsonNode =
       let valueName = params[obf("value_name")].getStr()
       let valueValue = params[obf("value_value")].getStr()
       
-      debug &"[DEBUG] reg_write_value: hive={hive}, key={key}, name={valueName}, value={valueValue}"
+      debugLog "reg_write_value", &"reg_write_value: hive={hive}, key={key}, name={valueName}, value={valueValue}"
       
       let hiveHandle = getHiveHandle(hive)
       if hiveHandle == cast[HKEY](0):
@@ -68,7 +68,7 @@ proc regWriteValue*(taskId: string, params: JsonNode): JsonNode =
       try:
         let dwordVal = valueValue.parseUInt().uint32
         # Write as REG_DWORD
-        debug &"[DEBUG] Writing as DWORD: {dwordVal}"
+        debugLog "reg_write_value", &"Writing as DWORD: {dwordVal}"
         
         setStatus = RegSetValueExW(
           keyHandle,
@@ -80,7 +80,7 @@ proc regWriteValue*(taskId: string, params: JsonNode): JsonNode =
         )
       except:
         # Write as REG_SZ (string)
-        debug &"[DEBUG] Writing as REG_SZ: {valueValue}"
+        debugLog "reg_write_value", &"Writing as REG_SZ: {valueValue}"
         
         let valueDataW = newWideCString(valueValue)
         let dataSize = DWORD((valueValue.len + 1) * 2)  # +1 for null terminator, *2 for UTF-16

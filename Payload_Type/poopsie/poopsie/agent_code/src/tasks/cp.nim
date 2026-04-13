@@ -12,7 +12,7 @@ proc cpFile*(taskId: string, params: string): JsonNode =
   # Parse arguments
   let args = parseJson(params).to(CpArgs)
   
-  debug &"[DEBUG] Copying '{args.source}' to '{args.destination}'"
+  debugLog "cp", &"Copying '{args.source}' to '{args.destination}'"
   
   try:
     # Check if source exists
@@ -49,7 +49,7 @@ proc cpFile*(taskId: string, params: string): JsonNode =
     
     let normalizedDest = normalizedPath(destPath)
     
-    debug &"[DEBUG] Copied '{absSrcPath}' to '{normalizedDest}'"
+    debugLog "cp", &"Copied '{absSrcPath}' to '{normalizedDest}'"
     
     return mythicSuccess(taskId, obf("Copied '") & absSrcPath & "' to '" & normalizedDest & "'")
     

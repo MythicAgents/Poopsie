@@ -10,7 +10,7 @@ proc blockdlls*(taskId: string, params: JsonNode): JsonNode =
     try:
       let blockValue = params[obf("block")].getBool()
       
-      debug "[DEBUG] blockdlls: Setting to " & $blockValue
+      debugLog "blockdlls", "blockdlls: Setting to " & $blockValue
       
       setBlockDlls(blockValue)
       

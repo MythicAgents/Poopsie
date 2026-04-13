@@ -8,7 +8,7 @@ proc pwd*(taskId: string, params: JsonNode): JsonNode =
   try:
     let currentDir = getCurrentDir()
     
-    debug "[DEBUG] Current directory: ", currentDir
+    debugLog "pwd", "Current directory: ", currentDir
     
     return mythicSuccess(taskId, currentDir)
     

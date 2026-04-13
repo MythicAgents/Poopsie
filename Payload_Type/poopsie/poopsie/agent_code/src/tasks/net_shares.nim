@@ -66,7 +66,7 @@ proc netShares*(taskId: string, params: JsonNode): JsonNode =
       if computerName == "":
         computerName = getEnv(obf("COMPUTERNAME"), obf("Local"))
       
-      debug &"[DEBUG] net_shares: computer={computerName}"
+      debugLog "net_shares", &"net_shares: computer={computerName}"
       
       var bufPtr: pointer = nil
       var computerNameW: LPCWSTR = nil

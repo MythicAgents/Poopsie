@@ -48,35 +48,35 @@ proc selfDelete*(): void =
     RtlSecureZeroMemory(addr wcPath[0], sizeof(wcPath));
 
     if GetModuleFileNameW(0, addr wcPath[0], MAX_PATH) == 0:
-        debug "[DEBUG] Failed to get the current module handle"
+        debugLog "self_delete", "Failed to get the current module handle"
         quit(QuitFailure)
 
     hCurrent = dsOpenHandle(addr wcPath[0])
     if hCurrent == INVALID_HANDLE_VALUE:
-        debug "[DEBUG] Failed to acquire handle to current running process"
+        debugLog "self_delete", "Failed to acquire handle to current running process"
         quit(QuitFailure)
 
-    debug "[DEBUG] Attempting to rename file name"
+    debugLog "self_delete", "Attempting to rename file name"
     if not dsRenameHandle(hCurrent).bool:
-        debug "[DEBUG] Failed to rename to stream"
+        debugLog "self_delete", "Failed to rename to stream"
         quit(QuitFailure)
 
-    debug "[DEBUG] Successfully renamed file primary :$DATA ADS to specified stream, closing initial handle"
+    debugLog "self_delete", "Successfully renamed file primary :$DATA ADS to specified stream, closing initial handle"
     CloseHandle(hCurrent)
 
     hCurrent = dsOpenHandle(addr wcPath[0])
     if hCurrent == INVALID_HANDLE_VALUE:
-        debug "[DEBUG] Failed to reopen current module"
+        debugLog "self_delete", "Failed to reopen current module"
         quit(QuitFailure)
 
     if not dsDepositeHandle(hCurrent).bool:
-        debug "[DEBUG] Failed to set delete deposition (file already renamed to ADS, continuing...)"
+        debugLog "self_delete", "Failed to set delete deposition (file already renamed to ADS, continuing...)"
     else:
-        debug "[DEBUG] Successfully set delete deposition"
+        debugLog "self_delete", "Successfully set delete deposition"
 
-    debug "[DEBUG] Closing handle to trigger deletion"
+    debugLog "self_delete", "Closing handle to trigger deletion"
 
     CloseHandle(hCurrent)
 
     if not PathFileExistsW(addr wcPath[0]).bool:
-        debug "[DEBUG] File deleted successfully"
+        debugLog "self_delete", "File deleted successfully"

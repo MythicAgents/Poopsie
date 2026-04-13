@@ -101,7 +101,7 @@ proc cleanupPtySession*(session: PtySession) =
   deallocShared(session.threadData[].inputChan)
   deallocShared(session.threadData)
   
-  debug &"[DEBUG] PTY session {session.taskId} fully cleaned up"
+  debugLog "pty", &"PTY session {session.taskId} fully cleaned up"
 
 proc removeSessionFromActive(taskId: string) =
   ## Remove a session from the active sessions list
@@ -191,7 +191,7 @@ proc pty*(taskId: string, params: JsonNode): JsonNode =
     # Parse parameters
     let program = params[obf("program")].getStr()
     
-    debug &"[DEBUG] Starting PTY with program: {program}"
+    debugLog "pty", &"Starting PTY with program: {program}"
     
     # Determine program arguments based on type
     var args: seq[string] = @[]
@@ -249,7 +249,7 @@ proc pty*(taskId: string, params: JsonNode): JsonNode =
     
     activePtySessions.add(session)
     
-    debug &"[DEBUG] PTY session started for task {taskId} with background thread"
+    debugLog "pty", &"PTY session started for task {taskId} with background thread"
     
     # Return initial response indicating we're ready for interaction
     result = mythicSuccess(taskId, obf("PTY session started successfully") & obf(" with program: ") & program)
@@ -292,7 +292,7 @@ proc handlePtyInteractive*(taskId: string, interactive: seq[JsonNode]): JsonNode
       of Input:
         # Send input to thread via channel
         if data.len > 0:
-          debug &"[DEBUG] PTY input: {data}"
+          debugLog "pty", &"PTY input: {data}"
           
           session.threadData[].inputChan[].send(data)
           
@@ -309,7 +309,7 @@ proc handlePtyInteractive*(taskId: string, interactive: seq[JsonNode]): JsonNode
       
       of Exit:
         # Terminate the PTY session
-        debug &"[DEBUG] PTY exit requested"
+        debugLog "pty", &"PTY exit requested"
         
         session.threadData[].inputChan[].send(obf("exit\n"))
         sleep(100)
@@ -359,7 +359,7 @@ proc handlePtyInteractive*(taskId: string, interactive: seq[JsonNode]): JsonNode
         interactiveMessages.add(createInteractiveMessage(taskId, Exit, obf("Process terminated\n")))
         break
       
-      debug &"[DEBUG] PTY output: {output}"
+      debugLog "pty", &"PTY output: {output}"
       
       interactiveMessages.add(createInteractiveMessage(taskId, Output, output))
       

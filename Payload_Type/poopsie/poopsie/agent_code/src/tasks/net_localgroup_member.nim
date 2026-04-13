@@ -72,7 +72,7 @@ proc netLocalgroupMember*(taskId: string, params: JsonNode): JsonNode =
       if computerName == "":
         computerName = getEnv(obf("COMPUTERNAME"), obf("Local"))
       
-      debug &"[DEBUG] net_localgroup_member: computer={computerName}, group={groupName}"
+      debugLog "net_localgroup_member", &"net_localgroup_member: computer={computerName}, group={groupName}"
       
       var bufPtr: pointer = nil
       var computerNameW: LPCWSTR = nil

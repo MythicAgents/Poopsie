@@ -12,7 +12,7 @@ proc spawnto_x64*(taskId: string, params: JsonNode): JsonNode =
       let application = params[obf("application")].getStr()
       let arguments = if params.hasKey(obf("arguments")): params[obf("arguments")].getStr() else: ""
       
-      debug &"[DEBUG] spawnto_x64: Setting to {application} with args: {arguments}"
+      debugLog "spawnto_x64", &"spawnto_x64: Setting to {application} with args: {arguments}"
       
       # Set global spawnto values
       setSpawntoX64(application, arguments)

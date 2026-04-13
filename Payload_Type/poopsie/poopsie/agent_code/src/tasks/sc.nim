@@ -329,7 +329,7 @@ proc sc*(taskId: string, params: JsonNode): JsonNode =
       let service = params[obf("service")].getStr()
       let computer = params.getOrDefault(obf("computer")).getStr("")
       
-      debug &"[DEBUG] sc: action={action}, service={service}, computer={computer}"
+      debugLog "sc", &"sc: action={action}, service={service}, computer={computer}"
       
       var output: string
       case action

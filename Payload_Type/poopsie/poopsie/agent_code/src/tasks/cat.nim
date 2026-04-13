@@ -12,7 +12,7 @@ proc catFile*(taskId: string, params: string): JsonNode =
   # Parse arguments
   let args = parseJson(params).to(CatArgs)
   
-  debug "[DEBUG] Reading file: ", args.path
+  debugLog "cat", "Reading file: ", args.path
   
   try:
     # Handle UNC paths (\\server\share) and absolute paths
@@ -28,7 +28,7 @@ proc catFile*(taskId: string, params: string): JsonNode =
     # Read file contents
     let content = readFile(fullPath)
     
-    debug &"[DEBUG] Read {content.len} bytes from {fullPath}"
+    debugLog "cat", &"Read {content.len} bytes from {fullPath}"
     
     # Create response with artifact
     var response = mythicSuccess(taskId, content)

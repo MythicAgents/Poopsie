@@ -60,7 +60,7 @@ proc receiveChunkedMessage(socket: Socket): seq[byte] =
 
 proc readFromTcpAgent(conn: ptr ConnectConnectionObj) {.thread.} =
   ## Reader thread: reads from TCP agent socket and sends to main thread via outChannel
-  debug "[DEBUG] Connect reader thread started"
+  debugLog "connect", "Connect reader thread started"
   
   while conn.active:
     try:
@@ -69,19 +69,19 @@ proc readFromTcpAgent(conn: ptr ConnectConnectionObj) {.thread.} =
       
       if data.len == 0:
         # Connection closed or error
-        debug "[DEBUG] Connect reader: Connection closed, sending EOF and exiting"
+        debugLog "connect", "Connect reader: Connection closed, sending EOF and exiting"
         conn.active = false  # Mark as inactive to stop writer thread too
         conn.outChannel[].send(@[])  # EOF signal
         break
       
-      debug &"[DEBUG] Connect reader: Received {data.len} bytes from TCP agent"
+      debugLog "connect", &"Connect reader: Received {data.len} bytes from TCP agent"
       
       # Send to main thread
       conn.outChannel[].send(data)
       
     except:
       let e = getCurrentException()
-      debug &"[DEBUG] Connect reader error: {e.msg}, sending EOF"
+      debugLog "connect", &"Connect reader error: {e.msg}, sending EOF"
       conn.active = false  # Mark as inactive to stop writer thread too
       conn.outChannel[].send(@[])  # EOF signal
       break
@@ -92,11 +92,11 @@ proc readFromTcpAgent(conn: ptr ConnectConnectionObj) {.thread.} =
   except:
     discard
   
-  debug "[DEBUG] Connect reader thread exited"
+  debugLog "connect", "Connect reader thread exited"
 
 proc writeToTcpAgent(conn: ptr ConnectConnectionObj) {.thread.} =
   ## Writer thread: receives data from main thread via inChannel and writes to TCP agent socket
-  debug "[DEBUG] Connect writer thread started"
+  debugLog "connect", "Connect writer thread started"
   
   while conn.active:
     try:
@@ -110,21 +110,21 @@ proc writeToTcpAgent(conn: ptr ConnectConnectionObj) {.thread.} =
       
       if data.len == 0:
         # Exit signal
-        debug "[DEBUG] Connect writer: Received exit signal"
+        debugLog "connect", "Connect writer: Received exit signal"
         break
       
-      debug &"[DEBUG] Connect writer: Sending {data.len} bytes to TCP agent"
+      debugLog "connect", &"Connect writer: Sending {data.len} bytes to TCP agent"
       
       # Send to TCP agent
       sendChunkedMessage(conn.socket, data)
       
     except:
       let e = getCurrentException()
-      debug &"[DEBUG] Connect writer error: {e.msg}"
+      debugLog "connect", &"Connect writer error: {e.msg}"
       conn.active = false  # Signal that connection is dead
       break
   
-  debug "[DEBUG] Connect writer thread exited"
+  debugLog "connect", "Connect writer thread exited"
 
 proc createConnectMessage*(agentUuid: string, message: string): JsonNode =
   ## Create a delegate message for the connected agent
@@ -153,7 +153,7 @@ proc checkActiveConnectConnections*(): seq[JsonNode] =
     # Two-phase edge removal: if EOF was detected in a PREVIOUS cycle,
     # send the edge removal now (in its own post_response, after all data is sent)
     if conn.receivedEof and not conn.edgeRemovalSent:
-      debug &"[DEBUG] Connect: Sending deferred edge removal for {agentUuid}"
+      debugLog "connect", &"Connect: Sending deferred edge removal for {agentUuid}"
       result.add(%*{
         obf("edges"): [
           %*{
@@ -172,14 +172,14 @@ proc checkActiveConnectConnections*(): seq[JsonNode] =
     var (hasData, data) = conn.outChannel[].tryRecv()
     
     if hasData:
-      debug &"[DEBUG] Connect: Data from {agentUuid}, dataLen: {data.len}"
+      debugLog "connect", &"Connect: Data from {agentUuid}, dataLen: {data.len}"
     
     while hasData:
       if data.len == 0:
         # EOF signal from reader thread - mark for edge removal on NEXT cycle
         # This ensures all buffered delegate data is sent to Mythic first,
         # and the edge removal arrives in a separate post_response as the last message
-        debug &"[DEBUG] Connect: Connection to {agentUuid} EOF received from reader thread, deferring edge removal"
+        debugLog "connect", &"Connect: Connection to {agentUuid} EOF received from reader thread, deferring edge removal"
         
         conn.active = false
         if not conn.sharedPtr.isNil:
@@ -197,18 +197,18 @@ proc checkActiveConnectConnections*(): seq[JsonNode] =
         let decoded = decode(messageStr)
         if decoded.len >= 36:
           realUuid = decoded[0..<36]
-          debug &"[DEBUG] Connect: Extracted UUID from message: {realUuid}"
+          debugLog "connect", &"Connect: Extracted UUID from message: {realUuid}"
           
           # If this is the first message and UUID differs, we need to rekey the connection
           if realUuid != agentUuid:
-            debug &"[DEBUG] Connect: Real agent UUID is {realUuid}, different from user-provided {agentUuid}"
+            debugLog "connect", &"Connect: Real agent UUID is {realUuid}, different from user-provided {agentUuid}"
             toRekey.add((oldUuid: agentUuid, newUuid: realUuid, conn: conn))
           else:
-            debug &"[DEBUG] Connect: UUID matches user-provided {agentUuid}"
+            debugLog "connect", &"Connect: UUID matches user-provided {agentUuid}"
       except Exception as e:
-        debug &"[DEBUG] Connect: Could not extract UUID from message: {e.msg}, using original"
+        debugLog "connect", &"Connect: Could not extract UUID from message: {e.msg}, using original"
       
-      debug &"[DEBUG] Connect: Received {data.len} bytes from {realUuid}, forwarding to Mythic"
+      debugLog "connect", &"Connect: Received {data.len} bytes from {realUuid}, forwarding to Mythic"
       result.add(createConnectMessage(realUuid, messageStr))
       
       # Check for more data
@@ -219,7 +219,7 @@ proc checkActiveConnectConnections*(): seq[JsonNode] =
     if activeConnectConnections.hasKey(item.oldUuid):
       activeConnectConnections.del(item.oldUuid)
       activeConnectConnections[item.newUuid] = item.conn
-      debug &"[DEBUG] Connect: Rekeyed connection from {item.oldUuid} to {item.newUuid}"
+      debugLog "connect", &"Connect: Rekeyed connection from {item.oldUuid} to {item.newUuid}"
   
   # Delete inactive connections after iteration
   for agentUuid in toDelete:
@@ -252,19 +252,19 @@ proc checkActiveConnectConnections*(): seq[JsonNode] =
         discard
       
       activeConnectConnections.del(agentUuid)
-      debug &"[DEBUG] Connect: Cleaned up connection to {agentUuid}"
+      debugLog "connect", &"Connect: Cleaned up connection to {agentUuid}"
 
 proc rekeyConnectConnection*(oldUuid: string, newUuid: string): bool =
   ## Re-key a connection from old UUID to new UUID (happens when Mythic assigns a new UUID after checkin)
   ## Returns true if re-keying was successful, false if connection doesn't exist
   if not activeConnectConnections.hasKey(oldUuid):
-    debug &"[DEBUG] Connect: Cannot rekey - no connection for {oldUuid}"
+    debugLog "connect", &"Connect: Cannot rekey - no connection for {oldUuid}"
     return false
   
   let conn = activeConnectConnections[oldUuid]
   activeConnectConnections.del(oldUuid)
   activeConnectConnections[newUuid] = conn
-  debug &"[DEBUG] Connect: Rekeyed connection from {oldUuid} to {newUuid}"
+  debugLog "connect", &"Connect: Rekeyed connection from {oldUuid} to {newUuid}"
   return true
 
 proc forwardDelegateToConnect*(agentUuid: string, message: string): bool =
@@ -272,17 +272,17 @@ proc forwardDelegateToConnect*(agentUuid: string, message: string): bool =
   ## Returns true if message was queued, false if no active connection
   
   # Debug: show all active connections
-  debug "[DEBUG] Connect: Active connections: "
+  debugLog "connect", "Connect: Active connections: "
   for uuid, conn in activeConnectConnections:
     debug &"  - {uuid} (active: {conn.active})"
   
   if not activeConnectConnections.hasKey(agentUuid):
-    debug &"[DEBUG] Connect: No active connection for agent {agentUuid}"
+    debugLog "connect", &"Connect: No active connection for agent {agentUuid}"
     return false
   
   let conn = activeConnectConnections[agentUuid]
   if not conn.active:
-    debug &"[DEBUG] Connect: Connection for agent {agentUuid} is not active"
+    debugLog "connect", &"Connect: Connection for agent {agentUuid} is not active"
     return false
   
   try:
@@ -290,17 +290,17 @@ proc forwardDelegateToConnect*(agentUuid: string, message: string): bool =
     # So we keep it as-is and just convert string to bytes
     let messageBytes = cast[seq[byte]](message)
     conn.inChannel[].send(messageBytes)
-    debug &"[DEBUG] Connect: Queued {messageBytes.len} bytes (base64) for agent {agentUuid}"
+    debugLog "connect", &"Connect: Queued {messageBytes.len} bytes (base64) for agent {agentUuid}"
     return true
   except:
     let e = getCurrentException()
-    debug &"[DEBUG] Connect: Failed to queue message for {agentUuid}: {e.msg}"
+    debugLog "connect", &"Connect: Failed to queue message for {agentUuid}: {e.msg}"
     return false
 
 proc handleConnect*(taskId: string, params: JsonNode): JsonNode =
   ## Handle connecting to a P2P TCP agent
   try:
-    debug "[DEBUG] Connect: Starting connect task"
+    debugLog "connect", "Connect: Starting connect task"
     
     # Parse connection info
     let connInfo = params[obf("connection_info")]
@@ -319,7 +319,7 @@ proc handleConnect*(taskId: string, params: JsonNode): JsonNode =
       else:
         port = parseInt(portValue.getStr())
     
-    debug &"[DEBUG] Connect: Connecting to {host}:{port} (agent: {agentUuid})"
+    debugLog "connect", &"Connect: Connecting to {host}:{port} (agent: {agentUuid})"
     
     # Only support TCP for now
     if c2ProfileName != "tcp":
@@ -335,7 +335,7 @@ proc handleConnect*(taskId: string, params: JsonNode): JsonNode =
     try:
       socket.connect(host, Port(port))
       
-      debug "[DEBUG] Connect: Connected successfully"
+      debugLog "connect", "Connect: Connected successfully"
       
       # Keep socket in blocking mode for reader/writer threads
       # The threads use blocking recv/send operations
@@ -396,7 +396,7 @@ proc handleConnect*(taskId: string, params: JsonNode): JsonNode =
       
     except:
       let e = getCurrentException()
-      debug &"[DEBUG] Connect: Connection error: {e.msg}"
+      debugLog "connect", &"Connect: Connection error: {e.msg}"
       try:
         socket.close()
       except:
@@ -404,5 +404,5 @@ proc handleConnect*(taskId: string, params: JsonNode): JsonNode =
       return mythicError(taskId, &"Failed to connect to TCP agent: {e.msg}")
     
   except Exception as e:
-    debug &"[DEBUG] Connect: Task error: {e.msg}"
+    debugLog "connect", &"Connect: Task error: {e.msg}"
     return mythicError(taskId, &"Connect task failed: {e.msg}")

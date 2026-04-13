@@ -64,7 +64,7 @@ proc regQuery*(taskId: string, params: JsonNode): JsonNode =
       let hive = params[obf("hive")].getStr()
       let key = params[obf("key")].getStr()
       
-      debug &"[DEBUG] reg_query: hive={hive}, key={key}"
+      debugLog "reg_query", &"reg_query: hive={hive}, key={key}"
       
       let hiveHandle = getHiveHandle(hive)
       if hiveHandle == cast[HKEY](0):

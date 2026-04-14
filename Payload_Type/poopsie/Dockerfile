@@ -17,11 +17,22 @@ RUN apt-get update && apt-get install -y \
     mingw-w64 \
     gcc-mingw-w64-i686 \
     gcc-mingw-w64-x86-64 \
+    gcc-aarch64-linux-gnu \
     ccache \
     gcc-multilib \
     g++-multilib \
     lib32z1-dev \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install llvm-mingw for Windows ARM64 cross-compilation
+RUN set -eux; \
+    curl -L "https://github.com/mstorsjo/llvm-mingw/releases/download/20250417/llvm-mingw-20250417-ucrt-ubuntu-22.04-x86_64.tar.xz" \
+      -o llvm-mingw.tar.xz; \
+    tar -xf llvm-mingw.tar.xz; \
+    mv llvm-mingw-20250417-ucrt-ubuntu-22.04-x86_64 /opt/llvm-mingw; \
+    rm llvm-mingw.tar.xz
+
+ENV PATH="/opt/llvm-mingw/bin:$PATH"
 
 WORKDIR /tmp
 COPY requirements.txt .

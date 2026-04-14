@@ -242,12 +242,11 @@ class Poopsie(PayloadType):
                 "dfr: Dynamic Function Resolution via PEB walk (sensitive APIs resolved at runtime, not in IAT). "
                 "iat_obf: Wipe import directory in memory. "
                 "unhook_ntdll: Remap clean ntdll from disk. "
-                "indirect_syscalls: Use indirect syscall gadgets through ntdll (avoids syscall-from-non-ntdll detection). "
                 "stack_spoof: Spoof call stack frames before API calls (defeats EDR stack walking). "
                 "entropy: Append English-text overlay to lower binary entropy (defeats ML entropy analysis)."
             ),
             default_value=[],
-            choices=["dfr", "iat_obf", "unhook_ntdll", "indirect_syscalls", "stack_spoof", "entropy"],
+            choices=["dfr", "iat_obf", "unhook_ntdll", "stack_spoof", "entropy"],
             required=False,
             group_name="Evasion Options",
             supported_os=["Windows"],

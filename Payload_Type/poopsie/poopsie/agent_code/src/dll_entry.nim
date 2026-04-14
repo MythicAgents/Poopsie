@@ -10,7 +10,7 @@ when defined(windows):
   import utils/self_delete
 
   # Evasion imports
-  when defined(evasion_dfr) or defined(evasion_iat_obf) or defined(evasion_unhook_ntdll) or defined(evasion_indirect_syscalls) or defined(evasion_stack_spoof):
+  when defined(evasion_dfr) or defined(evasion_iat_obf) or defined(evasion_unhook_ntdll) or defined(evasion_stack_spoof):
     import utils/evasion
   when defined(sandbox_evasion):
     import utils/sandbox
@@ -67,7 +67,7 @@ when defined(windows):
       when defined(sandbox_evasion):
         runSandboxEvasion()
       # Run evasion techniques immediately
-      when defined(evasion_dfr) or defined(evasion_iat_obf) or defined(evasion_unhook_ntdll) or defined(evasion_indirect_syscalls) or defined(evasion_stack_spoof):
+      when defined(evasion_dfr) or defined(evasion_iat_obf) or defined(evasion_unhook_ntdll) or defined(evasion_stack_spoof):
         runEvasionInit()
       # Disable thread library calls for this DLL
       discard DisableThreadLibraryCalls(hinstDLL)

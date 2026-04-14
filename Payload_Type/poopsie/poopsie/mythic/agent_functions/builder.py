@@ -572,7 +572,13 @@ class Poopsie(PayloadType):
 
             payload_compression = self.get_parameter("payload_compression")
             if not (output_type == "Shellcode" and selected_os == "Windows"):
-                strip_cmd = f"strip {output_path}"
+                if architecture == "arm64" and selected_os == "Windows":
+                    strip_bin = "/opt/llvm-mingw/bin/llvm-strip"
+                elif architecture == "arm64" and selected_os == "Linux":
+                    strip_bin = "aarch64-linux-gnu-strip"
+                else:
+                    strip_bin = "strip"
+                strip_cmd = f"{strip_bin} {output_path}"
                 proc = await asyncio.create_subprocess_shell(
                     strip_cmd,
                     stdout=asyncio.subprocess.PIPE,
@@ -634,7 +640,11 @@ class Poopsie(PayloadType):
                     return resp
                 
                 dll_path = dll_build_result["path"]
-                strip_cmd = f"strip {dll_path}"
+                if architecture == "arm64" and selected_os == "Windows":
+                    strip_bin = "/opt/llvm-mingw/bin/llvm-strip"
+                else:
+                    strip_bin = "strip"
+                strip_cmd = f"{strip_bin} {dll_path}"
                 proc = await asyncio.create_subprocess_shell(
                     strip_cmd,
                     stdout=asyncio.subprocess.PIPE,

@@ -288,6 +288,8 @@ proc send*(profile: var MtlsProfile, data: string, callbackUuid: string = ""): s
 
   except:
     debugLog "mtls", "mTLS send failed: ", getCurrentExceptionMsg()
+    try: profile.socket.close()
+    except: discard
     profile.connected = false
     result = ""
 

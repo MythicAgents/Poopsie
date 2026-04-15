@@ -55,11 +55,15 @@ const
   LDRP_HANDLE_TLS_DATA_SIGNATURE_BYTES = [byte 0xBA, 0x23, 0x00, 0x00, 0x00, 0x48, 0x83, 0xC9, 0xFF]
 
 when defined(amd64):
-  proc GetPPEB(p: culong): PPEB {.header: """#include <windows.h>
+  proc readGsQword(p: culong): culonglong {.header: """#include <windows.h>
              #include <winnt.h>""", importc: "__readgsqword".}
+  proc GetPPEB(p: culong): PPEB =
+    cast[PPEB](readGsQword(p))
 else:
-  proc GetPPEB(p: culong): PPEB {.header: """#include <windows.h>
+  proc readFsDword(p: culong): culong {.header: """#include <windows.h>
              #include <winnt.h>""", importc: "__readfsdword".}
+  proc GetPPEB(p: culong): PPEB =
+    cast[PPEB](readFsDword(p))
 
 proc getNtHdrs*(peBuffer: ptr BYTE): ptr BYTE =
   if peBuffer == nil:

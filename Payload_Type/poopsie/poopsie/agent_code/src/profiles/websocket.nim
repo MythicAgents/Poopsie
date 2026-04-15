@@ -33,17 +33,21 @@ proc buildWebSocketUrl(profile: WebSocketProfile): string =
   if endpoint.len == 0:
     raise newException(ValueError, obf("ENDPOINT_REPLACE environment variable is not set"))
   
-  # Strip any existing scheme from host
-  if host.startsWith("wss://") or host.startsWith("ws://"):
-    let protocolEnd = if host.startsWith("wss://") : 6 else: 5
-    host = host[protocolEnd..^1]
+  # Strip any existing scheme from host and determine TLS from it
+  var useTls = false
+  if host.startsWith("wss://"):
+    useTls = true
+    host = host[6..^1]
+  elif host.startsWith("ws://"):
+    host = host[5..^1]
   elif host.startsWith("https://"):
+    useTls = true
     host = host[8..^1]
   elif host.startsWith("http://"):
     host = host[7..^1]
   
-  # Determine protocol based on port
-  let protocol = if port == "443": "wss" else: "ws"
+  # Use TLS if scheme indicated it, or fall back to port-based detection
+  let protocol = if useTls or port == "443": "wss" else: "ws"
   
   # Build URL
   result = protocol & "://" & host & ":" & port & "/" & endpoint.strip(chars = {'/'})

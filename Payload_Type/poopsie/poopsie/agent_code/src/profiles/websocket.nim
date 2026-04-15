@@ -211,16 +211,13 @@ proc close*(profile: var WebSocketProfile) =
     profile.connected = false
 
 proc cleanup*(profile: var WebSocketProfile) =
-  ## Close WebSocket connection to avoid keeping ESTABLISHED connections during sleep
-  debugLog "websocket", "WebSocket Profile: Cleaning up connection"
-  profile.close()
-  debugLog "websocket", "WebSocket Profile: Connection closed"
+  ## No-op for WebSocket: keep the persistent connection alive across sleep cycles.
+  ## Reconnection on failure is handled automatically by ensureConnection() in sendMessage().
+  discard
 
 proc reconnect*(profile: var WebSocketProfile) =
-  ## Recreate WebSocket connection after cleanup
-  debugLog "websocket", "WebSocket Profile: Reconnecting"
-  discard profile.ensureConnection()
-  debugLog "websocket", "WebSocket Profile: Reconnection complete"
+  ## No-op: connection persists across sleep, no reconnect needed.
+  discard
 
 proc setAesKey*(profile: var WebSocketProfile, key: seq[byte]) =
   ## Set the AES encryption key

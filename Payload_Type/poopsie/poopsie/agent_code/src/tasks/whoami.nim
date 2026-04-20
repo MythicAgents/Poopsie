@@ -5,7 +5,11 @@ import ../utils/strenc
 
 when defined(windows):
   import std/[strformat, widestrs]
-  import winim/lean
+  when defined(evasion_dfr):
+    import winim/lean except OpenProcessToken
+    import ../utils/winapi
+  else:
+    import winim/lean
 
   proc whoamiWindows(): string =
     var hToken: HANDLE

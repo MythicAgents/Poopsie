@@ -252,6 +252,27 @@ class Poopsie(PayloadType):
             supported_os=["Windows"],
         ),
         BuildParameter(
+            name="padding_size",
+            parameter_type=BuildParameterType.String,
+            description=(
+                "Append padding to the output binary to increase file size (in KB). "
+                "0 = disabled, uses the entropy word list by default. "
+                "This is separate from the 'entropy' evasion option which always uses 64KB."
+            ),
+            default_value="0",
+            required=False,
+            group_name="Evasion Options",
+        ),
+        BuildParameter(
+            name="padding_type",
+            parameter_type=BuildParameterType.ChooseOne,
+            description="Type of padding to append when padding_size > 0.",
+            default_value="text",
+            choices=["text", "zeroes"],
+            required=False,
+            group_name="Evasion Options",
+        ),
+        BuildParameter(
             name="sandbox_evasion",
             parameter_type=BuildParameterType.String,
             description=(
@@ -589,12 +610,18 @@ class Poopsie(PayloadType):
                     resp.status = BuildStatus.Error
                     return resp
 
-                # Post-compile evasion: entropy padding
+                # Post-compile evasion: entropy padding (Windows PE only)
                 evasion_options = self.get_parameter("evasion") or []
-                if selected_os == "Windows":
-                    if "entropy" in evasion_options:
-                        self.add_entropy_padding(str(output_path))
-                        resp.build_message += "Evasion: Entropy padding added\n"
+                if selected_os == "Windows" and "entropy" in evasion_options:
+                    self.add_entropy_padding(str(output_path))
+                    resp.build_message += "Evasion: Entropy padding added (64KB text)\n"
+
+                # Configurable padding (any OS/arch)
+                padding_size = int(self.get_parameter("padding_size") or "0")
+                padding_type = self.get_parameter("padding_type") or "text"
+                if padding_size > 0:
+                    self.add_entropy_padding(str(output_path), target_kb=padding_size, pad_type=padding_type)
+                    resp.build_message += f"Custom padding added ({padding_size}KB {padding_type})\n"
 
                 if payload_compression == "upx":
                     upx_cmd = f"/upx --best --lzma {output_path}"
@@ -659,6 +686,13 @@ class Poopsie(PayloadType):
                 if "entropy" in evasion_options:
                     self.add_entropy_padding(str(dll_path))
                     resp.build_message += "Evasion: Entropy padding added to DLL\n"
+
+                # Configurable padding on DLL before shellcode conversion
+                padding_size = int(self.get_parameter("padding_size") or "0")
+                padding_type = self.get_parameter("padding_type") or "text"
+                if padding_size > 0:
+                    self.add_entropy_padding(str(dll_path), target_kb=padding_size, pad_type=padding_type)
+                    resp.build_message += f"Custom padding added to DLL ({padding_size}KB {padding_type})\n"
 
                 tool = self.get_parameter("tool")
                 command = ""
@@ -1140,41 +1174,45 @@ class Poopsie(PayloadType):
             return key_str.encode()
 
     @staticmethod
-    def add_entropy_padding(pe_path: str, target_kb: int = 64):
-        """Append low-entropy English-like text as a PE overlay to reduce 
-        the overall Shannon entropy of the binary."""
-        words = [
-            "the", "be", "to", "of", "and", "a", "in", "that", "have", "I",
-            "it", "for", "not", "on", "with", "he", "as", "you", "do", "at",
-            "this", "but", "his", "by", "from", "they", "we", "say", "her",
-            "she", "or", "an", "will", "my", "one", "all", "would", "there",
-            "their", "what", "so", "up", "out", "if", "about", "who", "get",
-            "which", "go", "me", "when", "make", "can", "like", "time", "no",
-            "just", "him", "know", "take", "people", "into", "year", "your",
-            "good", "some", "could", "them", "see", "other", "than", "then",
-            "now", "look", "only", "come", "its", "over", "think", "also",
-            "back", "after", "use", "two", "how", "our", "work", "first",
-            "well", "way", "even", "new", "want", "because", "any", "these",
-            "give", "day", "most", "us", "great", "between", "need", "large",
-            "under", "never", "each", "much", "begin", "those", "around",
-            "every", "still", "should", "help", "call", "world", "long",
-            "system", "program", "service", "start", "process", "application",
-            "function", "return", "value", "data", "information", "support",
-            "version", "number", "name", "file", "display", "output", "input",
-            "control", "change", "request", "response", "error", "message",
-        ]
-        import random
-        rng = random.Random(42)
+    def add_entropy_padding(pe_path: str, target_kb: int = 64, pad_type: str = "text"):
+        """Append padding as a PE overlay to the binary.
+        pad_type='text': low-entropy English-like text (reduces Shannon entropy).
+        pad_type='zeroes': null bytes (simpler, larger size increase)."""
         pad_size = target_kb * 1024
-        padding = []
-        current_size = 0
-        while current_size < pad_size:
-            sentence_len = rng.randint(8, 20)
-            sentence = " ".join(rng.choice(words) for _ in range(sentence_len))
-            sentence = sentence.capitalize() + ".\r\n"
-            padding.append(sentence)
-            current_size += len(sentence)
-        pad_bytes = "".join(padding).encode("ascii")[:pad_size]
+        if pad_type == "zeroes":
+            pad_bytes = b"\x00" * pad_size
+        else:
+            words = [
+                "the", "be", "to", "of", "and", "a", "in", "that", "have", "I",
+                "it", "for", "not", "on", "with", "he", "as", "you", "do", "at",
+                "this", "but", "his", "by", "from", "they", "we", "say", "her",
+                "she", "or", "an", "will", "my", "one", "all", "would", "there",
+                "their", "what", "so", "up", "out", "if", "about", "who", "get",
+                "which", "go", "me", "when", "make", "can", "like", "time", "no",
+                "just", "him", "know", "take", "people", "into", "year", "your",
+                "good", "some", "could", "them", "see", "other", "than", "then",
+                "now", "look", "only", "come", "its", "over", "think", "also",
+                "back", "after", "use", "two", "how", "our", "work", "first",
+                "well", "way", "even", "new", "want", "because", "any", "these",
+                "give", "day", "most", "us", "great", "between", "need", "large",
+                "under", "never", "each", "much", "begin", "those", "around",
+                "every", "still", "should", "help", "call", "world", "long",
+                "system", "program", "service", "start", "process", "application",
+                "function", "return", "value", "data", "information", "support",
+                "version", "number", "name", "file", "display", "output", "input",
+                "control", "change", "request", "response", "error", "message",
+            ]
+            import random
+            rng = random.Random(42)
+            padding = []
+            current_size = 0
+            while current_size < pad_size:
+                sentence_len = rng.randint(8, 20)
+                sentence = " ".join(rng.choice(words) for _ in range(sentence_len))
+                sentence = sentence.capitalize() + ".\r\n"
+                padding.append(sentence)
+                current_size += len(sentence)
+            pad_bytes = "".join(padding).encode("ascii")[:pad_size]
         try:
             with open(pe_path, "ab") as f:
                 f.write(pad_bytes)

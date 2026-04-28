@@ -178,7 +178,15 @@ proc executeTask*(taskId: string, command: string, params: JsonNode): TaskExecut
   debugLog "task_processor", "Task ID: " & taskId
   debugLog "task_processor", "Command: " & command
   if params.len > 0:
-    debugLog "task_processor", "Parameters: " & params.pretty()
+    # Truncate large parameter values (e.g. bof_arguments containing assembly hex)
+    var logParams = newJObject()
+    for key, val in params.pairs:
+      let s = $val
+      if s.len > 200:
+        logParams[key] = %("<" & $s.len & " bytes>")
+      else:
+        logParams[key] = val
+    debugLog "task_processor", "Parameters: " & logParams.pretty()
   else:
     debugLog "task_processor", "No parameters"
   

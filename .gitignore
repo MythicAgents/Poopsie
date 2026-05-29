@@ -1,3 +1,10 @@
 nimcache/
 nimblecache/
 htmldocs/
+
+# Compound Engineering / ce-* local agent artifacts
+docs/brainstorms/
+docs/plans/
+docs/ideation/
+docs/solutions/
+.context/

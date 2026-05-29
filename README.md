@@ -54,6 +54,7 @@ Poopsie is a cross-platform C2 agent for the Mythic framework, written in Nim. I
 - `clipboard` - Get current clipboard contents (Windows)
 - `clipboard_monitor` - Monitor clipboard changes for a duration (Windows, background task)
 - `get_av` - Enumerate installed antivirus products (Windows)
+- `hashdump` - Dump local SAM NTLM hashes and Security hive secrets via Silent Harvest (Windows, elevated admin, structured JSON)
 - `portscan` - Scan hosts for open TCP ports (background task, incremental scanning)
 - `screenshot` - Capture screenshot of the desktop
 

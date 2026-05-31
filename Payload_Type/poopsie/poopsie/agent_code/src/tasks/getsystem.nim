@@ -41,16 +41,6 @@ when defined(windows):
     TOKEN_PRIVILEGES = object
       PrivilegeCount: DWORD
       Privileges: array[1, LUID_AND_ATTRIBUTES]
-    
-    SECURITY_IMPERSONATION_LEVEL = enum
-      SecurityAnonymous = 0
-      SecurityIdentification = 1
-      SecurityImpersonation = 2
-      SecurityDelegation = 3
-    
-    TOKEN_TYPE = enum
-      TokenPrimary = 1
-      TokenImpersonation = 2
 
   # Windows API imports
   proc CreateToolhelp32Snapshot(dwFlags: DWORD, th32ProcessID: DWORD): HANDLE 
@@ -68,15 +58,6 @@ when defined(windows):
   proc AdjustTokenPrivileges(TokenHandle: HANDLE, DisableAllPrivileges: WINBOOL, 
                              NewState: ptr TOKEN_PRIVILEGES, BufferLength: DWORD,
                              PreviousState: ptr TOKEN_PRIVILEGES, ReturnLength: ptr DWORD): WINBOOL 
-    {.importc, dynlib: obf("advapi32.dll"), stdcall.}
-  
-  proc DuplicateTokenEx(hExistingToken: HANDLE, dwDesiredAccess: DWORD,
-                        lpTokenAttributes: LPSECURITY_ATTRIBUTES,
-                        ImpersonationLevel: SECURITY_IMPERSONATION_LEVEL,
-                        TokenType: TOKEN_TYPE, phNewToken: ptr HANDLE): WINBOOL 
-    {.importc, dynlib: obf("advapi32.dll"), stdcall.}
-  
-  proc ImpersonateLoggedOnUser(hToken: HANDLE): WINBOOL 
     {.importc, dynlib: obf("advapi32.dll"), stdcall.}
 
   proc enableSeDebugPrivilege() =
@@ -151,8 +132,8 @@ when defined(windows):
       tokenHandle,
       MAXIMUM_ALLOWED,
       nil,
-      SecurityImpersonation,
-      TokenImpersonation,
+      securityImpersonation,
+      tokenImpersonation,
       addr duplicatedToken
     ) == 0:
       let err = GetLastError()

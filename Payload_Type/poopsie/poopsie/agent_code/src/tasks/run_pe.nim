@@ -58,12 +58,12 @@ when defined(amd64):
   proc readGsQword(p: culong): culonglong {.header: """#include <windows.h>
              #include <winnt.h>""", importc: "__readgsqword".}
   proc GetPPEB(p: culong): PPEB =
-    cast[PPEB](readGsQword(p))
+    cast[PPEB](cast[pointer](readGsQword(p)))
 else:
   proc readFsDword(p: culong): culong {.header: """#include <windows.h>
              #include <winnt.h>""", importc: "__readfsdword".}
   proc GetPPEB(p: culong): PPEB =
-    cast[PPEB](readFsDword(p))
+    cast[PPEB](cast[pointer](readFsDword(p)))
 
 proc getNtHdrs*(peBuffer: ptr BYTE): ptr BYTE =
   if peBuffer == nil:

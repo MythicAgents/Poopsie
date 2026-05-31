@@ -19,8 +19,6 @@ class HashdumpCommand(CommandBase):
     help_cmd = "hashdump"
     description = (
         "Dump local SAM hashes, cached domain logon credentials, and LSA secrets "
-        "from the registry using the Silent Harvest technique. Returns structured JSON. "
-        "Requires SeBackupPrivilege (elevated admin)."
     )
     version = 1
     author = "@m1ddl3w4r3"

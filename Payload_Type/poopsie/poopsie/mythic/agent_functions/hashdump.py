@@ -29,7 +29,7 @@ class HashdumpCommand(CommandBase):
         "access that only requires SeBackupPrivilege (no SYSTEM needed)."
     )
     version = 1
-    author = "@R0h1rr1m"
+    author = ""
     argument_class = HashdumpArguments
     attackmapping = ["T1003.002", "T1003.004", "T1003.005"]
     attributes = CommandAttributes(

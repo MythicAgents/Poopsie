@@ -1,21 +1,16 @@
-from mythic_container.MythicCommandBase import (
-    TaskArguments,
-    CommandBase,
-    CommandAttributes,
-    SupportedOS,
-    MythicTask,
-    PTTaskMessageAllData,
-    PTTaskProcessResponseMessageResponse,
-)
+from mythic_container.MythicCommandBase import *
 
+# Harvest port: SilentNimvest (MIT) — https://github.com/frkngksl/SilentNimvest
 
 class HashdumpArguments(TaskArguments):
+
     def __init__(self, command_line, **kwargs):
         super().__init__(command_line, **kwargs)
         self.args = []
 
     async def parse_arguments(self):
-        pass
+        if len(self.command_line.strip()) > 0:
+            raise Exception("hashdump takes no command line arguments.")
 
 
 class HashdumpCommand(CommandBase):
@@ -24,22 +19,23 @@ class HashdumpCommand(CommandBase):
     help_cmd = "hashdump"
     description = (
         "Dump local SAM hashes, cached domain logon credentials, and LSA secrets "
-        "from the registry using the Silent Harvest technique. Uses NtOpenKeyEx with "
-        "REG_OPTION_BACKUP_RESTORE and RegQueryMultipleValuesW for stealthy registry "
-        "access that only requires SeBackupPrivilege (no SYSTEM needed)."
+        "from the registry using the Silent Harvest technique. Returns structured JSON. "
+        "Requires SeBackupPrivilege (elevated admin)."
     )
     version = 1
-    author = ""
+    author = "@m1ddl3w4r3"
     argument_class = HashdumpArguments
     attackmapping = ["T1003.002", "T1003.004", "T1003.005"]
+    supported_ui_features = []
     attributes = CommandAttributes(
         supported_os=[SupportedOS.Windows],
     )
 
-    async def create_tasking(self, task: MythicTask) -> MythicTask:
-        return task
+    async def create_go_tasking(self, taskData: PTTaskMessageAllData) -> PTTaskCreateTaskingMessageResponse:
+        return PTTaskCreateTaskingMessageResponse(
+            TaskID=taskData.Task.ID,
+            Success=True,
+        )
 
-    async def process_response(
-        self, task: PTTaskMessageAllData, response: str
-    ) -> PTTaskProcessResponseMessageResponse:
-        pass
+    async def process_response(self, task: PTTaskMessageAllData, response: any) -> PTTaskProcessResponseMessageResponse:
+        return PTTaskProcessResponseMessageResponse(TaskID=task.Task.ID, Success=True)

@@ -6,7 +6,9 @@ import des/des
 import checksums/sha2
 import nimcrypto
 
-proc ComputeSha256*(key: seq[byte], value:seq[byte]):seq[byte] = 
+proc ComputeSha256*(key: seq[byte], value:seq[byte]):seq[byte] =
+  if value.len < 32:
+    raise newException(ValueError, "ComputeSha256 requires value length >= 32 bytes")
   var shaBase = newSeq[byte](0)
   shaBase.add(key)
   for i in countup(0,999):
@@ -49,7 +51,6 @@ proc RC4Encrypt*(key: seq[byte], data: seq[byte]): seq[byte] =
     S[j] = tempVal
     returnValue.add(cast[byte](cast[int](c) xor S[(S[i] + S[j]) mod 256]))
   return returnValue
-# Example usage
 
 proc TransformKey(inputData: seq[byte]): seq[byte] =
   result.add(byte(((inputData[0] shr 1) and 0x7f) shl 1))

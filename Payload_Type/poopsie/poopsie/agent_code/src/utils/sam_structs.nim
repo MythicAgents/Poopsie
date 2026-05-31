@@ -119,6 +119,10 @@ proc InitNlRecord*(data: seq[byte]): NlRecord =
   result.UserLength      = cast[int16]([data[0], data[1]])
   result.DomainNameLength = cast[int16]([data[2], data[3]])
   result.DnsDomainLength  = cast[int16]([data[60], data[61]])
+  if result.UserLength < 0 or result.DomainNameLength < 0 or result.DnsDomainLength < 0:
+    raise newHashdumpHarvestError("Security harvest failed", "hashdump harvest failed: NL record has negative length fields")
+  if int(result.UserLength) > 512 or int(result.DomainNameLength) > 512 or int(result.DnsDomainLength) > 512:
+    raise newHashdumpHarvestError("Security harvest failed", "hashdump harvest failed: NL record length fields out of range")
   result.Iv              = data[64 ..< 64+16]
   result.EncryptedData   = data[96 ..< data.len]
 
@@ -148,7 +152,17 @@ proc SeqToUnicode*(input: seq[byte]): string =
     index += 2
   return $returnValue
 
-proc wcharsToString*(pName: ptr UncheckedArray[WCHAR], nameLenBytes: ULONG): string =
+proc wcharsToString*(pName: ptr UncheckedArray[WCHAR], nameLenBytes: ULONG, maxNameBytes: int = high(int)): string =
+  if nameLenBytes <= 0 or nameLenBytes > maxNameBytes.uint32:
+    raise newHashdumpHarvestError(
+      "hashdump harvest failed",
+      "hashdump harvest failed: registry name length out of bounds (len=" & $nameLenBytes & ", max=" & $maxNameBytes & ")"
+    )
+  if nameLenBytes mod cast[ULONG](sizeof(WCHAR)) != 0:
+    raise newHashdumpHarvestError(
+      "hashdump harvest failed",
+      "hashdump harvest failed: registry name length not WCHAR-aligned (len=" & $nameLenBytes & ")"
+    )
   var w = newWString(0)
   let charCount = nameLenBytes div cast[ULONG](sizeof(WCHAR))
   for i in 0 ..< charCount.int:

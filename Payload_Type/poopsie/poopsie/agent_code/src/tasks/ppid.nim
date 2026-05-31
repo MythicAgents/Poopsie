@@ -14,7 +14,7 @@ proc ppid*(taskId: string, params: JsonNode): JsonNode =
       if ppidValue < 0 or ppidValue mod 4 != 0:
         return mythicError(taskId, obf("Invalid PPID: must be non-negative and divisible by 4"))
       
-      debug &"[DEBUG] ppid: Setting to {ppidValue}"
+      debugLog "ppid", &"ppid: Setting to {ppidValue}"
       
       # Set global PPID value
       setPpid(uint32(ppidValue))

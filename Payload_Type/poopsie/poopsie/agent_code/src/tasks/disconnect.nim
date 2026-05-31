@@ -31,7 +31,7 @@ proc handleDisconnect*(taskId: string, params: JsonNode): JsonNode =
 
     if conn == nil:
       # Debug: log what's in the table
-      debug &"[DEBUG] Disconnect: Looking for {agentUuid}, active connections:"
+      debugLog "disconnect", &"Disconnect: Looking for {agentUuid}, active connections:"
       for key, c in activeConnectConnections:
         debug &"  - key={key} agentUuid={c.agentUuid} active={c.active}"
       return mythicError(taskId, &"No active connect connection for agent {agentUuid}")
@@ -39,7 +39,7 @@ proc handleDisconnect*(taskId: string, params: JsonNode): JsonNode =
     if not conn.active and conn.receivedEof:
       return mythicError(taskId, &"Connection to {agentUuid} is already closed")
 
-    debug &"[DEBUG] Disconnect: Disconnecting from TCP agent {agentUuid}"
+    debugLog "disconnect", &"Disconnect: Disconnecting from TCP agent {agentUuid}"
 
     # Signal the connection to stop
     conn.active = false
@@ -58,10 +58,10 @@ proc handleDisconnect*(taskId: string, params: JsonNode): JsonNode =
     # Mark as received EOF so the check loop will send edge removal
     conn.receivedEof = true
 
-    debug &"[DEBUG] Disconnect: Successfully initiated disconnect from {agentUuid}"
+    debugLog "disconnect", &"Disconnect: Successfully initiated disconnect from {agentUuid}"
 
     return mythicSuccess(taskId, &"Disconnected from TCP agent {agentUuid}")
 
   except Exception as e:
-    debug &"[DEBUG] Disconnect error: {e.msg}"
+    debugLog "disconnect", &"Disconnect error: {e.msg}"
     return mythicError(taskId, &"Failed to disconnect: {e.msg}")

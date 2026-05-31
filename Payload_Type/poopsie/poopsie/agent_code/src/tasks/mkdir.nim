@@ -11,7 +11,7 @@ proc makeDirectory*(taskId: string, params: string): JsonNode =
   # Parse arguments
   let args = parseJson(params).to(MkdirArgs)
   
-  debug "[DEBUG] Creating directory: ", args.path
+  debugLog "mkdir", "Creating directory: ", args.path
   
   try:
     # Create the directory (including parent directories)
@@ -25,7 +25,7 @@ proc makeDirectory*(taskId: string, params: string): JsonNode =
     
     let normalizedPath = normalizedPath(absPath)
     
-    debug "[DEBUG] Created directory: ", normalizedPath
+    debugLog "mkdir", "Created directory: ", normalizedPath
     
     return mythicSuccess(taskId, obf("Created directory '") & normalizedPath & "'")
     

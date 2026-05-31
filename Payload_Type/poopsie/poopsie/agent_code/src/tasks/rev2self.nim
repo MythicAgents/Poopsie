@@ -5,12 +5,16 @@ import ../utils/strenc
 import token_manager
 
 when defined(windows):
-  import winim/lean
+  when defined(evasion_dfr):
+    import winim/lean except RevertToSelf
+    import ../utils/winapi
+  else:
+    import winim/lean
   
   proc rev2self*(taskId: string, params: JsonNode): JsonNode =
     ## Revert to the original process token
     try:
-      debug "[DEBUG] rev2self: Reverting to self"
+      debugLog "rev2self", "rev2self: Reverting to self"
       
       # Revert to self
       if RevertToSelf() == 0:
@@ -23,7 +27,7 @@ when defined(windows):
       # Get the current user after reverting
       let user = getCurrentUsername()
       
-      debug &"[DEBUG] Reverted to original identity: {user}"
+      debugLog "rev2self", &"Reverted to original identity: {user}"
       
       # Build response with callback data
       return mythicCallback(taskId, obf("Reverted identity to self: ") & user, %*{

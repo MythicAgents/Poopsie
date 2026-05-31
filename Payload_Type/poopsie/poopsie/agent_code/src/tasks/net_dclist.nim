@@ -59,7 +59,7 @@ proc netDclist*(taskId: string, params: JsonNode): JsonNode =
       if domain == "":
         domain = getEnv(obf("USERDNSDOMAIN"), "")
       
-      debug &"[DEBUG] net_dclist: domain={domain}"
+      debugLog "net_dclist", &"net_dclist: domain={domain}"
       
       var dcInfoPtr: ptr DOMAIN_CONTROLLER_INFOW = nil
       var domainW: WideCString = nil

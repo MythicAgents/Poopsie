@@ -4,7 +4,11 @@ import ../utils/strenc
 import std/[json, strformat, strutils]
 
 when defined(windows):
-  import winim/lean
+  when defined(evasion_dfr):
+    import winim/lean except OpenProcess
+    import ../utils/winapi
+  else:
+    import winim/lean
 else:
   import std/osproc
 
@@ -20,7 +24,7 @@ proc pkill*(taskId: string, params: JsonNode): JsonNode =
     except:
       return mythicError(taskId, obf("Invalid PID: ") & pidStr)
     
-    debug &"[DEBUG] pkill: Attempting to kill process with PID {pid}"
+    debugLog "pkill", &"pkill: Attempting to kill process with PID {pid}"
     
     when defined(windows):
       # Windows implementation using TerminateProcess

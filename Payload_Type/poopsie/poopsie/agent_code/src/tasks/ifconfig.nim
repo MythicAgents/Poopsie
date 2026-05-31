@@ -133,7 +133,7 @@ when defined(linux):
 proc ifconfig*(taskId: string, params: JsonNode): JsonNode =
   ## Get network interface configuration
   try:
-    debug "[DEBUG] Ifconfig: Getting network interface information"
+    debugLog "ifconfig", "Ifconfig: Getting network interface information"
     
     var interfaces = newJArray()
     
@@ -341,7 +341,7 @@ proc ifconfig*(taskId: string, params: JsonNode): JsonNode =
           iface[obf("gateways")].add(%defaultGateway)
         interfaces.add(iface)
     
-    debug &"[DEBUG] Ifconfig: Found {interfaces.len} network interfaces"
+    debugLog "ifconfig", &"Ifconfig: Found {interfaces.len} network interfaces"
     
     let output = $interfaces
     return mythicSuccess(taskId, output)

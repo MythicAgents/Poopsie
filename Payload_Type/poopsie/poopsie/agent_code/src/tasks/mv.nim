@@ -12,7 +12,7 @@ proc mvFile*(taskId: string, params: string): JsonNode =
   # Parse arguments
   let args = parseJson(params).to(MvArgs)
   
-  debug &"[DEBUG] Moving '{args.source}' to '{args.destination}'"
+  debugLog "mv", &"Moving '{args.source}' to '{args.destination}'"
   
   try:
     # Check if source exists
@@ -46,7 +46,7 @@ proc mvFile*(taskId: string, params: string): JsonNode =
     
     let normalizedDest = normalizedPath(destPath)
     
-    debug &"[DEBUG] Moved '{absSrcPath}' to '{normalizedDest}'"
+    debugLog "mv", &"Moved '{absSrcPath}' to '{normalizedDest}'"
     
     return mythicSuccess(taskId, obf("Moved '") & absSrcPath & obf("' to '") & normalizedDest & "'")
     

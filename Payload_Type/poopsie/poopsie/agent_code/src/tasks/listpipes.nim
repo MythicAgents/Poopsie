@@ -19,7 +19,7 @@ proc listpipes*(taskId: string, params: JsonNode): JsonNode =
   ## List all named pipes on the local system
   when defined(windows):
     try:
-      debug "[DEBUG] ListPipes: Enumerating named pipes"
+      debugLog "listpipes", "ListPipes: Enumerating named pipes"
       
       var pipes: seq[string] = @[]
       
@@ -55,7 +55,7 @@ proc listpipes*(taskId: string, params: JsonNode): JsonNode =
       # Close the search handle
       discard FindClose(handle)
       
-      debug &"[DEBUG] ListPipes: Found {pipes.len} named pipes"
+      debugLog "listpipes", &"ListPipes: Found {pipes.len} named pipes"
       
       # Prepare the response
       let output = if pipes.len == 0:

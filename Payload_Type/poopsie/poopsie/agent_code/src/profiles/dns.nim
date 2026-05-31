@@ -64,7 +64,7 @@ proc newDnsProfile*(): DnsProfile =
   result.agentSessionID = uint32(rand(high(int32)))
   result.nextMessageID = 0  # Start message counter at 0
   
-  debug "[DEBUG] DNS Profile: Initializing DNS profile..."
+  debugLog "dns", "DNS Profile: Initializing DNS profile..."
   
   # Parse DNS server and port from config.dnsServer (format: "ip:port")
   if result.config.dnsServer.len == 0:
@@ -79,7 +79,7 @@ proc newDnsProfile*(): DnsProfile =
   else:
     raise newException(ValueError, "DNS_SERVER must be in format 'ip:port'")
   
-  debug "[DEBUG] DNS Server: ", result.dnsServer, ":", $result.dnsPort
+  debugLog "dns", "DNS Server: ", result.dnsServer, ":", $result.dnsPort
   
   # Parse domains from config.domains (JSON array)
   if result.config.domains.len == 0:
@@ -91,7 +91,7 @@ proc newDnsProfile*(): DnsProfile =
       result.domains.add(domain.getStr())
     if result.domains.len == 0:
       raise newException(ValueError, "DOMAINS array is empty")
-    debug "[DEBUG] Loaded ", result.domains.len, " domains"
+    debugLog "dns", "Loaded ", result.domains.len, " domains"
   except ValueError as e:
     raise e
   except:
@@ -130,7 +130,7 @@ proc newDnsProfile*(): DnsProfile =
   # DNS labels have a maximum length of 63 bytes (RFC 1035)
   if result.maxSubdomainLength > 63:
     result.maxSubdomainLength = 63
-    debug "[DEBUG] Clamped MAX_SUBDOMAIN_LENGTH to 63 (DNS label limit)"
+    debugLog "dns", "Clamped MAX_SUBDOMAIN_LENGTH to 63 (DNS label limit)"
   
   if result.config.failoverThreshold == 0:
     raise newException(ValueError, "FAILOVER_THRESHOLD environment variable is not set")
@@ -138,12 +138,12 @@ proc newDnsProfile*(): DnsProfile =
   
   result.failureCount = 0
   
-  debug "[DEBUG] Record Type: ", $result.recordType
-  debug "[DEBUG] Domain Rotation: ", $result.domainRotation
-  debug "[DEBUG] Max Query Length: ", result.maxQueryLength
-  debug "[DEBUG] Max Subdomain Length: ", result.maxSubdomainLength
-  debug "[DEBUG] Failover Threshold: ", result.failoverThreshold
-  debug "[DEBUG] DNS Profile: Initialization complete"
+  debugLog "dns", "Record Type: ", $result.recordType
+  debugLog "dns", "Domain Rotation: ", $result.domainRotation
+  debugLog "dns", "Max Query Length: ", result.maxQueryLength
+  debugLog "dns", "Max Subdomain Length: ", result.maxSubdomainLength
+  debugLog "dns", "Failover Threshold: ", result.failoverThreshold
+  debugLog "dns", "DNS Profile: Initialization complete"
 
 proc getNextDomain(profile: var DnsProfile): string =
   ## Get next domain based on rotation strategy
@@ -326,9 +326,9 @@ proc getMaxDataLengthPerMessage(profile: DnsProfile, domain: string): int =
   let emptyProto = marshalDnsPacket(emptyPacket)
   let fixedLengths = emptyProto.len  # Just protobuf overhead
   
-  debug "[DEBUG] Fixed overhead: ", fixedLengths, " bytes (protobuf only)"
-  debug "[DEBUG] Empty protobuf size: ", emptyProto.len, " bytes"
-  debug "[DEBUG] Domain: '", domain, "' (", domain.len, " bytes)"
+  debugLog "dns", "Fixed overhead: ", fixedLengths, " bytes (protobuf only)"
+  debugLog "dns", "Empty protobuf size: ", emptyProto.len, " bytes"
+  debugLog "dns", "Domain: '", domain, "' (", domain.len, " bytes)"
   
   # Iteratively find max data size that fits after base32 encoding
   # Base32 expands by ~60% (8 bytes become 13 chars)
@@ -345,7 +345,7 @@ proc getMaxDataLengthPerMessage(profile: DnsProfile, domain: string): int =
     # Check if total query exceeds max
     if totalQueryLen > profile.maxQueryLength:
       result = i - 1
-      debug "[DEBUG] Max data per message: ", result, " bytes (base32=", base32Len, ", subdomains=", numSubdomains, ", total=", totalQueryLen, ")"
+      debugLog "dns", "Max data per message: ", result, " bytes (base32=", base32Len, ", subdomains=", numSubdomains, ", total=", totalQueryLen, ")"
       return
   
   # Fallback if loop completes
@@ -415,7 +415,7 @@ proc dnsQuery(profile: var DnsProfile, encodedData: string): string =
   queryName.add(".")
   queryName.add(domain)
   
-  debug "[DEBUG] DNS Query: ", queryName
+  debugLog "dns", "DNS Query: ", queryName
   
   # Build DNS query packet
   randomize()
@@ -469,7 +469,7 @@ proc dnsQuery(profile: var DnsProfile, encodedData: string): string =
   try:
     # Try TCP first if we have an existing connection
     if profile.useTcp and not profile.tcpClient.isNil:
-      debug "[DEBUG] Using existing TCP connection"
+      debugLog "dns", "Using existing TCP connection"
       try:
         # TCP DNS messages are prefixed with 2-byte length
         let msgLen = uint16(packet.len)
@@ -484,23 +484,23 @@ proc dnsQuery(profile: var DnsProfile, encodedData: string): string =
         var lenBuf = newString(2)
         let lenRecv = profile.tcpClient.recv(lenBuf, 2)
         if lenRecv == 0:
-          debug "[DEBUG] TCP connection closed by server (recv=0 on length)"
+          debugLog "dns", "TCP connection closed by server (recv=0 on length)"
           profile.tcpClient.close()
           profile.tcpClient = nil
           profile.useTcp = false
           responseData = ""
         elif lenRecv < 2:
-          debug "[DEBUG] TCP incomplete length read (", lenRecv, " bytes)"
+          debugLog "dns", "TCP incomplete length read (", lenRecv, " bytes)"
           profile.tcpClient.close()
           profile.tcpClient = nil
           profile.useTcp = false
           responseData = ""
         else:
           let respLen = (uint16(ord(lenBuf[0])) shl 8) or uint16(ord(lenBuf[1]))
-          debug "[DEBUG] TCP expects ", respLen, " bytes"
+          debugLog "dns", "TCP expects ", respLen, " bytes"
           
           if respLen == 0:
-            debug "[DEBUG] TCP response length is 0, closing connection"
+            debugLog "dns", "TCP response length is 0, closing connection"
             profile.tcpClient.close()
             profile.tcpClient = nil
             profile.useTcp = false
@@ -510,27 +510,27 @@ proc dnsQuery(profile: var DnsProfile, encodedData: string): string =
             responseData = newString(respLen)
             let dataRecv = profile.tcpClient.recv(responseData, int(respLen))
             if dataRecv == 0:
-              debug "[DEBUG] TCP connection closed by server (recv=0 on data)"
+              debugLog "dns", "TCP connection closed by server (recv=0 on data)"
               profile.tcpClient.close()
               profile.tcpClient = nil
               profile.useTcp = false
               responseData = ""
             elif dataRecv < int(respLen):
-              debug "[DEBUG] TCP incomplete data read (", dataRecv, "/", respLen, " bytes)"
+              debugLog "dns", "TCP incomplete data read (", dataRecv, "/", respLen, " bytes)"
               profile.tcpClient.close()
               profile.tcpClient = nil
               profile.useTcp = false
               responseData = ""
             elif responseData.len >= 12:
-              debug "[DEBUG] TCP query successful (", dataRecv, " bytes)"
+              debugLog "dns", "TCP query successful (", dataRecv, " bytes)"
             else:
-              debug "[DEBUG] TCP response too short, closing connection"
+              debugLog "dns", "TCP response too short, closing connection"
               profile.tcpClient.close()
               profile.tcpClient = nil
               profile.useTcp = false
               responseData = ""
       except:
-        debug "[DEBUG] TCP connection failed: ", getCurrentExceptionMsg()
+        debugLog "dns", "TCP connection failed: ", getCurrentExceptionMsg()
         try:
           profile.tcpClient.close()
         except:
@@ -541,7 +541,7 @@ proc dnsQuery(profile: var DnsProfile, encodedData: string): string =
     
     # Use UDP if no TCP connection or TCP failed
     if responseData.len == 0:
-      debug "[DEBUG] Using UDP for DNS query"
+      debugLog "dns", "Using UDP for DNS query"
       let sock = newSocket(Domain.AF_INET, SockType.SOCK_DGRAM, Protocol.IPPROTO_UDP)
       defer: sock.close()
       
@@ -555,7 +555,7 @@ proc dnsQuery(profile: var DnsProfile, encodedData: string): string =
           # On POSIX systems, timeout is a timeval struct
           var timeout = Timeval(tv_sec: posix.Time(5), tv_usec: 0)
           if setsockopt(sock.getFd(), cint(SOL_SOCKET), cint(SO_RCVTIMEO), addr timeout, SockLen(sizeof(timeout))) < 0:
-            debug "[DEBUG] Failed to set socket timeout"
+            debugLog "dns", "Failed to set socket timeout"
       except:
         discard  # Timeout is not critical
       
@@ -569,20 +569,20 @@ proc dnsQuery(profile: var DnsProfile, encodedData: string): string =
       let bytesReceived = sock.recvFrom(responseData, 512, recvAddr, recvPort)
       responseData.setLen(bytesReceived)
       
-      debug "[DEBUG] UDP received ", bytesReceived, " bytes"
+      debugLog "dns", "UDP received ", bytesReceived, " bytes"
       
       if responseData.len < 12:
-        debug "[DEBUG] DNS response too short (", responseData.len, " bytes)"
+        debugLog "dns", "DNS response too short (", responseData.len, " bytes)"
         return ""
       
       # Check for truncation flag (bit 9 of flags, byte 2 bit 1)
       let flags = (uint16(ord(responseData[2])) shl 8) or uint16(ord(responseData[3]))
       let truncated = (flags and 0x0200) != 0
       
-      debug "[DEBUG] DNS flags: 0x", flags.toHex(4), ", truncated: ", truncated
+      debugLog "dns", "DNS flags: 0x", flags.toHex(4), ", truncated: ", truncated
       
       if truncated:
-        debug "[DEBUG] Response truncated, switching to TCP"
+        debugLog "dns", "Response truncated, switching to TCP"
         try:
           # Open TCP connection
           profile.tcpClient = newSocket(Domain.AF_INET, SockType.SOCK_STREAM, Protocol.IPPROTO_TCP)
@@ -607,9 +607,9 @@ proc dnsQuery(profile: var DnsProfile, encodedData: string): string =
           responseData = newString(respLen)
           discard profile.tcpClient.recv(responseData, int(respLen))
           
-          debug "[DEBUG] TCP fallback successful"
+          debugLog "dns", "TCP fallback successful"
         except:
-          debug "[DEBUG] TCP fallback failed: ", getCurrentExceptionMsg()
+          debugLog "dns", "TCP fallback failed: ", getCurrentExceptionMsg()
           try:
             if not profile.tcpClient.isNil:
               profile.tcpClient.close()
@@ -620,11 +620,11 @@ proc dnsQuery(profile: var DnsProfile, encodedData: string): string =
           # Use truncated UDP response as fallback
     
     if responseData.len < 12:
-      debug "[DEBUG] DNS response too short after all attempts"
+      debugLog "dns", "DNS response too short after all attempts"
       return ""
     
     if responseData.len < 12:
-      debug "[DEBUG] DNS response too short after all attempts"
+      debugLog "dns", "DNS response too short after all attempts"
       return ""
     
     # Parse DNS response to extract data
@@ -639,7 +639,7 @@ proc dnsQuery(profile: var DnsProfile, encodedData: string): string =
       # Check answer count first (bytes 6-7 of DNS header)
       let answerCount = (uint16(ord(responseData[6])) shl 8) or uint16(ord(responseData[7]))
       
-      debug "[DEBUG] TXT answer count: ", answerCount
+      debugLog "dns", "TXT answer count: ", answerCount
       
       if answerCount == 0:
         return ""
@@ -690,7 +690,7 @@ proc dnsQuery(profile: var DnsProfile, encodedData: string): string =
             else:
               break
           
-          debug "[DEBUG] TXT record ", i, ": extracted ", recordData.len, " bytes"
+          debugLog "dns", "TXT record ", i, ": extracted ", recordData.len, " bytes"
           txtRecords.add(recordData)
       
       # Filter out action-only TXT records ONLY if we have multiple records
@@ -708,14 +708,14 @@ proc dnsQuery(profile: var DnsProfile, encodedData: string): string =
           
           if not isActionOnly:
             allStrings.add(record)
-            debug "[DEBUG] Appended ", record.len, " bytes (data)"
+            debugLog "dns", "Appended ", record.len, " bytes (data)"
           else:
-            debug "[DEBUG] Skipped ", record.len, " bytes (action-only)"
+            debugLog "dns", "Skipped ", record.len, " bytes (action-only)"
       elif txtRecords.len == 1:
         # Single TXT record - keep it as-is (could be action code or data)
         allStrings = txtRecords[0]
       
-      debug "[DEBUG] Total TXT data: ", allStrings.len, " bytes from ", answerCount, " answers"
+      debugLog "dns", "Total TXT data: ", allStrings.len, " bytes from ", answerCount, " answers"
       result = allStrings
     
     elif profile.recordType == DnsRecordType.AAAA:
@@ -725,7 +725,7 @@ proc dnsQuery(profile: var DnsProfile, encodedData: string): string =
       
       # Extract answer count from DNS header (bytes 6-7)
       let answerCount = (uint16(ord(responseData[6])) shl 8) or uint16(ord(responseData[7]))
-      debug "[DEBUG] Answer count: ", answerCount
+      debugLog "dns", "Answer count: ", answerCount
       
       var pos = 12
       # Skip question using compression-aware parser
@@ -762,19 +762,19 @@ proc dnsQuery(profile: var DnsProfile, encodedData: string): string =
             pos += 16
       
       # Assemble all chunks in order (skip first chunk if it's action-only)
-      debug "[DEBUG] Action code from first chunk: ", actionCode
-      debug "[DEBUG] Ordered chunks count: ", orderedChunks.len
+      debugLog "dns", "Action code from first chunk: ", actionCode
+      debugLog "dns", "Ordered chunks count: ", orderedChunks.len
       
       # If only 1 answer (action-only response), return 16 bytes with action code
       if orderedChunks.len == 1:
-        debug "[DEBUG] Single AAAA record - returning action code only"
+        debugLog "dns", "Single AAAA record - returning action code only"
         # Return 16-byte response with action code in last byte
         result = "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" & chr(actionCode)
       else:
         # Multiple AAAA records - assemble data chunks (skip first which is action code)
         for i in 1..<orderedChunks.len:
           result.add(orderedChunks[i])
-          debug "[DEBUG] Added chunk ", i, " (", orderedChunks[i].len, " bytes)"
+          debugLog "dns", "Added chunk ", i, " (", orderedChunks[i].len, " bytes)"
     
     elif profile.recordType == DnsRecordType.A:
       # Extract IPv4 address bytes - server sends MULTIPLE A records
@@ -783,7 +783,7 @@ proc dnsQuery(profile: var DnsProfile, encodedData: string): string =
       
       # Extract answer count from DNS header (bytes 6-7)
       let answerCount = (uint16(ord(responseData[6])) shl 8) or uint16(ord(responseData[7]))
-      debug "[DEBUG] Answer count: ", answerCount
+      debugLog "dns", "Answer count: ", answerCount
       
       var pos = 12
       # Skip question using compression-aware parser
@@ -820,25 +820,25 @@ proc dnsQuery(profile: var DnsProfile, encodedData: string): string =
             pos += 4
       
       # Assemble all chunks in order (skip first chunk, it's just action code)
-      debug "[DEBUG] Action code from first chunk: ", actionCode
-      debug "[DEBUG] Ordered chunks count: ", orderedChunks.len
+      debugLog "dns", "Action code from first chunk: ", actionCode
+      debugLog "dns", "Ordered chunks count: ", orderedChunks.len
       
       # If only 1 answer (action-only response), return the raw 4 bytes for action code checking
       if orderedChunks.len == 1:
-        debug "[DEBUG] Single A record - returning action code only"
+        debugLog "dns", "Single A record - returning action code only"
         # Return a 4-byte response with action code in last byte (like old code)
         result = "\x00\x00\x00" & chr(actionCode)
       else:
         # Multiple A records - assemble data chunks (skip first which is action code)
         for i in 1..<orderedChunks.len:
           result.add(orderedChunks[i])
-          debug "[DEBUG] Added chunk ", i, " (", orderedChunks[i].len, " bytes)"
+          debugLog "dns", "Added chunk ", i, " (", orderedChunks[i].len, " bytes)"
     
     profile.failureCount = 0  # Reset on success
-    debug "[DEBUG] DNS response data: ", result[0..<min(100, result.len)]
+    debugLog "dns", "DNS response data: ", result[0..<min(100, result.len)]
     
   except:
-    debug "[DEBUG] DNS query failed: ", getCurrentExceptionMsg()
+    debugLog "dns", "DNS query failed: ", getCurrentExceptionMsg()
     profile.failureCount += 1
     # Close TCP connection on failure
     try:
@@ -854,34 +854,34 @@ proc send*(profile: var DnsProfile, data: string, callbackUuid: string = ""): st
   ## Send data via DNS queries using protobuf
   let uuid = if callbackUuid.len > 0: callbackUuid else: profile.config.uuid
   
-  debug "[DEBUG] === SENDING DATA VIA DNS ==="
-  debug "[DEBUG] Data length: ", data.len, " bytes"
+  debugLog "dns", "=== SENDING DATA VIA DNS ==="
+  debugLog "dns", "Data length: ", data.len, " bytes"
   
   # Encrypt if AES key is available and we have callback UUID
   var payload: string
   if profile.aesKey.len > 0 and callbackUuid.len > 0:
-    debug "[DEBUG] Encrypting payload with AES-256-CBC+HMAC"
+    debugLog "dns", "Encrypting payload with AES-256-CBC+HMAC"
     # Encrypt data WITHOUT UUID (UUID should not be part of HMAC calculation)
     let dataBytes = cast[seq[byte]](data)
     let encrypted = encryptAES256(dataBytes, profile.aesKey)
     # Prepend UUID AFTER encryption (like Poseidon) - UUID is in plaintext
     payload = uuid & cast[string](encrypted)
-    debug "[DEBUG] Encrypted payload length: ", payload.len, " bytes"
+    debugLog "dns", "Encrypted payload length: ", payload.len, " bytes"
   else:
-    debug "[DEBUG] Sending unencrypted payload"
+    debugLog "dns", "Sending unencrypted payload"
     payload = uuid & data
-    debug "[DEBUG] Payload length: ", payload.len, " bytes"
+    debugLog "dns", "Payload length: ", payload.len, " bytes"
   
   # Calculate chunk size based on DNS constraints, protobuf overhead, and base32 expansion
   # This matches Poseidon's calculation
   let domain = profile.getNextDomain()
   let maxChunkSize = profile.getMaxDataLengthPerMessage(domain)
   
-  debug "[DEBUG] Using max chunk size: ", maxChunkSize, " bytes"
+  debugLog "dns", "Using max chunk size: ", maxChunkSize, " bytes"
   
   let chunks = chunkData(payload, maxChunkSize)
   
-  debug "[DEBUG] Split into ", chunks.len, " chunks"
+  debugLog "dns", "Split into ", chunks.len, " chunks"
   
   # Retry loop for handling retransmit requests
   var maxRetries = 3
@@ -893,7 +893,7 @@ proc send*(profile: var DnsProfile, data: string, callbackUuid: string = ""): st
   
   while retryCount < maxRetries:
     if retryCount > 0:
-      debug "[DEBUG] Retransmit attempt ", retryCount, "/", maxRetries
+      debugLog "dns", "Retransmit attempt ", retryCount, "/", maxRetries
     
     # Send each chunk as protobuf packet
     var lastResponse: string = ""
@@ -914,29 +914,29 @@ proc send*(profile: var DnsProfile, data: string, callbackUuid: string = ""): st
       # Encode as base32 for DNS
       let encoded = encodeToDns(cast[string](protoData))
       
-      debug "[DEBUG] Sending chunk ", idx + 1, "/", chunks.len, " (data=", chunk.len, " bytes, protobuf=", protoData.len, " bytes, base32=", encoded.len, " chars)"
+      debugLog "dns", "Sending chunk ", idx + 1, "/", chunks.len, " (data=", chunk.len, " bytes, protobuf=", protoData.len, " bytes, base32=", encoded.len, " chars)"
       let chunkResp = profile.dnsQuery(encoded)
       if chunkResp.len > 0:
         let respBytes = cast[seq[byte]](chunkResp)
-        debug "[DEBUG] Chunk ", idx + 1, " response: ", respBytes.mapIt(it.toHex(2)).join(" ")
+        debugLog "dns", "Chunk ", idx + 1, " response: ", respBytes.mapIt(it.toHex(2)).join(" ")
         # Check for ReTransmit on individual chunk (action code 2)
         # For TXT records, response is ASCII character, so '2' (0x32) not binary 2
         if ((profile.recordType == DnsRecordType.A and respBytes.len == 4 and respBytes[3] == 2) or
             (profile.recordType == DnsRecordType.AAAA and respBytes.len == 16 and respBytes[15] == 2) or
             (profile.recordType == DnsRecordType.TXT and respBytes.len == 1 and respBytes[0] == ord('2'))):
-          debug "[DEBUG] Server requested retransmit on chunk ", idx + 1
+          debugLog "dns", "Server requested retransmit on chunk ", idx + 1
           needRetransmit = true
           break  # Stop sending more chunks, we'll retry all from the beginning
         # Save last chunk response - server may include reply data here
         lastResponse = chunkResp
       else:
-        debug "[DEBUG] No response for chunk ", idx + 1
+        debugLog "dns", "No response for chunk ", idx + 1
         needRetransmit = true
         break
     
     # If any chunk triggered retransmit, restart the loop
     if needRetransmit:
-      debug "[DEBUG] Retransmitting all chunks"
+      debugLog "dns", "Retransmitting all chunks"
       inc retryCount
       continue
     
@@ -944,14 +944,14 @@ proc send*(profile: var DnsProfile, data: string, callbackUuid: string = ""): st
     let response = lastResponse
     
     if response.len == 0:
-      debug "[DEBUG] No response received"
+      debugLog "dns", "No response received"
       return ""
     
     # Response is raw bytes from DNS record (IP address bytes or TXT string)
     var responseBytes = cast[seq[byte]](response)
     
-    debug "[DEBUG] Response bytes length: ", responseBytes.len
-    debug "[DEBUG] Response hex: ", responseBytes.mapIt(it.toHex(2)).join(" ")
+    debugLog "dns", "Response bytes length: ", responseBytes.len
+    debugLog "dns", "Response hex: ", responseBytes.mapIt(it.toHex(2)).join(" ")
     
     # For A records (4 bytes), AAAA records (16 bytes), or TXT records (single character string), check the action code
     if (profile.recordType == DnsRecordType.A and responseBytes.len == 4) or 
@@ -963,20 +963,20 @@ proc send*(profile: var DnsProfile, data: string, callbackUuid: string = ""): st
         uint8(responseBytes[0] - ord('0'))
       else:
         responseBytes[^1]
-      debug "[DEBUG] Action code: ", action
+      debugLog "dns", "Action code: ", action
       
       # Action codes: 0=AgentToServer, 1=ServerToAgent, 2=ReTransmit, 3=MessageLost
       if action == 2:
-        debug "[DEBUG] Server requested retransmit"
+        debugLog "dns", "Server requested retransmit"
         inc retryCount
         continue  # Retry the loop
       elif action == 3:
-        debug "[DEBUG] Server lost message"
+        debugLog "dns", "Server lost message"
         return ""
       elif action == 1:
         # ServerToAgent - server has a response ready, we need to fetch it!
         # Fetch ALL chunks from server (like Poseidon's getDNSMessageFromServer)
-        debug "[DEBUG] Server has response ready (action=1), fetching all chunks with messageID=", currentMessageID
+        debugLog "dns", "Server has response ready (action=1), fetching all chunks with messageID=", currentMessageID
         
         var receivedChunks: seq[seq[byte]] = @[]
         var totalChunks: uint32 = 0
@@ -997,46 +997,46 @@ proc send*(profile: var DnsProfile, data: string, callbackUuid: string = ""): st
           let fetchProto = marshalDnsPacket(fetchPacket)
           let fetchEncoded = encodeToDns(cast[string](fetchProto))
           
-          debug "[DEBUG] Fetching chunk ", lastChunk, " from server (protobuf=", fetchProto.len, " bytes)"
+          debugLog "dns", "Fetching chunk ", lastChunk, " from server (protobuf=", fetchProto.len, " bytes)"
           let fetchResponse = profile.dnsQuery(fetchEncoded)
           
           if fetchResponse.len == 0:
-            debug "[DEBUG] Failed to fetch chunk ", lastChunk, " from server"
+            debugLog "dns", "Failed to fetch chunk ", lastChunk, " from server"
             break
           
           # Parse the fetched response
           let fetchBytes = cast[seq[byte]](fetchResponse)
-          debug "[DEBUG] Fetched chunk ", lastChunk, ": ", fetchBytes.len, " bytes"
+          debugLog "dns", "Fetched chunk ", lastChunk, ": ", fetchBytes.len, " bytes"
           
           # Check for action-only TXT response (single character '0'-'3')
           if profile.recordType == DnsRecordType.TXT and fetchBytes.len <= 3:
             let responseStr = cast[string](fetchBytes).strip()
             if responseStr.len == 1 and ord(responseStr[0]) >= 48 and ord(responseStr[0]) <= 51:
               let actionCode = uint8(ord(responseStr[0]) - ord('0'))
-              debug "[DEBUG] TXT fetch returned action-only response: ", actionCode
+              debugLog "dns", "TXT fetch returned action-only response: ", actionCode
               if actionCode == 2:  # ReTransmit
-                debug "[DEBUG] Server requested retransmit during fetch"
+                debugLog "dns", "Server requested retransmit during fetch"
                 # TODO: Should we retry the entire fetch?
                 break
               elif actionCode == 3:  # MessageLost
-                debug "[DEBUG] Server lost message during fetch"
+                debugLog "dns", "Server lost message during fetch"
                 break
               else:
                 # Action 0 or 1 without data is an error for fetch operations
-                debug "[DEBUG] Invalid action-only response during fetch (action=", actionCode, ")"
+                debugLog "dns", "Invalid action-only response during fetch (action=", actionCode, ")"
                 break
           
           # Unmarshal as protobuf
           try:
             # For TXT records, data is base64-encoded and needs decoding
             let cleanBytes = if profile.recordType == DnsRecordType.TXT:
-              debug "[DEBUG] Attempting to decode ", fetchBytes.len, " bytes of base64"
+              debugLog "dns", "Attempting to decode ", fetchBytes.len, " bytes of base64"
               # Debug: show first/last few bytes to check for issues
               if fetchBytes.len > 0:
-                debug "[DEBUG] First 20 bytes hex: ", fetchBytes[0..<min(20, fetchBytes.len)].mapIt(it.toHex(2)).join(" ")
-                debug "[DEBUG] Last 20 bytes hex: ", fetchBytes[max(0, fetchBytes.len-20)..<fetchBytes.len].mapIt(it.toHex(2)).join(" ")
-                debug "[DEBUG] First 50 chars: ", cast[string](fetchBytes)[0..<min(50, fetchBytes.len)]
-                debug "[DEBUG] Last 50 chars: ", cast[string](fetchBytes)[max(0, fetchBytes.len-50)..<fetchBytes.len]
+                debugLog "dns", "First 20 bytes hex: ", fetchBytes[0..<min(20, fetchBytes.len)].mapIt(it.toHex(2)).join(" ")
+                debugLog "dns", "Last 20 bytes hex: ", fetchBytes[max(0, fetchBytes.len-20)..<fetchBytes.len].mapIt(it.toHex(2)).join(" ")
+                debugLog "dns", "First 50 chars: ", cast[string](fetchBytes)[0..<min(50, fetchBytes.len)]
+                debugLog "dns", "Last 50 chars: ", cast[string](fetchBytes)[max(0, fetchBytes.len-50)..<fetchBytes.len]
               
               # For fetch responses, TXT data has format: <action_code><base64_data>
               # Strip leading action code only (trailing action code should not exist for data responses)
@@ -1044,52 +1044,52 @@ proc send*(profile: var DnsProfile, data: string, callbackUuid: string = ""): st
               
               # Strip leading action code
               if base64Data.len > 0 and ord(base64Data[0]) >= 48 and ord(base64Data[0]) <= 51:
-                debug "[DEBUG] First char is action code ('", base64Data[0], "'), stripping it"
+                debugLog "dns", "First char is action code ('", base64Data[0], "'), stripping it"
                 base64Data = base64Data[1..^1]
               
               try:
                 # Clean base64 string - remove any whitespace/newlines
                 base64Data = base64Data.strip()
                 if base64Data.len == 0:
-                  debug "[DEBUG] Empty base64 string after stripping action code - no data in response"
+                  debugLog "dns", "Empty base64 string after stripping action code - no data in response"
                   newSeq[byte](0)  # Return empty byte array to trigger error below
                 else:
                   let decoded = decode(base64Data)
-                  debug "[DEBUG] Base64 decode successful: ", decoded.len, " bytes"
+                  debugLog "dns", "Base64 decode successful: ", decoded.len, " bytes"
                   cast[seq[byte]](decoded)
               except:
-                debug "[DEBUG] Base64 decode failed: ", getCurrentExceptionMsg()
-                debug "[DEBUG] Full base64 string length: ", base64Data.len
+                debugLog "dns", "Base64 decode failed: ", getCurrentExceptionMsg()
+                debugLog "dns", "Full base64 string length: ", base64Data.len
                 # Try without padding
                 var base64NoPad = base64Data.replace("=", "")
                 try:
                   let decoded = decode(base64NoPad & "==")  # Add back minimal padding
-                  debug "[DEBUG] Base64 decode with adjusted padding successful"
+                  debugLog "dns", "Base64 decode with adjusted padding successful"
                   cast[seq[byte]](decoded)
                 except:
-                  debug "[DEBUG] Adjusted padding also failed"
+                  debugLog "dns", "Adjusted padding also failed"
                   newSeq[byte](0)  # Return empty to trigger error
             else:
               removeTrailingBytes(fetchBytes)
             
             if cleanBytes.len == 0:
-              debug "[DEBUG] No data to unmarshal after decoding, breaking fetch loop"
+              debugLog "dns", "No data to unmarshal after decoding, breaking fetch loop"
               break
             
-            debug "[DEBUG] cleanBytes length: ", cleanBytes.len
-            debug "[DEBUG] cleanBytes hex (first 60): ", cleanBytes[0..<min(60, cleanBytes.len)].mapIt(it.toHex(2)).join(" ")
+            debugLog "dns", "cleanBytes length: ", cleanBytes.len
+            debugLog "dns", "cleanBytes hex (first 60): ", cleanBytes[0..<min(60, cleanBytes.len)].mapIt(it.toHex(2)).join(" ")
             
             let packet = unmarshalDnsPacket(cleanBytes)
             
-            debug "[DEBUG] Unmarshaled packet: action=", packet.action, ", sessionID=", packet.agentSessionID, ", msgID=", packet.messageID, ", total=", packet.totalChunks, ", current=", packet.currentChunk, ", dataLen=", packet.data.len
+            debugLog "dns", "Unmarshaled packet: action=", packet.action, ", sessionID=", packet.agentSessionID, ", msgID=", packet.messageID, ", total=", packet.totalChunks, ", current=", packet.currentChunk, ", dataLen=", packet.data.len
             
             # Validate packet before processing
             if packet.totalChunks > 10000:
-              debug "[DEBUG] Invalid totalChunks (", packet.totalChunks, "), protobuf corrupted or wrong format"
+              debugLog "dns", "Invalid totalChunks (", packet.totalChunks, "), protobuf corrupted or wrong format"
               break
             
             if packet.action != ServerToAgent:
-              debug "[DEBUG] Unexpected action (", packet.action, "), expected ServerToAgent (1)"
+              debugLog "dns", "Unexpected action (", packet.action, "), expected ServerToAgent (1)"
               break
             
             # Store this chunk's data
@@ -1097,32 +1097,32 @@ proc send*(profile: var DnsProfile, data: string, callbackUuid: string = ""): st
               if totalChunks == 0:
                 totalChunks = packet.totalChunks
                 if totalChunks == 0:
-                  debug "[DEBUG] totalChunks is 0, invalid packet"
+                  debugLog "dns", "totalChunks is 0, invalid packet"
                   break
                 receivedChunks = newSeq[seq[byte]](int(totalChunks))
-                debug "[DEBUG] Initialized receivedChunks array with ", totalChunks, " slots"
+                debugLog "dns", "Initialized receivedChunks array with ", totalChunks, " slots"
               
               if packet.currentChunk < totalChunks:
                 receivedChunks[packet.currentChunk] = packet.data
-                debug "[DEBUG] Stored chunk ", packet.currentChunk, "/", totalChunks, " (", packet.data.len, " bytes)"
+                debugLog "dns", "Stored chunk ", packet.currentChunk, "/", totalChunks, " (", packet.data.len, " bytes)"
               else:
-                debug "[DEBUG] Chunk index ", packet.currentChunk, " >= totalChunks ", totalChunks, ", skipping"
+                debugLog "dns", "Chunk index ", packet.currentChunk, " >= totalChunks ", totalChunks, ", skipping"
             else:
-              debug "[DEBUG] Packet has no data, skipping"
+              debugLog "dns", "Packet has no data, skipping"
             
             lastChunk += 1
-            debug "[DEBUG] Incremented lastChunk to ", lastChunk, ", totalChunks=", totalChunks
+            debugLog "dns", "Incremented lastChunk to ", lastChunk, ", totalChunks=", totalChunks
             if lastChunk >= totalChunks and totalChunks > 0:
-              debug "[DEBUG] Received all ", totalChunks, " chunks"
+              debugLog "dns", "Received all ", totalChunks, " chunks"
               break
           
           except:
-            debug "[DEBUG] Failed to unmarshal chunk ", lastChunk, ": ", getCurrentExceptionMsg()
+            debugLog "dns", "Failed to unmarshal chunk ", lastChunk, ": ", getCurrentExceptionMsg()
             break
         
         # Assemble all chunks
         if receivedChunks.len == 0:
-          debug "[DEBUG] No chunks received"
+          debugLog "dns", "No chunks received"
           profile.nextMessageID = responseMessageID + 1
           return ""
         
@@ -1131,38 +1131,38 @@ proc send*(profile: var DnsProfile, data: string, callbackUuid: string = ""): st
           fullResponse.add(chunkData)
         
         var responseData = cast[string](fullResponse)
-        debug "[DEBUG] Assembled response: ", responseData.len, " bytes"
+        debugLog "dns", "Assembled response: ", responseData.len, " bytes"
         
         # Strip UUID (first 36 bytes)
         if responseData.len <= 36:
-          debug "[DEBUG] Response too short, no data after UUID"
+          debugLog "dns", "Response too short, no data after UUID"
           profile.nextMessageID = responseMessageID + 1
           return ""
         
         let responseUuid = responseData[0..<36]
         let encryptedData = responseData[36..^1]
         
-        debug "[DEBUG] Response UUID: ", responseUuid
-        debug "[DEBUG] Encrypted data length: ", encryptedData.len, " bytes"
+        debugLog "dns", "Response UUID: ", responseUuid
+        debugLog "dns", "Encrypted data length: ", encryptedData.len, " bytes"
         
         # Decrypt if needed (DNS sends raw bytes in protobuf, not base64 like HTTP)
         if profile.aesKey.len > 0 and callbackUuid.len > 0:
-          debug "[DEBUG] Decrypting response with AES-256-CBC+HMAC"
+          debugLog "dns", "Decrypting response with AES-256-CBC+HMAC"
           let encryptedBytes = cast[seq[byte]](encryptedData)
           let decryptedBytes = decryptAES256(encryptedBytes, profile.aesKey)
           result = cast[string](decryptedBytes)
         else:
-          debug "[DEBUG] No encryption, using response as-is"
+          debugLog "dns", "No encryption, using response as-is"
           result = encryptedData
         
-        debug "[DEBUG] === RECEIVED RESPONSE (FETCHED) ==="
-        debug "[DEBUG] Response length: ", result.len, " bytes"
+        debugLog "dns", "=== RECEIVED RESPONSE (FETCHED) ==="
+        debugLog "dns", "Response length: ", result.len, " bytes"
         # Success - increment message counter
         profile.nextMessageID = responseMessageID + 1
         return result
       else:
         # Action code 0 or unknown - no response data
-        debug "[DEBUG] Action-only response, no data"
+        debugLog "dns", "Action-only response, no data"
         return ""
     
     # For larger responses, try to unmarshal as complete protobuf packet
@@ -1181,7 +1181,7 @@ proc send*(profile: var DnsProfile, data: string, callbackUuid: string = ""): st
       
       # Strip UUID (first 36 bytes)  
       if responseData.len <= 36:
-        debug "[DEBUG] Response too short, no data after UUID"
+        debugLog "dns", "Response too short, no data after UUID"
         profile.nextMessageID = responseMessageID + 1
         return ""
       
@@ -1189,25 +1189,25 @@ proc send*(profile: var DnsProfile, data: string, callbackUuid: string = ""): st
       
       # Decrypt if needed (DNS sends raw bytes, not base64)
       if profile.aesKey.len > 0 and callbackUuid.len > 0:
-        debug "[DEBUG] Decrypting response with AES-256-CBC+HMAC"
+        debugLog "dns", "Decrypting response with AES-256-CBC+HMAC"
         let encryptedBytes = cast[seq[byte]](encryptedData)
         let decryptedBytes = decryptAES256(encryptedBytes, profile.aesKey)
         result = cast[string](decryptedBytes)
       else:
-        debug "[DEBUG] No encryption, using response as-is"
+        debugLog "dns", "No encryption, using response as-is"
         result = encryptedData
       
-      debug "[DEBUG] === RECEIVED RESPONSE ==="
-      debug "[DEBUG] Response length: ", result.len, " bytes"
+      debugLog "dns", "=== RECEIVED RESPONSE ==="
+      debugLog "dns", "Response length: ", result.len, " bytes"
       # Success - increment message counter for next message
       profile.nextMessageID = responseMessageID + 1
       return result
     except:
-      debug "[DEBUG] Failed to unmarshal response: ", getCurrentExceptionMsg()
+      debugLog "dns", "Failed to unmarshal response: ", getCurrentExceptionMsg()
       return ""
   
   # If we exhausted retries, still increment message counter
-  debug "[DEBUG] Exhausted retry attempts"
+  debugLog "dns", "Exhausted retry attempts"
   profile.nextMessageID = responseMessageID + 1
   return ""
 
@@ -1228,12 +1228,12 @@ proc performKeyExchange*(profile: var DnsProfile): tuple[success: bool, newUuid:
   
   # If no encrypted exchange needed, just use the static PSK
   if not profile.config.encryptedExchange:
-    debug "[DEBUG] No key exchange required (ENCRYPTED_EXCHANGE_CHECK=F)"
+    debugLog "dns", "No key exchange required (ENCRYPTED_EXCHANGE_CHECK=F)"
     return (true, "")
   
   # Only compile RSA code if encrypted exchange is enabled at build time
   when not encryptedExchange:
-    debug "[DEBUG] RSA not compiled in (ENCRYPTED_EXCHANGE_CHECK not set at build time)"
+    debugLog "dns", "RSA not compiled in (ENCRYPTED_EXCHANGE_CHECK not set at build time)"
     return (true, "")
   
   # Use shared key exchange implementation
@@ -1253,5 +1253,5 @@ proc performKeyExchange*(profile: var DnsProfile): tuple[success: bool, newUuid:
       # No key exchange needed (AESPSK mode)
       return (true, "")
     else:
-      debug "[DEBUG] Key exchange failed: ", exchangeResult.error
+      debugLog "dns", "Key exchange failed: ", exchangeResult.error
       return (false, "")

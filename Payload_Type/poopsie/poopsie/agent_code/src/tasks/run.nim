@@ -3,7 +3,11 @@ import ../utils/strenc
 
 when defined(windows):
   import ../global_data
-  import winim/lean
+  when defined(evasion_dfr):
+    import winim/lean except CreateProcessA, CreateProcessWithTokenW
+    import ../utils/winapi
+  else:
+    import winim/lean
   import token_manager
   
   const

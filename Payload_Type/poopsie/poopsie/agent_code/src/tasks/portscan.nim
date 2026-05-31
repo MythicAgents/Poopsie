@@ -112,8 +112,8 @@ proc portscan*(taskId: string, params: JsonNode): JsonNode =
     if allPorts.len == 0:
       return mythicError(taskId, obf("No valid ports specified"))
     
-    debug &"[DEBUG] Port scan: {allHosts.len} hosts, {allPorts.len} ports (non-blocking)"
-    debug &"[DEBUG] Interval: {args.interval}ms"
+    debugLog "portscan", &"Port scan: {allHosts.len} hosts, {allPorts.len} ports (non-blocking)"
+    debugLog "portscan", &"Interval: {args.interval}ms"
     
     # Initialize scan state
     portscanState = PortScanState(
@@ -165,7 +165,7 @@ proc checkPortscan*(taskId: string): JsonNode =
         portscanState.openPorts.add((host: host, port: port))
         let output = &"\n" & obf("[+] ") & host & ":" & $port & obf(" OPEN\n")
         
-        debug &"[DEBUG] {host}:{port} OPEN"
+        debugLog "portscan", &"{host}:{port} OPEN"
         
         # Return immediately with open port result (still processing)
         portscanState.currentPortIndex.inc()
@@ -196,7 +196,7 @@ proc checkPortscan*(taskId: string): JsonNode =
       
       let finalOutput = &"\n" & obf("Port scan complete: ") & $portscanState.openPorts.len & obf(" open port(s) found out of ") & $portscanState.totalScanned & obf(" ports scanned across ") & $portscanState.allHosts.len & obf(" host(s)")
       
-      debug "[DEBUG] Port scan completed"
+      debugLog "portscan", "Port scan completed"
       
       return mythicSuccess(taskId, finalOutput)
     

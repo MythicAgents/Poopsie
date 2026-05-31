@@ -5,7 +5,11 @@ import std/[json, strformat, strutils]
 import token_manager
 
 when defined(windows):
-  import winim/lean
+  when defined(evasion_dfr):
+    import winim/lean except OpenProcessToken
+    import ../utils/winapi
+  else:
+    import winim/lean
   
   const
     TOKEN_QUERY = 0x0008
@@ -39,20 +43,20 @@ proc getprivs*(taskId: string, params: JsonNode): JsonNode =
   ## Get the privileges of the current process
   when defined(windows):
     try:
-      debug "[DEBUG] GetPrivs: Getting current user privileges"
+      debugLog "getprivs", "GetPrivs: Getting current user privileges"
       
       # Get current username and hostname for output
       let username = getCurrentUsername()
       var output = obf("Privileges for '") & username & "'\n\n"
       
-      debug &"[DEBUG] GetPrivs: Current user: {username}"
+      debugLog "getprivs", &"GetPrivs: Current user: {username}"
       
       # Get handle to current process token
       var tokenHandle: HANDLE = 0
       if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, addr tokenHandle) == 0:
         return mythicError(taskId, obf("Failed to open token handle: ") & $GetLastError())
       
-      debug "[DEBUG] GetPrivs: Opened process token"
+      debugLog "getprivs", "GetPrivs: Opened process token"
       
       # Get the required size for token information
       var privLen: DWORD = 0
@@ -62,7 +66,7 @@ proc getprivs*(taskId: string, params: JsonNode): JsonNode =
         CloseHandle(tokenHandle)
         return mythicError(taskId, obf("Failed to get token information length: ") & $GetLastError())
       
-      debug &"[DEBUG] GetPrivs: Token information size: {privLen}"
+      debugLog "getprivs", &"GetPrivs: Token information size: {privLen}"
       
       # Allocate buffer and get the actual token information
       var privs = newSeq[byte](privLen)
@@ -70,13 +74,13 @@ proc getprivs*(taskId: string, params: JsonNode): JsonNode =
         CloseHandle(tokenHandle)
         return mythicError(taskId, obf("Failed to query privileges: ") & $GetLastError())
       
-      debug "[DEBUG] GetPrivs: Retrieved token information"
+      debugLog "getprivs", "GetPrivs: Retrieved token information"
       
       # Cast the buffer to TOKEN_PRIVILEGES structure
       let tokenPrivs = cast[ptr TOKEN_PRIVILEGES_GETPRIVS](addr privs[0])
       let count = tokenPrivs.PrivilegeCount
       
-      debug &"[DEBUG] GetPrivs: Found {count} privileges"
+      debugLog "getprivs", &"GetPrivs: Found {count} privileges"
       
       # Get pointer to the array of LUID_AND_ATTRIBUTES
       let luidsPtr = cast[ptr UncheckedArray[LUID_AND_ATTRIBUTES_GETPRIVS]](addr tokenPrivs.Privileges[0])
@@ -99,7 +103,7 @@ proc getprivs*(taskId: string, params: JsonNode): JsonNode =
           
           output.add(&"{privName}{status}\n")
           
-          debug &"[DEBUG] GetPrivs: {privName}{status}"
+          debugLog "getprivs", &"GetPrivs: {privName}{status}"
       
       CloseHandle(tokenHandle)
       

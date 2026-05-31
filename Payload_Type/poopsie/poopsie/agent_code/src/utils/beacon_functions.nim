@@ -1,7 +1,11 @@
 # Taken from the excellent NiCOFF project by @frkngksl
 # Source: https://github.com/frkngksl/NiCOFF/blob/main/BeaconFunctions.nim
 
-import winim/lean
+when defined(evasion_dfr):
+  import winim/lean except CreateProcessA, RevertToSelf, VirtualAlloc, VirtualFree
+  import winapi
+else:
+  import winim/lean
 import ptr_math
 import system
 import strenc
@@ -249,7 +253,7 @@ proc BeaconUseToken(token: HANDLE):BOOL{.stdcall.} =
 
 # void   BeaconRevertToken();
 proc BeaconRevertToken():void{.stdcall.} =
-    RevertToSelf()
+    discard RevertToSelf()
 
 # BOOL   BeaconIsAdmin();
 # Not implemented

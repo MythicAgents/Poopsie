@@ -13,7 +13,7 @@ proc config*(taskId: string, params: JsonNode): JsonNode =
   let cfg = getConfig()
   
   try:
-    debug "[DEBUG] config: Getting configuration"
+    debugLog "config", "config: Getting configuration"
     
     var output = ""
     output &= obf("=== Agent Configuration ===\n")

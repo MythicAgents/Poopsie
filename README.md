@@ -11,7 +11,7 @@ Poopsie is a cross-platform C2 agent for the Mythic framework, written in Nim. I
 ## Features
 
 - **Cross-platform**: Supports Windows and Linux
-- **Multiple C2 Profiles**: http, httpx, websocket, dns, tcp, smb
+- **Multiple C2 Profiles**: http, httpx, websocket, dns, tcp, smb, mtls
 - **Token Impersonation**: Full support for `make_token` and `steal_token` with thread-level impersonation
 - **Network Operations**: UNC path support for remote file operations with impersonated credentials
 - **Process Injection**: Advanced injection capabilities with `shinject` and `inline_execute`
@@ -49,6 +49,9 @@ Poopsie is a cross-platform C2 agent for the Mythic framework, written in Nim. I
 - `rev2self` - Revert to original process token
 - `steal_token` - Duplicate and impersonate token from target process
 - `whoami` - Display current user context (shows impersonated user when active)
+
+### Credential Access
+- `hashdump` - Dump local SAM NTLM hashes and Security hive secrets via Silent Harvest (Windows, elevated admin; JSON output)
 
 ### Information Gathering
 - `clipboard` - Get current clipboard contents (Windows)

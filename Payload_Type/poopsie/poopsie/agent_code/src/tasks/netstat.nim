@@ -161,7 +161,7 @@ when defined(linux):
 proc netstat*(taskId: string, params: JsonNode): JsonNode =
   ## Get all active network connections and sockets
   try:
-    debug "[DEBUG] Netstat: Getting network connections"
+    debugLog "netstat", "Netstat: Getting network connections"
     
     var connections = newJArray()
     
@@ -402,7 +402,7 @@ proc netstat*(taskId: string, params: JsonNode): JsonNode =
       except:
         discard
     
-    debug &"[DEBUG] Netstat: Found {connections.len} connections"
+    debugLog "netstat", &"Netstat: Found {connections.len} connections"
     
     let output = $connections
     return mythicSuccess(taskId, output)

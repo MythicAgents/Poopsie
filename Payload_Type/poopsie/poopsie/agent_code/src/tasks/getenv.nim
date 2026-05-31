@@ -7,7 +7,7 @@ proc getenv*(taskId: string, params: JsonNode): JsonNode =
   ## Get all environment variables
   
   try:
-    debug "[DEBUG] GetEnv: Getting all environment variables"
+    debugLog "getenv", "GetEnv: Getting all environment variables"
     
     var envList = newJArray()
     
@@ -19,7 +19,7 @@ proc getenv*(taskId: string, params: JsonNode): JsonNode =
       }
       envList.add(envPair)
     
-    debug "[DEBUG] GetEnv: Found ", envList.len, " environment variables"
+    debugLog "getenv", "GetEnv: Found ", envList.len, " environment variables"
     
     # Convert to string for output
     let output = $envList
